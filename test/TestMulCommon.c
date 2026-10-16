@@ -8,7 +8,7 @@ static const uint8_t source[8] = {0x84, 0, 0, 0, 0, 0, 0xcf, 0xbc};
 static uint8_t frame[MUL_TEST_FRAME_LENGTH];
 
 void setUp(void) {
-  mulEncodeTestPacket(frame, source, UINT32_C(0x12345678));
+  mulEncodeTestPacket(frame, source, UINT32_C(0x12345678), UINT64_C(0x0123456789));
 }
 
 void tearDown(void) {}
@@ -18,7 +18,8 @@ void test_mulEncodingMatchesWireFormat(void) {
     0x41, 0xdc, 0x78, 0xcf, 0xbc,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0x84, 0, 0, 0, 0, 0, 0xcf, 0xbc,
-    'M', 'U', 'L', 1, 0x78, 0x56, 0x34, 0x12
+    'M', 'U', 'L', 1, 0x78, 0x56, 0x34, 0x12,
+    0x89, 0x67, 0x45, 0x23, 0x01
   };
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, frame, sizeof(expected));
 }
@@ -27,10 +28,11 @@ void test_mulDecodingPreservesAddressAndSequenceBoundaries(void) {
   const uint32_t sequences[] = {0, 255, 256, UINT32_C(0x80000000), UINT32_MAX};
   mulTestPacket_t packet;
   for (unsigned int i = 0; i < sizeof(sequences) / sizeof(sequences[0]); i++) {
-    mulEncodeTestPacket(frame, source, sequences[i]);
+    mulEncodeTestPacket(frame, source, sequences[i], UINT64_C(0x0123456789));
     TEST_ASSERT_TRUE(mulDecodeTestPacket(frame, sizeof(frame), &packet));
     TEST_ASSERT_EQUAL_UINT8_ARRAY(source, packet.source, sizeof(source));
     TEST_ASSERT_EQUAL_UINT32(sequences[i], packet.sequence);
+    TEST_ASSERT_EQUAL_UINT64(UINT64_C(0x0123456789), packet.txTimestamp);
   }
 }
 
@@ -57,4 +59,32 @@ void test_mulRejectsUnrelatedHeadersProtocolsAndTypes(void) {
     TEST_ASSERT_EQUAL_MEMORY(&original, &packet, sizeof(packet));
     frame[checked[i]] ^= 1;
   }
+}
+
+void test_mulTimestampsPreserveAllFortyBitsAndMaskUpperBits(void) {
+  const uint64_t values[] = {0, 1, UINT64_C(0x0123456789), MUL_TIMESTAMP_MASK - 1,
+                            MUL_TIMESTAMP_MASK, UINT64_C(0x1234ffffffffff)};
+  for (unsigned int i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+    uint8_t bytes[MUL_TIMESTAMP_BYTES];
+    mulEncodeTimestamp(bytes, values[i]);
+    TEST_ASSERT_EQUAL_UINT64(values[i] & MUL_TIMESTAMP_MASK, mulDecodeTimestamp(bytes));
+    TEST_ASSERT_EQUAL_UINT64(values[i] & MUL_TIMESTAMP_MASK, mulTimestampMask(values[i]));
+    mulEncodeTestPacket(frame, source, 0, values[i]);
+    mulTestPacket_t packet;
+    TEST_ASSERT_TRUE(mulDecodeTestPacket(frame, sizeof(frame), &packet));
+    TEST_ASSERT_EQUAL_UINT64(values[i] & MUL_TIMESTAMP_MASK, packet.txTimestamp);
+  }
+}
+
+void test_mulTimestampDifferenceHandlesWrapAndHalfPeriod(void) {
+  TEST_ASSERT_EQUAL_INT64(0, mulTimestampDifference(0, 0));
+  TEST_ASSERT_EQUAL_INT64(1, mulTimestampDifference(0, MUL_TIMESTAMP_MASK));
+  TEST_ASSERT_EQUAL_INT64(-1, mulTimestampDifference(MUL_TIMESTAMP_MASK, 0));
+  TEST_ASSERT_EQUAL_INT64(7, mulTimestampDifference(3, MUL_TIMESTAMP_MASK - 3));
+  TEST_ASSERT_EQUAL_INT64(-7, mulTimestampDifference(MUL_TIMESTAMP_MASK - 3, 3));
+  TEST_ASSERT_EQUAL_INT64((INT64_C(1) << 39) - 1,
+                        mulTimestampDifference((UINT64_C(1) << 39) - 1, 0));
+  TEST_ASSERT_EQUAL_INT64(-(INT64_C(1) << 39),
+                        mulTimestampDifference(UINT64_C(1) << 39, 0));
+  TEST_ASSERT_EQUAL_INT64(1, mulTimestampDifference(UINT64_C(1) << 40, MUL_TIMESTAMP_MASK));
 }

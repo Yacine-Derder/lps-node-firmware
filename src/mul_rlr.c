@@ -51,8 +51,10 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
   // Read the timestamp before re-arming; log only once the radio is listening.
   mulRlrStartReceive(dev);
   if (valid) {
-    printf("MUL RLR: RX seq=%" PRIu32 " src=0x%02X ts=0x%02X%08" PRIX32 "\r\n",
+    printf("MUL RLR: RX seq=%" PRIu32 " src=0x%02X tx=0x%02X%08" PRIX32
+           " rx=0x%02X%08" PRIX32 "\r\n",
            packet.sequence, (unsigned int)packet.source[0],
+           (unsigned int)(packet.txTimestamp >> 32), (uint32_t)packet.txTimestamp,
            (unsigned int)arrival.high8, arrival.low32);
   }
   return MAX_TIMEOUT;

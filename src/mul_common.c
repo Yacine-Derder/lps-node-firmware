@@ -3,8 +3,39 @@
 
 #include <string.h>
 
+uint64_t mulTimestampMask(uint64_t timestamp)
+{
+  return timestamp & MUL_TIMESTAMP_MASK;
+}
+
+void mulEncodeTimestamp(uint8_t bytes[MUL_TIMESTAMP_BYTES], uint64_t timestamp)
+{
+  for (unsigned int i = 0; i < MUL_TIMESTAMP_BYTES; i++) {
+    bytes[i] = (uint8_t)(timestamp >> (8 * i));
+  }
+}
+
+uint64_t mulDecodeTimestamp(const uint8_t bytes[MUL_TIMESTAMP_BYTES])
+{
+  uint64_t timestamp = 0;
+  for (unsigned int i = 0; i < MUL_TIMESTAMP_BYTES; i++) {
+    timestamp |= (uint64_t)bytes[i] << (8 * i);
+  }
+  return timestamp;
+}
+
+int64_t mulTimestampDifference(uint64_t a, uint64_t b)
+{
+  uint64_t difference = mulTimestampMask(a - b);
+  if (difference & (UINT64_C(1) << 39)) {
+    return (int64_t)difference - (INT64_C(1) << 40);
+  }
+  return (int64_t)difference;
+}
+
 void mulEncodeTestPacket(uint8_t frame[MUL_TEST_FRAME_LENGTH],
-                         const uint8_t source[MUL_ADDRESS_LENGTH], uint32_t sequence)
+                         const uint8_t source[MUL_ADDRESS_LENGTH], uint32_t sequence,
+                         uint64_t txTimestamp)
 {
   frame[0] = 0x41;
   frame[1] = 0xdc;
@@ -18,6 +49,7 @@ void mulEncodeTestPacket(uint8_t frame[MUL_TEST_FRAME_LENGTH],
   for (unsigned int i = 0; i < 4; i++) {
     frame[25 + i] = (uint8_t)(sequence >> (8 * i));
   }
+  mulEncodeTimestamp(&frame[29], txTimestamp);
 }
 
 bool mulDecodeTestPacket(const uint8_t *frame, size_t length, mulTestPacket_t *packet)
@@ -42,5 +74,6 @@ bool mulDecodeTestPacket(const uint8_t *frame, size_t length, mulTestPacket_t *p
   for (unsigned int i = 0; i < 4; i++) {
     packet->sequence |= (uint32_t)frame[25 + i] << (8 * i);
   }
+  packet->txTimestamp = mulDecodeTimestamp(&frame[29]);
   return true;
 }

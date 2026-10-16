@@ -6,14 +6,75 @@
 #include <stdio.h>
 #include <string.h>
 
-#define MUL_TX_INTERVAL_MS 1000
+// DW1000 time units: 499.2 MHz * 128. These are not STM32 milliseconds.
+#define MUL_DTU_PER_MS UINT64_C(63897600)
+#define MUL_TX_PERIOD_DTU (1000 * MUL_DTU_PER_MS)
+#define MUL_TX_LEAD_DTU (20 * MUL_DTU_PER_MS)
+#define MUL_TX_MIN_LEAD_DTU (5 * MUL_DTU_PER_MS)
+#define MUL_TX_COMPLETION_MS 100
+#define MUL_TX_ALIGNMENT UINT64_C(512)
+
+// SYS_STATUS bits 27 (HPDWARN) and 34 (TXPUTE), read at byte offset 3.
+// Match Decawave dwt_starttx()'s delayed-start check. libdw1000 returns void.
+#define MUL_TX_ERROR_STATUS UINT16_C(0x0408)
 
 static uint8_t source[MUL_ADDRESS_LENGTH];
 // dwSetData() reads length + 2 bytes when hardware FCS is enabled.
 static uint8_t txFrame[MUL_TEST_FRAME_LENGTH + 2];
 static uint32_t nextSequence;
 static uint32_t pendingSequence;
+static uint64_t nextRawTx;
+static uint64_t pendingTimestamp;
+static uint16_t txAntennaDelay;
 static bool txPending;
+
+static void logCompletedTx(uint64_t actual)
+{
+  int64_t difference = mulTimestampDifference(actual, pendingTimestamp);
+  uint64_t magnitude = (uint64_t)(difference < 0 ? -difference : difference);
+  // newlib-nano here has no 64-bit printf formats. Preserve the full signed
+  // 40-bit difference as decimal rather than truncating it to a 32-bit long.
+  char delta[14];
+  char *end = delta + sizeof(delta) - 1;
+  *end = '\0';
+  do {
+    *--end = '0' + magnitude % 10;
+    magnitude /= 10;
+  } while (magnitude != 0);
+  if (difference < 0) {
+    *--end = '-';
+  }
+  printf("MUL ALR: TX seq=%" PRIu32 " src=0x%02X scheduled=0x%02X%08" PRIX32
+         " actual=0x%02X%08" PRIX32 " delta=%s\r\n",
+         pendingSequence, (unsigned int)source[0],
+         (unsigned int)(pendingTimestamp >> 32), (uint32_t)pendingTimestamp,
+         (unsigned int)(actual >> 32), (uint32_t)actual, end);
+}
+
+static uint64_t readHardwareTime(dwDevice_t *dev)
+{
+  dwTime_t now = {.full = 0};
+  dwGetSystemTimestamp(dev, &now);
+  return mulTimestampMask(now.full);
+}
+
+static void clearTxErrors(dwDevice_t *dev)
+{
+  // Write-one-to-clear only these two flags, without clearing other IRQ events.
+  const uint8_t errors[] = {0x08, 0x04};
+  dwSpiWrite(dev, SYS_STATUS, 3, errors, sizeof(errors));
+}
+
+static uint32_t waitForNextTx(dwDevice_t *dev)
+{
+  int64_t remaining = mulTimestampDifference(nextRawTx, readHardwareTime(dev));
+  remaining -= (int64_t)MUL_TX_LEAD_DTU;
+  if (remaining <= 0) {
+    return 1; // Never spin at the UWB task's higher priority.
+  }
+  // Round up when converting hardware time to the event interface's milliseconds.
+  return (uint32_t)(((uint64_t)remaining + MUL_DTU_PER_MS - 1) / MUL_DTU_PER_MS);
+}
 
 static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
 {
@@ -22,46 +83,99 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   memcpy(source, config->address, sizeof(source));
   nextSequence = 0;
   txPending = false;
+  // Use the actual configured register; do not impose a new calibration value.
+  txAntennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
+  nextRawTx = mulTimestampMask((readHardwareTime(dev) + MUL_TX_LEAD_DTU +
+                               MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1));
   printf("MUL ALR: Mode initialized\r\n");
+}
+
+static uint32_t scheduleTx(dwDevice_t *dev)
+{
+  uint64_t now = readHardwareTime(dev);
+  int64_t remaining = mulTimestampDifference(nextRawTx, now);
+  if (remaining < (int64_t)MUL_TX_MIN_LEAD_DTU) {
+    // Missed a deadline: skip whole periods to retain phase, without a catch-up loop.
+    uint64_t periods = ((uint64_t)((int64_t)MUL_TX_MIN_LEAD_DTU - remaining) /
+                        MUL_TX_PERIOD_DTU) + 1;
+    nextRawTx = mulTimestampMask(nextRawTx + periods * MUL_TX_PERIOD_DTU);
+    printf("MUL ALR: Skipped late TX\r\n");
+    return waitForNextTx(dev);
+  }
+  if (remaining > (int64_t)(MUL_TX_PERIOD_DTU + MUL_TX_LEAD_DTU)) {
+    // A long task stall makes modular phase ambiguous. Rebase safely, never burst.
+    nextRawTx = mulTimestampMask((now + MUL_TX_LEAD_DTU + MUL_TX_ALIGNMENT - 1) &
+                                ~(MUL_TX_ALIGNMENT - 1));
+    return waitForNextTx(dev);
+  }
+
+  dwTime_t rawTx = {.full = nextRawTx};
+  nextRawTx = mulTimestampMask(nextRawTx + MUL_TX_PERIOD_DTU);
+  pendingSequence = nextSequence++;
+  pendingTimestamp = mulTimestampMask(rawTx.full + txAntennaDelay);
+  mulEncodeTestPacket(txFrame, source, pendingSequence, pendingTimestamp);
+  dwNewTransmit(dev);
+  dwSetDefaults(dev);
+  clearTxErrors(dev);
+  dwSetData(dev, txFrame, MUL_TEST_FRAME_LENGTH);
+  dwWaitForResponse(dev, false);
+  dwSetTxRxTime(dev, rawTx); // Raw RMARKER time: low 9 bits already zero.
+
+  // Check again after SPI setup, before arming. Leave room for preamble/power-up.
+  if (mulTimestampDifference(rawTx.full, readHardwareTime(dev)) <
+      (int64_t)MUL_TX_MIN_LEAD_DTU) {
+    dwIdle(dev);
+    printf("MUL ALR: Skipped late TX seq=%" PRIu32 "\r\n", pendingSequence);
+    return waitForNextTx(dev);
+  }
+  txPending = true;
+  dwStartTransmit(dev);
+  if (dwSpiRead16(dev, SYS_STATUS, 3) & MUL_TX_ERROR_STATUS) {
+    dwIdle(dev);
+    clearTxErrors(dev);
+    txPending = false;
+    printf("MUL ALR: Delayed TX failed seq=%" PRIu32 "\r\n", pendingSequence);
+    return waitForNextTx(dev);
+  }
+  // Completion must arrive within this bounded window, even if start failed silently.
+  return MUL_TX_COMPLETION_MS;
 }
 
 static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
 {
   switch (event) {
     case eventTimeout:
-      if (txPending) {
-        // No TX-done interrupt: abort the old attempt and keep making progress.
-        dwIdle(dev);
-        printf("MUL ALR: TX timeout seq=%" PRIu32 "\r\n", pendingSequence);
+      if (!txPending) {
+        return scheduleTx(dev);
       }
-      pendingSequence = nextSequence++;
-      mulEncodeTestPacket(txFrame, source, pendingSequence);
-      dwNewTransmit(dev);
-      dwSetDefaults(dev);
-      dwSetData(dev, txFrame, MUL_TEST_FRAME_LENGTH);
-      dwWaitForResponse(dev, false);
-      txPending = true;
-      dwStartTransmit(dev);
+      dwIdle(dev);
+      clearTxErrors(dev);
+      txPending = false;
+      printf("MUL ALR: TX timeout seq=%" PRIu32 "\r\n", pendingSequence);
       break;
     case eventPacketSent:
       if (txPending) {
+        dwTime_t actual = {.full = 0};
+        dwGetTransmitTimestamp(dev, &actual);
+        actual.full = mulTimestampMask(actual.full);
         txPending = false;
-        printf("MUL ALR: TX seq=%" PRIu32 " src=0x%02X\r\n",
-               pendingSequence, (unsigned int)source[0]);
+        logCompletedTx(actual.full);
       }
       break;
     case eventReceiveTimeout:
     case eventReceiveFailed:
       dwIdle(dev);
+      clearTxErrors(dev);
       txPending = false;
       printf("MUL ALR: Unexpected RX error\r\n");
       break;
     case eventPacketReceived:
+      if (txPending) {
+        return MUL_TX_COMPLETION_MS;
+      }
       break;
   }
-  // The first eventTimeout is immediate; later sends follow TX completion.
-  // This is also a bounded recovery timeout when completion is lost.
-  return MUL_TX_INTERVAL_MS;
+  return waitForNextTx(dev);
 }
 
 uwbAlgorithm_t mulAlrAlgorithm = {
