@@ -55,6 +55,8 @@ typedef struct uwbConfig_s {
 #define MODE_SNIFFER 2
 #define MODE_TDOA_ANCHOR2 3
 #define MODE_TDOA_ANCHOR3 4
+#define MODE_MUL_ALR 5
+#define MODE_MUL_RLR 6
 
 typedef enum uwbEvent_e {
   eventTimeout,

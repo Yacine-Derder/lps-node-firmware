@@ -27,6 +27,8 @@
 #include <stm32f0xx_hal.h>
 
 #include "uwb.h"
+#include "mul_alr.h"
+#include "mul_rlr.h"
 
 #include "libdw1000.h"
 #include "dwOps.h"
@@ -54,6 +56,8 @@ struct {
   {.algorithm = &uwbSnifferAlgorithm,   .name = "Sniffer"},
   {.algorithm = &uwbTdoa2Algorithm,     .name = "TDoA Anchor V2"},
   {.algorithm = &uwbTdoa3Algorithm,     .name = "TDoA Anchor V3"},
+  {.algorithm = &mulAlrAlgorithm,       .name = "MUL ALR"},
+  {.algorithm = &mulRlrAlgorithm,       .name = "MUL RLR"},
   {NULL, NULL},
 };
 

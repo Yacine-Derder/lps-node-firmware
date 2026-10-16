@@ -170,6 +170,7 @@ static void main_task(void *pvParameters) {
   ledOff(ledMode);
 
   printf("SYSTEM\t: Node started ...\r\n");
+  printf("CUSTOM\t: Custom code has been flashed.\r\n");
   printf("SYSTEM\t: Press 'h' for help.\r\n");
 
   usbcommSetSystemStarted(true);
