@@ -25,12 +25,14 @@ static uint32_t nextSequence;
 static uint32_t pendingSequence;
 static uint64_t nextRawTx;
 static uint64_t pendingTimestamp;
-static uint16_t txAntennaDelay;
 static bool txPending;
 
 static void logCompletedTx(uint64_t actual)
 {
-  int64_t difference = mulTimestampDifference(actual, pendingTimestamp);
+  // Compare against the bytes passed to dwSetData(), not just the scheduling
+  // calculation. Retain both values in the log to expose any encoding mismatch.
+  uint64_t packetTimestamp = mulDecodeTimestamp(&txFrame[MUL_TX_TIMESTAMP_OFFSET]);
+  int64_t difference = mulTimestampDifference(actual, packetTimestamp);
   uint64_t magnitude = (uint64_t)(difference < 0 ? -difference : difference);
   // newlib-nano here has no 64-bit printf formats. Preserve the full signed
   // 40-bit difference as decimal rather than truncating it to a 32-bit long.
@@ -45,9 +47,11 @@ static void logCompletedTx(uint64_t actual)
     *--end = '-';
   }
   printf("MUL ALR: TX seq=%" PRIu32 " src=0x%02X scheduled=0x%02X%08" PRIX32
+         " packet=0x%02X%08" PRIX32
          " actual=0x%02X%08" PRIX32 " delta=%s\r\n",
          pendingSequence, (unsigned int)source[0],
          (unsigned int)(pendingTimestamp >> 32), (uint32_t)pendingTimestamp,
+         (unsigned int)(packetTimestamp >> 32), (uint32_t)packetTimestamp,
          (unsigned int)(actual >> 32), (uint32_t)actual, end);
 }
 
@@ -83,8 +87,6 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   memcpy(source, config->address, sizeof(source));
   nextSequence = 0;
   txPending = false;
-  // Use the actual configured register; do not impose a new calibration value.
-  txAntennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
   nextRawTx = mulTimestampMask((readHardwareTime(dev) + MUL_TX_LEAD_DTU +
                                MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1));
   printf("MUL ALR: Mode initialized\r\n");
@@ -112,14 +114,27 @@ static uint32_t scheduleTx(dwDevice_t *dev)
   dwTime_t rawTx = {.full = nextRawTx};
   nextRawTx = mulTimestampMask(nextRawTx + MUL_TX_PERIOD_DTU);
   pendingSequence = nextSequence++;
-  pendingTimestamp = mulTimestampMask(rawTx.full + txAntennaDelay);
-  mulEncodeTestPacket(txFrame, source, pendingSequence, pendingTimestamp);
   dwNewTransmit(dev);
   dwSetDefaults(dev);
   clearTxErrors(dev);
-  dwSetData(dev, txFrame, MUL_TEST_FRAME_LENGTH);
   dwWaitForResponse(dev, false);
   dwSetTxRxTime(dev, rawTx); // Raw RMARKER time: low 9 bits already zero.
+
+  // Verify what the radio was actually programmed to use before encoding it.
+  // DX_TIME denotes the raw RMARKER, not the start of the preamble. The driver
+  // already clears its low 9 bits; no preamble or software latency is added.
+  dwTime_t programmed = {.full = 0};
+  dwSpiRead(dev, DX_TIME, NO_SUB, programmed.raw, LEN_DX_TIME);
+  if (programmed.full != rawTx.full) {
+    dwIdle(dev);
+    printf("MUL ALR: DX_TIME mismatch seq=%" PRIu32 "\r\n", pendingSequence);
+    return waitForNextTx(dev);
+  }
+  // Read the live TX_ANTD for this packet, rather than a startup snapshot.
+  uint16_t txAntennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
+  pendingTimestamp = mulTimestampMask(programmed.full + txAntennaDelay);
+  mulEncodeTestPacket(txFrame, source, pendingSequence, pendingTimestamp);
+  dwSetData(dev, txFrame, MUL_TEST_FRAME_LENGTH);
 
   // Check again after SPI setup, before arming. Leave room for preamble/power-up.
   if (mulTimestampDifference(rawTx.full, readHardwareTime(dev)) <

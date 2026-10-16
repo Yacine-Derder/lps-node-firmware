@@ -19,6 +19,8 @@ static uint64_t hardwareNow, delayedRaw, actualTx;
 static uint64_t setupDelay;
 static uint16_t antennaDelay, txError;
 static unsigned int actualReads, aborts;
+static uint64_t programmedTimeError;
+static uint64_t packetTimestampError;
 
 #define DTU_PER_MS UINT64_C(63897600)
 #define PERIOD_DTU (1000 * DTU_PER_MS)
@@ -38,6 +40,14 @@ void dwSetTxRxTime(dwDevice_t *device, const dwTime_t time) {
   delayedRaw = time.full;
   delayedArmed = true;
   hardwareNow = mulTimestampMask(hardwareNow + setupDelay);
+}
+void dwSpiRead(dwDevice_t *device, uint8_t reg, uint32_t offset,
+               void *data, size_t length) {
+  (void)device;
+  TEST_ASSERT_EQUAL_UINT8(DX_TIME, reg);
+  TEST_ASSERT_EQUAL_UINT32(NO_SUB, offset);
+  TEST_ASSERT_EQUAL_UINT(MUL_TIMESTAMP_BYTES, length);
+  mulEncodeTimestamp(data, delayedRaw + programmedTimeError);
 }
 uint16_t dwSpiRead16(dwDevice_t *device, uint8_t reg, uint32_t offset) {
   (void)device;
@@ -76,6 +86,10 @@ void dwSetDefaults(dwDevice_t *device) { (void)device; }
 void dwSetData(dwDevice_t *device, uint8_t *data, unsigned int length) {
   (void)device;
   TEST_ASSERT_EQUAL_UINT(MUL_TEST_FRAME_LENGTH, length);
+  if (packetTimestampError != 0) {
+    mulEncodeTimestamp(data + MUL_TX_TIMESTAMP_OFFSET,
+      mulDecodeTimestamp(data + MUL_TX_TIMESTAMP_OFFSET) - packetTimestampError);
+  }
   // Match the real driver's extra FCS read; sanitizers catch an undersized buffer.
   memcpy(txFrame, data, length + 2);
 }
@@ -142,6 +156,8 @@ void setUp(void) {
   antennaDelay = 0x4321;
   txError = 0;
   actualReads = aborts = 0;
+  programmedTimeError = 0;
+  packetTimestampError = 0;
   rxLength = sizeof(rxFrame);
   mulEncodeTestPacket(rxFrame, config.address, 42, UINT64_C(0x0123456789));
 }
@@ -278,6 +294,40 @@ void test_mulAlrRebasesAfterAnAmbiguousLongStall(void) {
   TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(wait));
   TEST_ASSERT_TRUE(mulTimestampDifference(delayedRaw, hardwareNow) >=
                    (int64_t)(5 * DTU_PER_MS));
+  completeTx(0);
+}
+
+void test_mulAlrRejectsDisagreementWithProgrammedDelayedTxRegister(void) {
+  mulAlrAlgorithm.init(&config, &dev);
+  programmedTimeError = UINT64_C(0x809e00);
+  uint32_t wait = elapseAndTimeout(0);
+  TEST_ASSERT_EQUAL_UINT(0, txCount);
+  TEST_ASSERT_FALSE(delayedArmed);
+  programmedTimeError = 0;
+  TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(wait));
+  completeTx(0);
+}
+
+void test_mulAlrReadsAntennaDelayForEachEncodedPacket(void) {
+  mulAlrAlgorithm.init(&config, &dev);
+  antennaDelay = 0x1234; // The configured value changed after initialization.
+  TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(0));
+  mulTestPacket_t decoded;
+  TEST_ASSERT_TRUE(mulDecodeTestPacket(txFrame, MUL_TEST_FRAME_LENGTH, &decoded));
+  TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(delayedRaw + antennaDelay), decoded.txTimestamp);
+  completeTx(0);
+}
+
+void test_mulAlrCompletionDeltaUsesPacketBytesInsteadOfSchedulingCache(void) {
+  mulAlrAlgorithm.init(&config, &dev);
+  // Inject the reported discrepancy before the fake radio copies the bytes. The output
+  // check must see a nonzero delta even when scheduled == hardware actual.
+  packetTimestampError = UINT64_C(0x809e00);
+  TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(0));
+  mulTestPacket_t decoded;
+  TEST_ASSERT_TRUE(mulDecodeTestPacket(txFrame, MUL_TEST_FRAME_LENGTH, &decoded));
+  TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(delayedRaw + antennaDelay - packetTimestampError),
+                         decoded.txTimestamp);
   completeTx(0);
 }
 

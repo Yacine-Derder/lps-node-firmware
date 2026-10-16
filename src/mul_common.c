@@ -49,7 +49,7 @@ void mulEncodeTestPacket(uint8_t frame[MUL_TEST_FRAME_LENGTH],
   for (unsigned int i = 0; i < 4; i++) {
     frame[25 + i] = (uint8_t)(sequence >> (8 * i));
   }
-  mulEncodeTimestamp(&frame[29], txTimestamp);
+  mulEncodeTimestamp(&frame[MUL_TX_TIMESTAMP_OFFSET], txTimestamp);
 }
 
 bool mulDecodeTestPacket(const uint8_t *frame, size_t length, mulTestPacket_t *packet)
@@ -74,6 +74,6 @@ bool mulDecodeTestPacket(const uint8_t *frame, size_t length, mulTestPacket_t *p
   for (unsigned int i = 0; i < 4; i++) {
     packet->sequence |= (uint32_t)frame[25 + i] << (8 * i);
   }
-  packet->txTimestamp = mulDecodeTimestamp(&frame[29]);
+  packet->txTimestamp = mulDecodeTimestamp(&frame[MUL_TX_TIMESTAMP_OFFSET]);
   return true;
 }

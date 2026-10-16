@@ -11,6 +11,7 @@
 #define MUL_PACKET_TEST_BROADCAST 1
 #define MUL_TIMESTAMP_MASK UINT64_C(0xffffffffff)
 #define MUL_TIMESTAMP_BYTES 5
+#define MUL_TX_TIMESTAMP_OFFSET 29
 
 /* Wire format (all multibyte fields little endian, no C struct overlay):
  *  0..20: existing compressed-PAN, extended-address 802.15.4 data header
