@@ -120,3 +120,16 @@ Acceptance: controlled software evaluations and repeatable robot experiments
 compare accuracy, uncertainty consistency, robustness, and relevant baselines.
 
 Update milestone status in place as evidence changes; Git preserves earlier states.
+
+## Codex continuation checkpoint
+
+Stage 3C checkpoint 1 implemented: reusable `mulPowerCapture()` preserves raw
+RX_STAMP and reuses `dwGetReceivePower()` / `dwCorrectTimestamp()` and the
+Bitcraze 500 MHz 16/64 MHz PRF tables. Unsupported/invalid/out-of-range inputs
+retain raw values with explicit status; no correction is integrated into TWR yet.
+Validation: focused real-driver tests and firmware build (see checkpoint commit).
+Known limits: vendor endpoint-bin hold behavior retained; 900 MHz unsupported
+because its negative signed shifts are undefined. Physical bias remains unbounded.
+Next: checkpoint 2, transport per-RX correction metadata and preserve raw/corrected
+DS-TWR results. Latest completed commit is the commit containing this section;
+parent baseline `0e00b81` (a commit cannot contain its own hash).

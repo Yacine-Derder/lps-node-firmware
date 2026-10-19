@@ -6,6 +6,7 @@
 #include "mul_common.h"
 #include "mul_clock.h"
 #include "mul_twr.h"
+#include "mul_power.h"
 
 #include <string.h>
 
@@ -300,4 +301,60 @@ void test_mulAntennaDetectsCacheMismatchAndFullCommitOverwrite(void) {
   TEST_ASSERT_FALSE(mulTwrStart(&twr,&radio,5,systemTime));
   TEST_ASSERT_FALSE(twr.active); TEST_ASSERT_FALSE(twr.delayValid); TEST_ASSERT_FALSE(started);
   mulAntennaConfigure(&radio); TEST_ASSERT_TRUE(mulAntennaValid(&radio));
+}
+
+// Set frozen DW1000 diagnostic registers for a chosen RSL, through the REAL
+// power estimator. Quantization is deliberate; reference correction uses that RSL.
+static void powerAt(float dbm, uint8_t prf) {
+  radio.channel=CHANNEL_2; radio.pulseFrequency=prf;
+  const unsigned int n=dbm > -61 ? 100 : 1000;
+  float a=prf==TX_PULSE_FREQ_16MHZ ? 113.77f : 121.74f;
+  float fac=prf==TX_PULSE_FREQ_16MHZ ? 2.3334f : 1.1667f;
+  float estimated=dbm <= -88 ? dbm : (dbm-88*fac)/(1+fac);
+  uint16_t c=(uint16_t)lroundf(powf(10,(estimated+a)/10)*n*n/131072);
+  registers[RX_FINFO][2]=(n & 15)<<4; registers[RX_FINFO][3]=n>>4;
+  registers[RX_FQUAL][CIR_PWR_SUB]=c; registers[RX_FQUAL][CIR_PWR_SUB+1]=c>>8;
+}
+
+void test_mulPowerReusesBitcrazeInterpolationSignAndKeepsRawAtWrap(void) {
+  const float powers[]={-94,-90,-80,-79,-78,-76,-75,-64,-62};
+  for (unsigned int prf=1;prf<=2;prf++) for (unsigned int i=0;i<9;i++) {
+    powerAt(powers[i],prf);
+    dwTime_t reference={.full=0}; dwCorrectTimestamp(&radio,&reference);
+    mulPowerRx_t result=mulPowerCapture(&radio,0);
+    TEST_ASSERT_EQUAL_INT(mulPowerApplied,result.power.status);
+    TEST_ASSERT_EQUAL_UINT(prf,result.power.table);
+    TEST_ASSERT_EQUAL_UINT64(0,result.raw);
+    TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(reference.full),result.corrected);
+    TEST_ASSERT_EQUAL_INT64(mulTimestampDifference(reference.full,0),result.power.deltaDtu);
+    if (powers[i] <= -83 || (prf == 2 && powers[i] <= -80)) TEST_ASSERT_TRUE(result.power.deltaDtu<0);
+    if (powers[i] >= -75) TEST_ASSERT_TRUE(result.power.deltaDtu>0);
+  }
+  powerAt(-80,TX_PULSE_FREQ_64MHZ);
+  float base=-(dwGetReceivePower(&radio)+61)*0.5f;
+  int expected=-(int)((21+(base-9)*14)*DISTANCE_OF_RADIO_INV*0.001f);
+  TEST_ASSERT_EQUAL_INT(expected,mulPowerCapture(&radio,0).power.deltaDtu);
+  TEST_ASSERT_EQUAL_INT(-5,expected); // About +28 mm range bias: RX moves earlier.
+}
+
+void test_mulPowerUnavailableDoesNotAlterTimestamp(void) {
+  const float outside[]={-100,-96,-60,-50};
+  for (unsigned int i=0;i<4;i++) {
+    powerAt(outside[i],TX_PULSE_FREQ_64MHZ);
+    mulPowerRx_t result=mulPowerCapture(&radio,MUL_TIMESTAMP_MASK);
+    TEST_ASSERT_EQUAL_INT(mulPowerOutOfRange,result.power.status);
+    TEST_ASSERT_EQUAL_UINT64(MUL_TIMESTAMP_MASK,result.raw);
+    TEST_ASSERT_EQUAL_UINT64(result.raw,result.corrected);
+    TEST_ASSERT_EQUAL_INT(0,result.power.deltaDtu);
+  }
+  memset(registers[RX_FINFO],0,LEN_RX_FINFO);
+  memset(registers[RX_FQUAL],0,LEN_RX_FQUAL);
+  TEST_ASSERT_EQUAL_INT(mulPowerInvalid,mulPowerCapture(&radio,123).power.status);
+  powerAt(-80,TX_PULSE_FREQ_64MHZ);
+  radio.channel=CHANNEL_4;
+  TEST_ASSERT_EQUAL_INT(mulPowerUnsupported,mulPowerCapture(&radio,123).power.status);
+  radio.channel=0;
+  TEST_ASSERT_EQUAL_INT(mulPowerUnsupported,mulPowerCapture(&radio,123).power.status);
+  radio.channel=CHANNEL_2; radio.pulseFrequency=0;
+  TEST_ASSERT_EQUAL_INT(mulPowerUnsupported,mulPowerCapture(&radio,123).power.status);
 }

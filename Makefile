@@ -38,7 +38,7 @@ OBJS+=src/cfg.o src/usbcomm.o src/test_support.o src/production_test.o
 OBJS+=src/uwb.o src/uwb_twr_anchor.o src/uwb_sniffer.o src/uwb_twr_tag.o
 OBJS+=src/lpp.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o
 OBJS+=src/mul_common.o src/mul_alr.o src/mul_rlr.o
-OBJS+=src/mul_rx.o
+OBJS+=src/mul_rx.o src/mul_power.o
 OBJS+=src/mul_clock.o
 OBJS+=src/mul_twr.o
 
