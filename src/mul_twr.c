@@ -25,6 +25,13 @@ void mulTwrEncode(uint8_t frame[MUL_TWR_FRAME_LENGTH], const mulTwrPacket_t *pac
   for (unsigned int i = 0; i < 6; i++) {
     mulEncodeTimestamp(frame + 29 + 5*i, packet->stamps[i]);
   }
+  frame[68]=1; // Explicit extension version; legacy peers require the same build.
+  for (unsigned int i=0;i<3;i++) {
+    unsigned int at=69+5*i;
+    uint16_t p=(uint16_t)packet->power[i].powerCentiDbm;
+    frame[at]=p; frame[at+1]=p>>8; frame[at+2]=(uint8_t)packet->power[i].deltaDtu;
+    frame[at+3]=packet->power[i].status; frame[at+4]=packet->power[i].table;
+  }
   mulEncodeTimestamp(frame + 59, packet->txTimestamp);
   for (unsigned int i = 0; i < 4; i++) {
     frame[64+i] = packet->tof >> (8*i);
@@ -34,7 +41,7 @@ void mulTwrEncode(uint8_t frame[MUL_TWR_FRAME_LENGTH], const mulTwrPacket_t *pac
 bool mulTwrDecode(const uint8_t *frame, size_t length, mulTwrPacket_t *packet)
 {
   if (frame == NULL || packet == NULL || length != MUL_TWR_FRAME_LENGTH ||
-      frame[0] != 0x41 || frame[1] != 0xdc || frame[3] != 0xcf || frame[4] != 0xbc ||
+      frame[68] != 1 || frame[0] != 0x41 || frame[1] != 0xdc || frame[3] != 0xcf || frame[4] != 0xbc ||
       memcmp(frame+21, "MUL", 3) || frame[24] < mulTwrPoll || frame[24] > mulTwrResult ||
       frame[2] != frame[25]) {
     return false;
@@ -50,6 +57,20 @@ bool mulTwrDecode(const uint8_t *frame, size_t length, mulTwrPacket_t *packet)
   }
   for (unsigned int i = 0; i < 6; i++) {
     result.stamps[i] = mulDecodeTimestamp(frame + 29 + 5*i);
+  }
+  for (unsigned int i=0;i<3;i++) {
+    unsigned int at=69+5*i;
+    mulPower_t *p=&result.power[i];
+    uint16_t bits=(uint16_t)frame[at] | (uint16_t)frame[at+1]<<8;
+    p->powerCentiDbm=bits <= INT16_MAX ? (int16_t)bits : (int16_t)((int32_t)bits-65536);
+    p->deltaDtu=frame[at+2] <= INT8_MAX ? (int8_t)frame[at+2] : (int8_t)((int)frame[at+2]-256);
+    p->status=frame[at+3]; p->table=frame[at+4];
+    unsigned int count=result.type==mulTwrPoll ? 0 : result.type==mulTwrResponse ? 1 : result.type==mulTwrFinal ? 2 : 3;
+    if (p->status > mulPowerUnsupported || p->table > 2 || p->deltaDtu < -64 || p->deltaDtu > 64 ||
+        (p->status != mulPowerApplied && p->deltaDtu != 0) ||
+        (p->status == mulPowerApplied && (p->table == 0 || p->powerCentiDbm < -9500 || p->powerCentiDbm > -6100)) ||
+        ((i >= count || p->status == mulPowerMissing) &&
+         (p->status || p->table || p->powerCentiDbm || p->deltaDtu))) return false;
   }
   result.txTimestamp = mulDecodeTimestamp(frame+59);
   unsigned int used = result.type == mulTwrPoll ? 1 : result.type == mulTwrResponse ? 3 :
@@ -95,6 +116,36 @@ bool mulTwrCalculate(const uint64_t t[6], uint32_t *tof)
   if (rounded > (uint64_t)MUL_CLOCK_DELAY_MAX_DTU) return false;
   *tof = (uint32_t)rounded;
   return true;
+}
+
+bool mulTwrResults(const uint64_t stamps[6], const mulPower_t power[3],
+  uint32_t *raw, uint32_t *corrected)
+{
+  uint64_t original[6]; memcpy(original,stamps,sizeof(original));
+  bool complete=true;
+  for (unsigned int i=0;i<3;i++) {
+    original[2*i+1]=mulTimestampMask(original[2*i+1]-power[i].deltaDtu);
+    if (power[i].status != mulPowerApplied) complete=false;
+  }
+  *corrected=UINT32_MAX;
+  if (!mulTwrCalculate(original,raw)) return false;
+  if (complete) mulTwrCalculate(stamps,corrected);
+  return true;
+}
+
+static bool evaluate(mulTwr_t *twr)
+{
+  uint32_t corrected;
+  if (!mulTwrResults(twr->stamps,twr->power,&twr->rawTof,&corrected)) return false;
+  twr->powerCorrected=corrected != UINT32_MAX;
+  twr->tof=twr->powerCorrected ? corrected : twr->rawTof;
+  return true;
+}
+
+static bool samePower(const mulPower_t *a, const mulPower_t *b)
+{
+  return a->powerCentiDbm==b->powerCentiDbm && a->deltaDtu==b->deltaDtu &&
+         a->status==b->status && a->table==b->table;
 }
 
 static uint64_t hardwareNow(dwDevice_t *dev)
@@ -171,6 +222,7 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   mulTwrPacket_t packet = {.type=type, .id=twr->id, .txTimestamp=twr->expectedTx,
                            .tof=type == mulTwrResult ? twr->tof : 0};
   memcpy(packet.stamps, twr->stamps, sizeof(packet.stamps));
+  memcpy(packet.power, twr->power, sizeof(packet.power));
   uint8_t frame[MUL_TWR_FRAME_LENGTH+2] = {0}; // libdw1000 reads two FCS reserve bytes.
   mulTwrEncode(frame, &packet);
   dwSetData(dev, frame, MUL_TWR_FRAME_LENGTH);
@@ -196,6 +248,7 @@ bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t ori
   twr->attempted = twr->active = true;
   twr->windowEnd = mulTimestampMask(origin+MUL_TWR_END_MS*MUL_TWR_DTU_PER_MS);
   memset(twr->stamps, 0, sizeof(twr->stamps));
+  memset(twr->power, 0, sizeof(twr->power));
   return sendPacket(twr, dev, mulTwrPoll, mulTimestampMask(origin+MUL_TWR_POLL_MS*MUL_TWR_DTU_PER_MS));
 }
 
@@ -203,24 +256,29 @@ static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
 {
   // Only after RESULT: no next TWR TX to schedule, >200 ms before broadcast prep.
   // Keep this and OK/SYNC below the 512-byte USB queue for one completion.
-  printf("MUL TWR D: id=%" PRIu32 " tx_antd=%u rx_antd=%u source=%s P=",
+  printf("MUL TWR D: id=%" PRIu32 " ant=%u/%u cal=LPS P=",
     twr->id, (unsigned int)dwSpiRead16(dev, TX_ANTD, NO_SUB),
-    (unsigned int)dwSpiRead16(dev, LDE_IF, LDE_RXANTD_SUB), MUL_ANTENNA_SOURCE);
+    (unsigned int)dwSpiRead16(dev, LDE_IF, LDE_RXANTD_SUB));
   for (unsigned int i=0; i<6; i++) {
     printf("%02X%08" PRIX32 "%s", (unsigned int)(twr->stamps[i]>>32),
       (uint32_t)twr->stamps[i], i == 5 ? "" : ",");
   }
-  printf(" I=%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 "\r\n",
+  printf(" raw_tof=%" PRIu32 " corrected_tof=",twr->rawTof);
+  if (twr->powerCorrected) printf("%" PRIu32,twr->tof); else printf("UNAVAILABLE");
+  printf(" I=%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 " Q=",
     (uint32_t)mulTimestampDifference(twr->stamps[3],twr->stamps[0]),
     (uint32_t)mulTimestampDifference(twr->stamps[4],twr->stamps[3]),
     (uint32_t)mulTimestampDifference(twr->stamps[5],twr->stamps[2]),
     (uint32_t)mulTimestampDifference(twr->stamps[2],twr->stamps[1]));
+  for (unsigned int i=0;i<3;i++) printf("%d/%d/%u/%u%s",twr->power[i].powerCentiDbm,
+    twr->power[i].deltaDtu,twr->power[i].status,twr->power[i].table,i==2 ? "\r\n" : ",");
   // Vacuum speed of light 299792458 m/s; display integer millimetres, not an accuracy claim.
   uint32_t mm = (uint32_t)(((uint64_t)twr->tof*UINT64_C(299792458000) + UINT64_C(31948800000)) /
                          UINT64_C(63897600000));
   printf("MUL TWR: id=%" PRIu32 " role=%s ref=0x84 fol=0x85 result=OK tof_dtu=%" PRIu32
-         " distance_m=%" PRIu32 ".%03" PRIu32 " uncertainty=UNKNOWN\r\n",
-         twr->id, role == mulAlrReference ? "INIT" : "RESP", twr->tof, mm/1000, mm%1000);
+         " distance_m=%" PRIu32 ".%03" PRIu32 " power=%s raw_mm=%" PRIu32 " uncertainty=UNKNOWN\r\n",
+         twr->id, role == mulAlrReference ? "INIT" : "RESP", twr->tof, mm/1000, mm%1000, twr->powerCorrected ? "APPLIED" : "UNAVAILABLE",
+         (uint32_t)(((uint64_t)twr->rawTof*UINT64_C(299792458000)+UINT64_C(31948800000))/UINT64_C(63897600000)));
 }
 
 bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_t role,
@@ -282,10 +340,11 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     return true;
   }
   dwTime_t rx = {.full=0};
-  // RX_STAMP already includes LDE_RXANTD. Do not apply the driver's optional
-  // received-power bias table or the old TWR code's extra hardcoded antenna offset.
+  // RX_STAMP already includes LDE_RXANTD; keep it for timing guards/replies.
   dwGetRawReceiveTimestamp(dev, &rx);
   rx.full = mulTimestampMask(rx.full);
+  mulPowerRx_t capture={.raw=rx.full,.corrected=rx.full};
+  if (packet.type <= mulTwrFinal) capture=mulPowerCapture(dev,rx.full);
   int64_t captureAge = mulTimestampDifference(hardwareNow(dev), rx.full);
   if (captureAge < 0 || captureAge > (int64_t)(15*MUL_TWR_DTU_PER_MS)) {
     if (twr->active) mulTwrCancel(twr, dev, "rx_stamp", false); else mulRxRearm(dev);
@@ -301,6 +360,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
       return true;
     }
     memset(twr->stamps, 0, sizeof(twr->stamps));
+    memset(twr->power, 0, sizeof(twr->power));
     twr->id = sequence;
     twr->attempted = twr->active = true;
     twr->delayValid = false; // Never re-date an earlier estimate while a new exchange runs.
@@ -311,13 +371,15 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     twr->measuredMs = nowMs - (uint32_t)(((uint64_t)captureAge + MUL_TWR_DTU_PER_MS - 1) /
                                         MUL_TWR_DTU_PER_MS);
     twr->stamps[0] = packet.stamps[0];
-    twr->stamps[1] = rx.full;
+    twr->stamps[1] = capture.corrected; twr->power[0]=capture.power;
     sendPacket(twr, dev, mulTwrResponse, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
     return true;
   }
   unsigned int prefix = packet.type == mulTwrResponse ? 1 : packet.type == mulTwrFinal ? 3 :
                         packet.type == mulTwrReport ? 5 : 6;
-  if (!twr->active || packet.type != twr->stage || packet.id != twr->id ||
+  bool metadataMatch=true;
+  for (unsigned int i=0;i<prefix/2;i++) if (!samePower(&packet.power[i],&twr->power[i])) metadataMatch=false;
+  if (!metadataMatch || !twr->active || packet.type != twr->stage || packet.id != twr->id ||
       memcmp(packet.stamps, twr->stamps, prefix*sizeof(uint64_t))) {
     if (twr->active) mulTwrCancel(twr, dev, "exchange", false); else mulRxRearm(dev);
     return true;
@@ -327,27 +389,26 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
       mulTwrCancel(twr, dev, "response_interval", false);
       return true;
     }
-    twr->stamps[1] = packet.stamps[1]; twr->stamps[2] = packet.stamps[2]; twr->stamps[3] = rx.full;
+    twr->stamps[1] = packet.stamps[1]; twr->stamps[2] = packet.stamps[2]; twr->stamps[3] = capture.corrected;
+    twr->power[0]=packet.power[0]; twr->power[1]=capture.power;
     sendPacket(twr, dev, mulTwrFinal, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
   } else if (packet.type == mulTwrFinal) {
-    twr->stamps[3] = packet.stamps[3]; twr->stamps[4] = packet.stamps[4]; twr->stamps[5] = rx.full;
-    uint32_t tof;
-    if (!mulTwrCalculate(twr->stamps, &tof)) mulTwrCancel(twr, dev, "intervals", false);
+    twr->stamps[3] = packet.stamps[3]; twr->stamps[4] = packet.stamps[4]; twr->stamps[5] = capture.corrected;
+    twr->power[1]=packet.power[1]; twr->power[2]=capture.power;
+    if (!evaluate(twr)) mulTwrCancel(twr, dev, "intervals", false);
     else sendPacket(twr, dev, mulTwrReport, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
   } else if (packet.type == mulTwrReport) {
-    twr->stamps[5] = packet.stamps[5];
-    if (!interval(packet.txTimestamp,packet.stamps[5]) || !mulTwrCalculate(twr->stamps, &twr->tof))
+    twr->stamps[5] = packet.stamps[5]; twr->power[2]=packet.power[2];
+    if (!interval(packet.txTimestamp,packet.stamps[5]) || !evaluate(twr))
       mulTwrCancel(twr, dev, "range", false);
     else sendPacket(twr, dev, mulTwrResult, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
   } else if (packet.type == mulTwrResult) {
-    uint32_t tof;
     int64_t resultInterval = mulTimestampDifference(packet.txTimestamp, twr->stamps[4]);
     if (resultInterval < (int64_t)(30*MUL_TWR_DTU_PER_MS) ||
         resultInterval > (int64_t)(60*MUL_TWR_DTU_PER_MS) ||
-        !mulTwrCalculate(twr->stamps, &tof) || tof != packet.tof) {
+        !evaluate(twr) || twr->tof != packet.tof) {
       mulTwrCancel(twr, dev, "result", false);
     } else {
-      twr->tof = tof;
       twr->delayValid = true;
       twr->syncDirty = true;
       twr->active = false;

@@ -4,6 +4,8 @@
 #include "mul_common.h"
 #include "mul_clock.h"
 #include "mul_twr.h"
+#include "mul_power.h"
+#include <math.h>
 
 #include <string.h>
 
@@ -906,3 +908,6 @@ void test_mulFollowerClockDiscontinuityDoesNotChangeRadioPolicy(void) {
   TEST_ASSERT_EQUAL_INT(mulClockValid, followerClock.status);
   TEST_ASSERT_EQUAL_INT32(0, followerClock.skewPpb);
 }
+
+float dwGetReceivePower(dwDevice_t *device) { (void)device; return NAN; }
+void dwCorrectTimestamp(dwDevice_t *device,dwTime_t *t) { (void)device; (void)t; TEST_FAIL_MESSAGE("Unavailable power must not correct"); }

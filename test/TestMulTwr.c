@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "unity.h"
 #include "mul_twr.h"
+#include "mul_power.h"
+#include <math.h>
 #include "mul_common.h"
 #include "mul_clock.h"
 #include "mul_rx.h"
@@ -23,6 +25,7 @@ typedef struct {
   int64_t stampError, dxError;
   uint64_t setupLag;
   bool armed, receiving;
+  float powerDbm; int8_t powerDelta; int16_t rxBiasDtu; unsigned int corrections;
 } FakeRadio;
 static FakeRadio radios[2];
 static mulTwr_t contexts[2];
@@ -92,6 +95,11 @@ void dwGetData(dwDevice_t *dev, uint8_t *data, unsigned int size) {
   TEST_ASSERT_EQUAL_UINT(radio(dev)->rxLength,size); memcpy(data,radio(dev)->rx,size);
 }
 
+float dwGetReceivePower(dwDevice_t *dev) { return radio(dev)->powerDbm; }
+void dwCorrectTimestamp(dwDevice_t *dev,dwTime_t *t) {
+  radio(dev)->corrections++; t->full+=radio(dev)->powerDelta;
+}
+
 static long double rate(int node) { return node == 0 ? 1.0L : 1.0L+skew/1e9L; }
 static uint64_t clockAt(int node, int64_t at) {
   return mulTimestampMask(offsets[node]+llroundl(at*rate(node)));
@@ -135,6 +143,8 @@ void setUp(void) {
     radios[i].antenna=radios[i].physicalTx=MUL_ANTENNA_TX_DTU;
     radios[i].rxAntenna=radios[i].physicalRx=MUL_ANTENNA_RX_DTU;
     radios[i].device.antennaDelay.full=MUL_ANTENNA_TX_DTU;
+    radios[i].device.channel=CHANNEL_2; radios[i].device.pulseFrequency=TX_PULSE_FREQ_64MHZ;
+    radios[i].powerDbm=NAN;
   }
   offsets[0]=MUL_TIMESTAMP_MASK-660*MS; offsets[1]=UINT64_C(0x723456789a);
   skew=0; flight=0; physical=framePhysical=0; ticks=5000;
@@ -154,7 +164,7 @@ static void transfer(int from) {
   int64_t when=sendTime(from);
   advance(when+(int64_t)MS); s->armed=false; dispatch(from,eventPacketSent);
   advance(when+flight+2*(int64_t)MS);
-  memcpy(r->rx,payload,length); r->rxLength=length; r->arrival=mulTimestampMask(clockAt(to,when+flight)+r->physicalRx-r->rxAntenna); r->receiving=false;
+  memcpy(r->rx,payload,length); r->rxLength=length; r->arrival=mulTimestampMask(clockAt(to,when+flight)+r->physicalRx-r->rxAntenna+r->rxBiasDtu); r->receiving=false;
   dispatch(to,eventPacketReceived);
 }
 static void completeExchange(void) { transfer(0); transfer(1); transfer(0); transfer(1); transfer(0); }
@@ -558,4 +568,67 @@ void test_mulTwrFullExchangeWithUnequalPhysicalTxRxAllocation(void) {
     completeExchange(); TEST_ASSERT_TRUE(ctx(1)->delayValid);
     TEST_ASSERT_UINT32_WITHIN(1,1066,ctx(1)->tof);
   }
+}
+
+void test_mulTwrReceiverOwnedPowerCorrectionPreservesRawAndNeverCorrectsTxOrEcho(void) {
+  scenario(5000,2131);
+  radios[1].powerDbm=-80; radios[1].powerDelta=-10; radios[1].rxBiasDtu=10;
+  radios[0].powerDbm=-75; radios[0].powerDelta=5; radios[0].rxBiasDtu=-5;
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  transfer(0); // P2, follower ownership.
+  TEST_ASSERT_EQUAL_INT(-10,ctx(1)->power[0].deltaDtu);
+  transfer(1); // P4, reference ownership.
+  TEST_ASSERT_EQUAL_INT(5,ctx(0)->power[1].deltaDtu);
+  radios[1].powerDelta=-20; radios[1].rxBiasDtu=20;
+  transfer(0); // P6, follower ownership, different correction from P2.
+  transfer(1); transfer(0);
+  TEST_ASSERT_TRUE(ctx(1)->delayValid); TEST_ASSERT_TRUE(ctx(1)->powerCorrected);
+  TEST_ASSERT_EQUAL_UINT(1,radios[0].corrections); TEST_ASSERT_EQUAL_UINT(2,radios[1].corrections);
+  TEST_ASSERT_UINT32_WITHIN(1,2131,ctx(1)->tof);
+  TEST_ASSERT_TRUE(ctx(1)->rawTof != ctx(1)->tof);
+  TEST_ASSERT_EQUAL_UINT32(ctx(0)->rawTof,ctx(1)->rawTof);
+  TEST_ASSERT_EQUAL_INT(-20,ctx(0)->power[2].deltaDtu);
+  uint64_t raw[6]; memcpy(raw,ctx(1)->stamps,sizeof(raw));
+  for (unsigned int i=0;i<3;i++) raw[2*i+1]=mulTimestampMask(raw[2*i+1]-ctx(1)->power[i].deltaDtu);
+  uint32_t check; TEST_ASSERT_TRUE(mulTwrCalculate(raw,&check));
+  TEST_ASSERT_EQUAL_UINT32(check,ctx(1)->rawTof);
+}
+
+void test_mulTwrMissingPowerKeepsRawResultWithoutClaimingFullCorrection(void) {
+  scenario(-10000,1066);
+  radios[1].powerDbm=-80; radios[1].powerDelta=-10; radios[1].rxBiasDtu=10;
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  completeExchange();
+  TEST_ASSERT_TRUE(ctx(1)->delayValid); TEST_ASSERT_FALSE(ctx(1)->powerCorrected);
+  TEST_ASSERT_EQUAL_UINT32(ctx(1)->rawTof,ctx(1)->tof);
+  TEST_ASSERT_EQUAL_INT(mulPowerInvalid,ctx(1)->power[1].status);
+  TEST_ASSERT_EQUAL_INT(mulPowerApplied,ctx(1)->power[0].status);
+}
+
+void test_mulTwrPowerMetadataStrictVersionBoundsAndMissing(void) {
+  mulTwrPacket_t p={.type=mulTwrReport,.id=5};
+  uint8_t frame[MUL_TWR_FRAME_LENGTH]; mulTwrEncode(frame,&p);
+  mulTwrPacket_t decoded; TEST_ASSERT_TRUE(mulTwrDecode(frame,sizeof(frame),&decoded));
+  TEST_ASSERT_EQUAL_INT(mulPowerMissing,decoded.power[0].status);
+  TEST_ASSERT_FALSE(mulTwrDecode(frame,68,&decoded)); // Legacy format is explicitly incompatible.
+  const unsigned int bad[]={68,69,71,72,73};
+  for (unsigned int i=0;i<5;i++) {
+    uint8_t saved=frame[bad[i]]; frame[bad[i]]=255;
+    TEST_ASSERT_FALSE(mulTwrDecode(frame,sizeof(frame),&decoded)); frame[bad[i]]=saved;
+  }
+  p.power[0]=(mulPower_t){.status=mulPowerApplied,.table=2,.powerCentiDbm=-8000,.deltaDtu=-5};
+  mulTwrEncode(frame,&p); TEST_ASSERT_TRUE(mulTwrDecode(frame,sizeof(frame),&decoded));
+  TEST_ASSERT_EQUAL_INT(-8000,decoded.power[0].powerCentiDbm);
+  TEST_ASSERT_EQUAL_INT(-5,decoded.power[0].deltaDtu);
+  p.type=mulTwrPoll; mulTwrEncode(frame,&p);
+  TEST_ASSERT_FALSE(mulTwrDecode(frame,sizeof(frame),&decoded)); // Future/receiver metadata forbidden.
+}
+
+void test_mulTwrAlteredEchoPowerMetadataCancelsWithoutPublication(void) {
+  scenario(0,1066); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  transfer(0); transfer(1); transfer(0);
+  // REPORT carries altered P4 metadata despite identical six timestamps.
+  radios[1].tx[69+5+3]=mulPowerMissing;
+  radios[1].tx[69+5]=radios[1].tx[69+5+1]=radios[1].tx[69+5+4]=0;
+  transfer(1); TEST_ASSERT_FALSE(ctx(0)->active); TEST_ASSERT_FALSE(ctx(1)->delayValid);
 }

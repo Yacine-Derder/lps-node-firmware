@@ -223,6 +223,7 @@ void test_mulTwrRealDriverPollFinalResultTimestampsAndRxTransitions(void) {
   twrRealTxComplete();
   mulTwrPacket_t report={.type=mulTwrReport,.id=5};
   memcpy(report.stamps,context.stamps,sizeof(report.stamps));
+  memcpy(report.power,context.power,sizeof(report.power));
   report.stamps[5]=mulTimestampMask(response.stamps[1]+mulTimestampDifference(context.stamps[4],p1));
   report.txTimestamp=mulTimestampMask(report.stamps[5]+20*ms);
   twrRealRx(&report,mulTimestampMask(context.stamps[4]+20*ms+2*tof));
@@ -249,6 +250,7 @@ void test_mulTwrRealDriverResponseReportAndResultAcceptance(void) {
   twrRealTxComplete();
   mulTwrPacket_t final={.type=mulTwrFinal,.id=5};
   memcpy(final.stamps,context.stamps,sizeof(final.stamps));
+  memcpy(final.power,context.power,sizeof(final.power));
   uint64_t db=(uint64_t)mulTimestampDifference(context.stamps[2],p2);
   final.stamps[3]=mulTimestampMask(final.stamps[0]+db+2*tof);
   final.stamps[4]=mulTimestampMask(final.stamps[3]+20*ms); final.txTimestamp=final.stamps[4];
@@ -257,6 +259,7 @@ void test_mulTwrRealDriverResponseReportAndResultAcceptance(void) {
   twrRealTxComplete(); TEST_ASSERT_FALSE(context.delayValid);
   mulTwrPacket_t result={.type=mulTwrResult,.id=5,.tof=tof};
   memcpy(result.stamps,context.stamps,sizeof(result.stamps));
+  memcpy(result.power,context.power,sizeof(result.power));
   result.txTimestamp=mulTimestampMask(context.stamps[4]+40*ms);
   twrRealRx(&result,mulTimestampMask(context.stamps[5]+40*ms));
   TEST_ASSERT_TRUE(context.delayValid); TEST_ASSERT_FALSE(context.active);

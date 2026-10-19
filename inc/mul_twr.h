@@ -4,8 +4,9 @@
 
 #include "mul_clock.h"
 #include "uwb.h"
+#include "mul_power.h"
 
-#define MUL_TWR_FRAME_LENGTH 68
+#define MUL_TWR_FRAME_LENGTH 84 // Original 68 bytes + version 1 + three 5-byte RX records.
 #define MUL_TWR_DTU_PER_MS UINT64_C(63897600)
 #define MUL_TWR_POLL_MS 650
 #define MUL_TWR_PREPARE_MS 630
@@ -26,6 +27,7 @@ typedef struct {
   uint32_t id; // Reference broadcast sequence defines the ranging superframe.
   uint64_t stamps[6]; // P1(ref TX), P2(fol RX), P3(fol TX), P4(ref RX), P5(ref TX), P6(fol RX).
   uint64_t txTimestamp; // This message's verified scheduled antenna TX time.
+  mulPower_t power[3]; // Receiver-owned P2/P4/P6 correction metadata.
   uint32_t tof; // RESULT only, reference DTU.
 } mulTwrPacket_t;
 
@@ -38,7 +40,9 @@ typedef struct {
   uint64_t epoch;
   uint32_t id;
   uint32_t measuredMs;
-  uint32_t tof;
+  uint32_t tof; // Fully corrected if available, otherwise RAW.
+  uint32_t rawTof;
+  mulPower_t power[3];
   mulTwrType_t stage;
   bool active;
   bool txPending;
@@ -47,11 +51,14 @@ typedef struct {
   bool syncAvailable;
   bool deferredCancel;
   bool syncDirty;
+  bool powerCorrected;
 } mulTwr_t;
 
 void mulTwrEncode(uint8_t frame[MUL_TWR_FRAME_LENGTH], const mulTwrPacket_t *packet);
 bool mulTwrDecode(const uint8_t *frame, size_t length, mulTwrPacket_t *packet);
 bool mulTwrCalculate(const uint64_t stamps[6], uint32_t *tofReferenceDtu);
+bool mulTwrResults(const uint64_t stamps[6], const mulPower_t power[3],
+  uint32_t *raw, uint32_t *corrected); // UINT32_MAX corrected means unavailable.
 void mulTwrInit(mulTwr_t *twr);
 void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool invalidateDelay);
 void mulTwrFlush(mulTwr_t *twr);

@@ -123,15 +123,17 @@ Update milestone status in place as evidence changes; Git preserves earlier stat
 
 ## Codex continuation checkpoint
 
-Stage 3C checkpoint 1 implemented: reusable `mulPowerCapture()` preserves raw
-RX_STAMP and reuses `dwGetReceivePower()` / `dwCorrectTimestamp()` and the
-Bitcraze 500 MHz 16/64 MHz PRF tables. Unsupported/invalid/out-of-range inputs
-retain raw values with explicit status; no correction is integrated into TWR yet.
-Validation: 137 host tests pass and firmware build passes. The initial checkpoint
-commit `7d49fc2` had a failing strong-signal fixture; its follow-up fixes simulated
-CIR power overflow without changing firmware. No known failing tests remain.
-Known limits: vendor endpoint-bin hold behavior retained; 900 MHz unsupported
-because its negative signed shifts are undefined. Physical bias remains unbounded.
-Next: checkpoint 2, transport per-RX correction metadata and preserve raw/corrected
-DS-TWR results. Latest completed commit is the commit containing this section;
-parent baseline `0e00b81` (a commit cannot contain its own hash).
+Stage 3C checkpoints 1–2 implemented. Previous pushed checkpoint: `6161e11`.
+CP2 is the commit containing this section; TWR now transports receiver-owned
+power metadata for P2/P4/P6 in a versioned 84-byte frame (both ALRs must upgrade).
+The unchanged equation produces raw and, only with all three corrections,
+corrected ToF; missing power preserves raw ranging. Mapping uses the selected
+result with physical uncertainty UNKNOWN. Diagnostics show power/status/table,
+corrections, raw/corrected ToF and distance. Broadcasts remain 34 bytes.
+Validation: 141 host tests pass, including distributed ownership/echo checks,
+missing metadata, wraparound and real-driver correction. Firmware build passes.
+No known failing tests. Initial CP1 fixture failure at `7d49fc2` fixed in `6161e11`.
+Limits: 900 MHz PHY correction unsupported; vendor endpoint-bin holds retained;
+power correction does not explain or bound all physical range error.
+Next exact task: checkpoint 3, bounded RLR observations with raw/corrected RX,
+full clock identities, power metadata and locally known generation metadata.
