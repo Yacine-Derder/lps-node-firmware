@@ -144,15 +144,18 @@ Codex. Stage 4 remains pending; do not infer accuracy from successful ranging.
 
 ## Codex continuation checkpoint
 
-Stage 3D CP1–CP3 implemented. Previous pushed checkpoint `c974fb8`; CP3 is this
-commit. Passive RLR retains current-frame relation metadata, checks hardware RX
-age and associated reference sequence/TX/domain, and rejects epoch transitions
-until fresh cadence. Legacy/unavailable metadata replaces previous values.
-PAIR can now report clock_relation=AVAILABLE, with tdoa still UNAVAILABLE.
-Validation: 160 host tests and clean build pass, including real receive-path
-epoch transitions and source/age/mismatch rejection. No known failures.
-Mode-exclusive ALR TWR/RLR relation+rate scratch shares 128 bytes; static RAM
-unchanged from CP2, with 20 bytes beyond existing stack reservations.
-Next: CP4, reuse the existing skew estimator for opt-in stationary RLR cadence
-rate, explicitly convert RX intervals to reference units, preserve signed raw/
-corrected TDoA and UNKNOWN physical uncertainty; default rate unavailable.
+Stage 3D CP1–CP4 implemented. Previous pushed checkpoint `3c7262b`; CP4 is this
+commit. Corrected inter-ALR mapping converts follower TX into reference units;
+explicit RLR/reference rate conversion precedes signed RX-minus-TX subtraction.
+Raw/corrected intervals and TDoA are retained with UNKNOWN physical uncertainty.
+Default build reports RLR_RATE_UNAVAILABLE. Stationary bench opt-in is
+`EXTRA_CFLAGS=-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1`; rate=STATIC explicitly
+assumes constant path delay/RX bias. Existing skew estimator is reused only for
+rate, never an RLR arrival intercept. It resets on source/acquisition changes;
+stale/unbound/invalid rate or relation cannot yield AVAILABLE.
+Validation: 165 host tests and firmware build pass. Synthetic independent rates,
+signed/zero geometry, inter-ALR propagation, wrap, power fallback, invalid models
+and motion/rate ambiguity covered. No known failures. No physical validation yet.
+Next: CP5 full regression, ASan/UBSan including stationary opt-in integration,
+real-driver tests, clean builds, memory/stack review and documentation/hardware
+instructions. Keep Stage 4/5 pending; no hardware flashing.

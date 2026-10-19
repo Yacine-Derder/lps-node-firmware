@@ -972,3 +972,25 @@ void test_mulRlrRetainsCurrentRelationAndEpochTransitionsCannotReuseOldPair(void
   TEST_ASSERT_FALSE(mulRoleScratch.rlr.relation.available); TEST_ASSERT_FALSE(rlrAssociation.pending);
   TEST_ASSERT_EQUAL_UINT(0,txCount); TEST_ASSERT_TRUE(receiving);
 }
+
+void test_mulRlrStationaryRateUsesReferenceCadenceAndFreshCurrentMetadata(void) {
+  config.address[0]=0x86; mulRlrAlgorithm.init(&config,&dev);
+  for (unsigned int i=0;i<7;i++) {
+    testTick=100+i*1000;
+    deliver(referenceAddress,20+i,i*PERIOD_DTU,i*PERIOD_DTU,false);
+    mulRelation_t r={.epoch=10,.referenceSequence=20+i};
+    if (i==6) r=(mulRelation_t){.epoch=10,.referenceSequence=26,.twrSequence=25,.available=true,
+      .referenceOrigin=i*PERIOD_DTU,.followerOrigin=i*PERIOD_DTU,.originAgeMs=500,.delayAgeMs=850,.remainingMs=150};
+    testTick=600+i*1000;
+    deliverRelation(900+i,i*PERIOD_DTU+500*DTU_PER_MS,i*PERIOD_DTU+500*DTU_PER_MS,&r);
+  }
+  TEST_ASSERT_EQUAL_INT(mulClockValid,mulRoleScratch.rlr.rate.status);
+  TEST_ASSERT_EQUAL_INT32(0,mulRoleScratch.rlr.rate.skewPpb);
+  TEST_ASSERT_TRUE(mulRoleScratch.rlr.relation.available);
+  TEST_ASSERT_EQUAL_UINT(0,txCount); TEST_ASSERT_TRUE(receiving);
+  // Same wire epoch transition used by acquisition changes invalidates rate.
+  testTick=7100; deliver(referenceAddress,27,7*PERIOD_DTU,7*PERIOD_DTU,false);
+  mulRelation_t changed={.epoch=11,.referenceSequence=27};
+  testTick=7600; deliverRelation(907,7500*DTU_PER_MS,7500*DTU_PER_MS,&changed);
+  TEST_ASSERT_TRUE(mulRoleScratch.rlr.rate.status!=mulClockValid);
+}
