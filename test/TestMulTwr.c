@@ -2,6 +2,8 @@
 #include "unity.h"
 #include "mul_twr.h"
 #include "mul_relation.h"
+#include "mul_role_state.h"
+#include "mul_downlink.h"
 #include "mul_power.h"
 #include "mul_observation.h"
 #include <math.h>

@@ -5,6 +5,7 @@
 #include "mul_rx.h"
 #include "mul_twr.h"
 #include "mul_relation.h"
+#include "mul_role_state.h"
 #include "task.h"
 
 #include <inttypes.h>
@@ -39,7 +40,7 @@ static mulSourceState_t followerReference;
 static bool referenceAcquired;
 static TickType_t lastReferenceTick;
 static mulClock_t followerClock;
-static mulTwr_t ranging;
+#define ranging mulRoleScratch.twr
 static bool followerSeen;
 
 #define MUL_REFERENCE_LOSS_MS MUL_SOURCE_TIMEOUT_MS

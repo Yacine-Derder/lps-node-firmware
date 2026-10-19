@@ -4,6 +4,8 @@
 #include "mul_rx.h"
 #include "mul_power.h"
 #include "mul_observation.h"
+#include "mul_downlink.h"
+#include "mul_role_state.h"
 #include "task.h"
 
 #include <inttypes.h>
@@ -17,6 +19,7 @@ static mulAssociation_t rlrAssociation;
 
 static void mulRlrInit(uwbConfig_t *config, dwDevice_t *dev)
 {
+  memset(&mulRoleScratch,0,sizeof(mulRoleScratch));
   mulObservationInit(rlrObservations,config->address);
   memset(&rlrAssociation,0,sizeof(rlrAssociation));
   printf("MUL RLR: Mode initialized\r\n");
@@ -27,9 +30,16 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
 {
   mulTestPacket_t packet;
   uint64_t arrival = 0;
-  bool valid = event == eventPacketReceived && mulRxRead(dev, &packet, &arrival);
+  mulRelation_t relation={0};
+  uint32_t captureAgeMs=UINT32_MAX;
+  bool valid=event==eventPacketReceived && mulRxReadBroadcast(dev,&packet,&arrival,&relation);
   mulPowerRx_t rx={0};
   if (valid && mulAlrRoleForAddress(packet.source) != mulAlrUnsupported) rx=mulPowerCapture(dev,arrival);
+  if (valid && relation.available) {
+    dwTime_t hardware={.full=0}; dwGetSystemTimestamp(dev,&hardware);
+    int64_t elapsed=mulTimestampDifference(hardware.full,arrival);
+    if (elapsed>=0 && elapsed<=INT64_C(15)*63897600) captureAgeMs=(uint32_t)((elapsed+63897599)/63897600);
+  }
   mulRxRearm(dev); // Freeze timestamp AND power diagnostics before re-arming.
   uint32_t now=(uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS);
   mulAssociationExpire(&rlrAssociation,rlrObservations,now);
@@ -38,9 +48,18 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
     if (role != mulAlrUnsupported) {
       mulSequenceResult_t result;
       mulPair_t pair;
+      bool hadFollower=rlrObservations[1].source.hasSequence;
       bool associated=mulAssociate(&rlrAssociation,rlrObservations,&packet,&rx,now,&result,&pair);
       mulObservation_t *observation=&rlrObservations[role];
       mulSourceState_t *state=&observation->source;
+      if (role==mulAlrFollower && result!=mulSequenceDuplicate && result!=mulSequenceOld) {
+        if (hadFollower && relation.epoch!=mulRoleScratch.rlr.relation.epoch) {
+          associated=false; rlrAssociation.pending=false;
+          if (observation->generation==UINT32_MAX) observation->valid=false; else observation->generation++;
+        }
+        mulRoleScratch.rlr.relation=relation; // Even unavailable replaces previous metadata.
+        observation->remoteEpochKnown=relation.epoch!=0; // Acquisition-local, not a boot UUID.
+      }
       if (result != mulSequenceDuplicate && result != mulSequenceOld) {
         printf("MUL RLR: RX src=0x%02X seq=%" PRIu32
                " tx=0x%02X%08" PRIX32 " rx=0x%02X%08" PRIX32
@@ -55,6 +74,8 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
                observation->generation);
       }
       if (associated) {
+        int64_t txSeparation;
+        bool clockAvailable=mulDownlinkRelation(&relation,&pair,now,captureAgeMs,&txSeparation);
         uint64_t dt=(uint64_t)pair.rawArrivalDifferenceDtu;
         printf("MUL RLR: PAIR ref=0x84/%" PRIu32 " fol=0x85/%" PRIu32
           " status=ASSOCIATED raw_dt_dtu=0x%02X%08" PRIX32 " corrected_dt_dtu=",
@@ -64,8 +85,8 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
           dt=(uint64_t)pair.correctedArrivalDifferenceDtu;
           printf("0x%02X%08" PRIX32,(unsigned int)(dt>>32),(uint32_t)dt);
         } else printf("UNAVAILABLE");
-        printf(" slot_us=%" PRIu32 " clock_relation=UNAVAILABLE tdoa=UNAVAILABLE uncertainty=UNKNOWN\r\n",
-          (uint32_t)(((uint64_t)pair.rawArrivalDifferenceDtu*1000000+UINT64_C(31948800000))/UINT64_C(63897600000)));
+        printf(" slot_us=%" PRIu32 " clock_relation=%s tdoa=UNAVAILABLE uncertainty=UNKNOWN\r\n",
+          (uint32_t)(((uint64_t)pair.rawArrivalDifferenceDtu*1000000+UINT64_C(31948800000))/UINT64_C(63897600000)),clockAvailable ? "AVAILABLE" : "UNAVAILABLE");
       }
     }
   }

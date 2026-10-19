@@ -39,7 +39,7 @@ OBJS+=src/uwb.o src/uwb_twr_anchor.o src/uwb_sniffer.o src/uwb_twr_tag.o
 OBJS+=src/lpp.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o
 OBJS+=src/mul_common.o src/mul_alr.o src/mul_rlr.o
 OBJS+=src/mul_rx.o src/mul_power.o
-OBJS+=src/mul_clock.o src/mul_relation.o
+OBJS+=src/mul_clock.o src/mul_relation.o src/mul_role_state.o src/mul_downlink.o
 OBJS+=src/mul_twr.o src/mul_observation.o
 
 HALS+=gpio rcc cortex i2c pcd dma pcd_ex rcc_ex spi uart pwr

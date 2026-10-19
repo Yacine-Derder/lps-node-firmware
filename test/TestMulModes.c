@@ -5,6 +5,8 @@
 #include "mul_clock.h"
 #include "mul_twr.h"
 #include "mul_relation.h"
+#include "mul_role_state.h"
+#include "mul_downlink.h"
 #include "mul_power.h"
 #include "mul_observation.h"
 #include <math.h>
@@ -942,4 +944,31 @@ void test_mulRlrAssociatesPassivelyCapturesPowerBeforeRearmAndExpiresMissingFoll
   testTick=2801; mulRlrAlgorithm.onEvent(&dev,eventTimeout);
   TEST_ASSERT_FALSE(rlrAssociation.pending); TEST_ASSERT_TRUE(receiving);
   TEST_ASSERT_EQUAL_UINT(0,txCount);
+}
+
+static void deliverRelation(uint32_t sequence,uint64_t tx,uint64_t rx,const mulRelation_t *relation) {
+  mulTestPacket_t p={.source={0x85,0,0,0,0,0,0xcf,0xbc},.sequence=sequence,.txTimestamp=tx};
+  mulRelationEncode(rxFrame,&p,relation); rxLength=MUL_RELATION_FRAME_LENGTH;
+  incomingTimestamp=rx; hardwareNow=mulTimestampMask(rx+DTU_PER_MS); receiving=false;
+  mulRlrAlgorithm.onEvent(&dev,eventPacketReceived);
+}
+void test_mulRlrRetainsCurrentRelationAndEpochTransitionsCannotReuseOldPair(void) {
+  config.address[0]=0x86; mulRlrAlgorithm.init(&config,&dev);
+  mulRelation_t r={.epoch=10,.referenceSequence=20};
+  testTick=100; deliver(referenceAddress,20,0,0,false);
+  testTick=600; deliverRelation(900,500*DTU_PER_MS,500*DTU_PER_MS,&r);
+  TEST_ASSERT_TRUE(rlrObservations[1].remoteEpochKnown);
+  TEST_ASSERT_EQUAL_UINT64(10,mulRoleScratch.rlr.relation.epoch);
+  testTick=1100; deliver(referenceAddress,21,PERIOD_DTU,PERIOD_DTU,false);
+  r=(mulRelation_t){.epoch=10,.referenceSequence=21,.twrSequence=20,.available=true,
+    .referenceOrigin=PERIOD_DTU,.followerOrigin=PERIOD_DTU,.originAgeMs=500,.delayAgeMs=850,.remainingMs=150};
+  testTick=1600; deliverRelation(901,1500*DTU_PER_MS,1500*DTU_PER_MS,&r);
+  TEST_ASSERT_TRUE(mulRoleScratch.rlr.relation.available);
+  TEST_ASSERT_EQUAL_UINT32(1,rlrObservations[1].generation); TEST_ASSERT_FALSE(rlrAssociation.pending);
+  testTick=2100; deliver(referenceAddress,22,2*PERIOD_DTU,2*PERIOD_DTU,false);
+  r=(mulRelation_t){.epoch=11,.referenceSequence=22}; // New acquisition, no fresh TWR.
+  testTick=2600; deliverRelation(902,2500*DTU_PER_MS,2500*DTU_PER_MS,&r);
+  TEST_ASSERT_EQUAL_UINT32(2,rlrObservations[1].generation);
+  TEST_ASSERT_FALSE(mulRoleScratch.rlr.relation.available); TEST_ASSERT_FALSE(rlrAssociation.pending);
+  TEST_ASSERT_EQUAL_UINT(0,txCount); TEST_ASSERT_TRUE(receiving);
 }

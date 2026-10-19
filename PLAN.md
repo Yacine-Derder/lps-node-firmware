@@ -144,16 +144,15 @@ Codex. Stage 4 remains pending; do not infer accuracy from successful ranging.
 
 ## Codex continuation checkpoint
 
-Stage 3D CP1–CP2 implemented. Previous pushed checkpoint `ba81341`; CP2 is this
-commit. Follower broadcasts are versioned 74 bytes, reference remains 34 bytes,
-TWR remains 84 bytes. Fresh reference clock estimation precedes metadata encoding;
-hardware slot scheduling and TX verification are unchanged. Corrected APIs check
-origin and follower TX at predicted TX uptime; unavailable/stale/missing/epoch-
-mismatched delays yield explicit unavailable metadata, never suppress broadcasts.
-Validation: 157 host tests and clean firmware build pass, including real-driver
-TX equality and a live TWR->next follower publication with wraparound. No failures.
-Next: CP3, retain/validate current-frame metadata at the passive RLR and bind it
-to associated reference sequence/TX and follower generation. Reuse mutually
-exclusive ALR TWR/RLR scratch storage before adding state (RAM currently tight).
-Default geometric TDoA must remain unavailable without an explicit justified RLR
-rate policy; stationary cadence-rate experiment will be opt-in.
+Stage 3D CP1–CP3 implemented. Previous pushed checkpoint `c974fb8`; CP3 is this
+commit. Passive RLR retains current-frame relation metadata, checks hardware RX
+age and associated reference sequence/TX/domain, and rejects epoch transitions
+until fresh cadence. Legacy/unavailable metadata replaces previous values.
+PAIR can now report clock_relation=AVAILABLE, with tdoa still UNAVAILABLE.
+Validation: 160 host tests and clean build pass, including real receive-path
+epoch transitions and source/age/mismatch rejection. No known failures.
+Mode-exclusive ALR TWR/RLR relation+rate scratch shares 128 bytes; static RAM
+unchanged from CP2, with 20 bytes beyond existing stack reservations.
+Next: CP4, reuse the existing skew estimator for opt-in stationary RLR cadence
+rate, explicitly convert RX intervals to reference units, preserve signed raw/
+corrected TDoA and UNKNOWN physical uncertainty; default rate unavailable.
