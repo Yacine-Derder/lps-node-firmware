@@ -115,15 +115,17 @@ Update milestone status in place as evidence changes; Git preserves earlier stat
 
 ## Codex continuation checkpoint
 
-Stage 3C checkpoints 1–3 implemented. Previous pushed checkpoint: `8a93f47`.
-CP3 is the commit containing this section: two fixed RLR observation slots reuse
-source counters while retaining full source/receiver clock identities, raw and
-corrected RX, TX markers, power metadata, validity and receiver-local generation.
-Remote source epochs remain UNKNOWN; duplicates/old packets do not refresh age.
-The existing passive path freezes timestamp/power before RX re-arm. No association
-yet. CP2 TWR requires both ALRs on the versioned 84-byte format; broadcasts unchanged.
-Validation: 145 host tests and clean firmware build pass. No known failing tests.
-Physical accuracy remains unbounded; vendor endpoint holds and 900 MHz limitation
-still apply. Initial CP1 fixture failure fixed in `6161e11`.
-Next exact task: checkpoint 4, order/cadence/age/domain-checked association with
-raw/corrected RLR arrival differences and explicitly unavailable geometric TDoA.
+Stage 3C checkpoints 1–4 implemented. Previous pushed checkpoint: `1887dcd`.
+CP4 is the commit containing this section: bounded reference/follower association
+requires consecutive 1 Hz source progress in TX/RX/coarse clocks, reference-first
+order, 450–550 ms raw arrival separation, <=700 ms age, matching receiver domains
+and local generations. One candidate is consumed once; gaps/restarts require fresh
+cadence. Raw/corrected local differences are available, but inter-ALR clock relation
+and final geometric TDoA remain UNAVAILABLE because no clock model is broadcast.
+Validation: 151 host tests and clean firmware build pass. RLR integration remains
+passive and captures power before re-arm. No known failing tests. CP2 TWR uses a
+versioned 84-byte format; both ALRs must upgrade. Broadcasts remain 34 bytes.
+Limits: remote epochs UNKNOWN; power/antenna calibration and physical uncertainty
+unbounded; 900 MHz unsupported; vendor endpoint holds retained.
+Next exact task: checkpoint 5, full regression and all MUL ASan/UBSan, final clean
+build, update architecture/roadmap and exact physical validation instructions.

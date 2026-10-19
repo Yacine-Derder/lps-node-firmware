@@ -30,6 +30,8 @@ static unsigned int actualReads, aborts;
 static uint64_t programmedTimeError;
 static uint64_t packetTimestampError;
 static TickType_t testTick;
+static float simulatedPower;
+static int8_t simulatedCorrection;
 static uint64_t incomingTimestamp;
 
 TickType_t xTaskGetTickCount(void) { return testTick; }
@@ -177,6 +179,7 @@ void setUp(void) {
   programmedTimeError = 0;
   packetTimestampError = 0;
   testTick = 0;
+  simulatedPower=NAN; simulatedCorrection=0;
   incomingTimestamp = UINT64_C(0xfedcba9876);
   rxLength = sizeof(rxFrame);
   mulEncodeTestPacket(rxFrame, config.address, 42, UINT64_C(0x0123456789));
@@ -910,5 +913,27 @@ void test_mulFollowerClockDiscontinuityDoesNotChangeRadioPolicy(void) {
   TEST_ASSERT_EQUAL_INT32(0, followerClock.skewPpb);
 }
 
-float dwGetReceivePower(dwDevice_t *device) { (void)device; return NAN; }
-void dwCorrectTimestamp(dwDevice_t *device,dwTime_t *t) { (void)device; (void)t; TEST_FAIL_MESSAGE("Unavailable power must not correct"); }
+float dwGetReceivePower(dwDevice_t *device) { (void)device; TEST_ASSERT_FALSE(receiving); return simulatedPower; }
+void dwCorrectTimestamp(dwDevice_t *device,dwTime_t *t) { (void)device; TEST_ASSERT_TRUE(isfinite(simulatedPower)); t->full+=simulatedCorrection; }
+
+void test_mulRlrAssociatesPassivelyCapturesPowerBeforeRearmAndExpiresMissingFollower(void) {
+  const uint8_t followerAddress[8]={0x85,0,0,0,0,0,0xcf,0xbc};
+  config.address[0]=0x86; dev.channel=CHANNEL_2; dev.pulseFrequency=TX_PULSE_FREQ_64MHZ;
+  mulRlrAlgorithm.init(&config,&dev);
+  simulatedPower=-80; simulatedCorrection=-5;
+  testTick=100; deliver(referenceAddress,20,100,0,false);
+  testTick=600; deliver(followerAddress,900,200,500*DTU_PER_MS,false);
+  testTick=1100;
+  TEST_ASSERT_EQUAL_UINT32(701,deliver(referenceAddress,21,100+PERIOD_DTU,PERIOD_DTU,false));
+  TEST_ASSERT_TRUE(rlrAssociation.pending);
+  TEST_ASSERT_EQUAL_INT(mulPowerApplied,rlrObservations[0].power.status);
+  TEST_ASSERT_EQUAL_UINT64(PERIOD_DTU-5,rlrObservations[0].correctedRx);
+  testTick=1600; deliver(followerAddress,901,200+PERIOD_DTU,1500*DTU_PER_MS,false);
+  TEST_ASSERT_FALSE(rlrAssociation.pending); TEST_ASSERT_TRUE(receiving);
+  TEST_ASSERT_EQUAL_UINT(0,txCount);
+  testTick=2100; deliver(referenceAddress,22,100+2*PERIOD_DTU,2*PERIOD_DTU,false);
+  TEST_ASSERT_TRUE(rlrAssociation.pending);
+  testTick=2801; mulRlrAlgorithm.onEvent(&dev,eventTimeout);
+  TEST_ASSERT_FALSE(rlrAssociation.pending); TEST_ASSERT_TRUE(receiving);
+  TEST_ASSERT_EQUAL_UINT(0,txCount);
+}

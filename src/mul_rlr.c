@@ -13,10 +13,12 @@
 // Fixed slots keyed by the full identities in mulAlrRoleForAddress(). No dynamic
 // allocation. Each observation preserves the source and receiver clock domains.
 static mulObservation_t rlrObservations[MUL_ALR_COUNT];
+static mulAssociation_t rlrAssociation;
 
 static void mulRlrInit(uwbConfig_t *config, dwDevice_t *dev)
 {
   mulObservationInit(rlrObservations,config->address);
+  memset(&rlrAssociation,0,sizeof(rlrAssociation));
   printf("MUL RLR: Mode initialized\r\n");
   mulRxInit(dev);
 }
@@ -30,11 +32,13 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
   if (valid && mulAlrRoleForAddress(packet.source) != mulAlrUnsupported) rx=mulPowerCapture(dev,arrival);
   mulRxRearm(dev); // Freeze timestamp AND power diagnostics before re-arming.
   uint32_t now=(uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS);
-  mulObservationExpire(rlrObservations,now);
+  mulAssociationExpire(&rlrAssociation,rlrObservations,now);
   if (valid) {
     mulAlrRole_t role=mulAlrRoleForAddress(packet.source);
     if (role != mulAlrUnsupported) {
-      mulSequenceResult_t result=mulObservationRecord(rlrObservations,&packet,&rx,now);
+      mulSequenceResult_t result;
+      mulPair_t pair;
+      bool associated=mulAssociate(&rlrAssociation,rlrObservations,&packet,&rx,now,&result,&pair);
       mulObservation_t *observation=&rlrObservations[role];
       mulSourceState_t *state=&observation->source;
       if (result != mulSequenceDuplicate && result != mulSequenceOld) {
@@ -50,8 +54,22 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
                rx.power.powerCentiDbm,rx.power.deltaDtu,rx.power.status,rx.power.table,
                observation->generation);
       }
+      if (associated) {
+        uint64_t dt=(uint64_t)pair.rawArrivalDifferenceDtu;
+        printf("MUL RLR: PAIR ref=0x84/%" PRIu32 " fol=0x85/%" PRIu32
+          " status=ASSOCIATED raw_dt_dtu=0x%02X%08" PRIX32 " corrected_dt_dtu=",
+          pair.reference.source.sequence,pair.follower.source.sequence,
+          (unsigned int)(dt>>32),(uint32_t)dt);
+        if (pair.correctedAvailable) {
+          dt=(uint64_t)pair.correctedArrivalDifferenceDtu;
+          printf("0x%02X%08" PRIX32,(unsigned int)(dt>>32),(uint32_t)dt);
+        } else printf("UNAVAILABLE");
+        printf(" slot_us=%" PRIu32 " clock_relation=UNAVAILABLE tdoa=UNAVAILABLE uncertainty=UNKNOWN\r\n",
+          (uint32_t)(((uint64_t)pair.rawArrivalDifferenceDtu*1000000+UINT64_C(31948800000))/UINT64_C(63897600000)));
+      }
     }
   }
+  if (rlrAssociation.pending) return MUL_PAIR_MAX_AGE_MS+1-(now-rlrObservations[0].acceptedMs);
   return MAX_TIMEOUT;
 }
 

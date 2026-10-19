@@ -25,4 +25,32 @@ bool mulObservationFresh(const mulObservation_t *observation, uint32_t nowMs);
 void mulObservationExpire(mulObservation_t observations[2], uint32_t nowMs);
 mulSequenceResult_t mulObservationRecord(mulObservation_t observations[2],
   const mulTestPacket_t *packet, const mulPowerRx_t *rx, uint32_t nowMs);
+
+#define MUL_PAIR_MAX_AGE_MS 700
+// A single candidate reference, consumed once. No unbounded packet history.
+typedef struct {
+  uint32_t referenceSequence;
+  uint32_t referenceGeneration;
+  uint32_t followerGeneration;
+  bool pending;
+} mulAssociation_t;
+
+typedef struct {
+  mulObservation_t reference;
+  mulObservation_t follower;
+  int64_t rawArrivalDifferenceDtu;
+  int64_t correctedArrivalDifferenceDtu;
+  uint64_t physicalBoundDtu; // UINT64_MAX: UNKNOWN.
+  bool correctedAvailable;
+  bool clockRelationAvailable; // False: the follower's model is not broadcast.
+  bool geometricTdoaAvailable; // False: cannot remove unrelated TX clock offsets.
+} mulPair_t;
+
+void mulAssociationExpire(mulAssociation_t *association,
+  mulObservation_t observations[2], uint32_t nowMs);
+// Records/tracks first, then associates only consecutive, cadence-checked sources.
+// sequenceResult preserves the existing source diagnostics. pair only valid on true.
+bool mulAssociate(mulAssociation_t *association, mulObservation_t observations[2],
+  const mulTestPacket_t *packet, const mulPowerRx_t *rx, uint32_t nowMs,
+  mulSequenceResult_t *sequenceResult, mulPair_t *pair);
 #endif
