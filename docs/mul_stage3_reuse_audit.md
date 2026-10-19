@@ -5,7 +5,7 @@
 Use existing node firmware mechanisms for reference acquisition, coarse follower
 slots, and bounded multi-source reception. Keep the 34-byte MUL wire format unchanged.
 This audit records reuse decisions, not milestone status; see [PLAN.md](../PLAN.md).
-Only coarse reference-following TDMA is implemented; no clock estimator, TWR, or localization.
+Coarse TDMA and diagnostic relative clock rate are implemented; no TWR or localization.
 
 ## TDoA2: acquisition and RX/TX state transitions
 
@@ -29,13 +29,22 @@ Source: `src/uwb_tdoa_anchor3.c`.
 - `handleRxPacket()` captures raw radio RX time before restarting radio operation.
 - `setupRx()` provides the same established RX re-arm sequence.
 - `startNextEvent()` uses wrap-safe RTOS timing for coarse event/liveness decisions.
-- `calculateClockCorrection()` and `updateClockCorrection()` are useful future
-  references for rate-ratio estimation and acceptance filtering, not Stage 3A.1 code.
+- `calculateClockCorrection()` forms local/remote interval ratios; `updateClockCorrection()`
+  uses a plausibility bound (±20 ppm), 0.03 ppm noise gate, 0.1 low-pass weight,
+  and a bounded confidence bucket for reseeding after repeated rejections.
 
 Use two explicit supported identities instead of dynamic discovery/context eviction.
 Keep source TX and local RX timestamps in one observation without subtracting them.
 RTOS ticks measure receiver liveness only; they are not precise UWB scheduling time.
 Do not inherit ranging formulas, fixed geometry, or a shared-clock assumption.
+MUL reuses the interval-ratio principle and bounded validity/recovery approach.
+TDoA3 uses double arithmetic and 32-bit timestamps, explicitly requiring short
+intervals to avoid repeated wraps. Its slope does not require known distance,
+but varying propagation affects it; associated ranging exchanges are not reused.
+MUL instead uses existing 40-bit arithmetic, coarse gap/sequence bounds, ppb
+integers, a five-sample median/stability check, and a wider ±200 ppm initial gate.
+TDoA2's frame timestamp arrays support slot/range exchanges, not a reusable
+standalone robust skew estimator; neither truncated history is copied into MUL.
 
 ## TWR: later exchange reuse
 

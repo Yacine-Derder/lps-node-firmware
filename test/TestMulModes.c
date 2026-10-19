@@ -2,6 +2,7 @@
 #include "unity.h"
 #include "mul_rx.h"
 #include "mul_common.h"
+#include "mul_clock.h"
 
 #include <string.h>
 
@@ -827,4 +828,66 @@ void test_mulFollowerCanTransmitAtCounterZeroWithZeroAntennaDelay(void) {
   finishFollowerSlot();
   TEST_ASSERT_EQUAL_UINT64(0, actualTx);
   TEST_ASSERT_TRUE(receiving);
+}
+
+void test_mulFollowerClockConvergesWithoutChangingTdmaAndResetsOnLoss(void) {
+  initFollower();
+  uint64_t remoteStart = UINT64_C(0x123456789a);
+  uint64_t localStart = MUL_TIMESTAMP_MASK - 2*PERIOD_DTU;
+  for (uint32_t frame = 0; frame < 7; frame++) {
+    testTick = frame * 1000;
+    uint64_t local = mulTimestampMask(localStart + frame * (PERIOD_DTU + PERIOD_DTU/200000));
+    receiveReference(42 + frame, mulTimestampMask(remoteStart + frame*PERIOD_DTU), local);
+    TEST_ASSERT_TRUE(txPending);
+    mulTestPacket_t outgoing;
+    TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &outgoing));
+    int64_t slot = mulTimestampDifference(outgoing.txTimestamp, local);
+    TEST_ASSERT_TRUE(slot >= INT64_C(31948800000) && slot < INT64_C(31948800512));
+    TEST_ASSERT_EQUAL_UINT32(frame, outgoing.sequence);
+    finishFollowerSlot();
+    TEST_ASSERT_EQUAL_UINT64(outgoing.txTimestamp, actualTx);
+  }
+  TEST_ASSERT_EQUAL_INT(mulClockValid, followerClock.status);
+  TEST_ASSERT_EQUAL_INT32(5000, followerClock.skewPpb);
+  TEST_ASSERT_EQUAL_UINT32(6, followerClock.samples);
+  mulClock_t before = followerClock;
+  deliver(referenceAddress, 48, 0, hardwareNow, true);
+  deliver(referenceAddress, 47, 0, hardwareNow, true);
+  rxFrame[24] = 99;
+  mulAlrAlgorithm.onEvent(&dev, eventPacketReceived);
+  TEST_ASSERT_EQUAL_MEMORY(&before, &followerClock, sizeof(before));
+  TEST_ASSERT_EQUAL_UINT(7, txCount);
+  testTick = 9000;
+  mulAlrAlgorithm.onEvent(&dev, eventTimeout);
+  TEST_ASSERT_EQUAL_INT(mulClockSearching, followerClock.status);
+  TEST_ASSERT_EQUAL_UINT32(0, followerClock.samples);
+  for (uint32_t frame = 0; frame < 6; frame++) {
+    testTick = 10000 + frame*1000;
+    uint64_t local = mulTimestampMask(localStart + (10+frame)*PERIOD_DTU - frame*(PERIOD_DTU/100000));
+    receiveReference(frame, frame*PERIOD_DTU, local); // Reference restarted at seq/TX zero.
+    finishFollowerSlot();
+  }
+  TEST_ASSERT_EQUAL_INT(mulClockValid, followerClock.status);
+  TEST_ASSERT_EQUAL_INT32(-10000, followerClock.skewPpb);
+  TEST_ASSERT_EQUAL_UINT32(5, followerClock.samples);
+  TEST_ASSERT_EQUAL_UINT(13, txCount);
+}
+
+void test_mulFollowerClockDiscontinuityDoesNotChangeRadioPolicy(void) {
+  initFollower();
+  receiveReference(100, 100*PERIOD_DTU, 0);
+  finishFollowerSlot();
+  testTick = 1000;
+  receiveReference(101, 0, PERIOD_DTU); // Forward sequence but TX clock restarted.
+  TEST_ASSERT_EQUAL_INT(mulClockWarmup, followerClock.status);
+  TEST_ASSERT_EQUAL_UINT32(0, followerClock.samples);
+  TEST_ASSERT_TRUE(txPending); // Estimator rejection cannot suppress a valid TDMA RX.
+  finishFollowerSlot();
+  for (uint32_t frame = 1; frame <= 5; frame++) {
+    testTick = (1+frame)*1000;
+    receiveReference(101+frame, frame*PERIOD_DTU, (1+frame)*PERIOD_DTU);
+    finishFollowerSlot();
+  }
+  TEST_ASSERT_EQUAL_INT(mulClockValid, followerClock.status);
+  TEST_ASSERT_EQUAL_INT32(0, followerClock.skewPpb);
 }

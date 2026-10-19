@@ -29,18 +29,20 @@ Source code remains authoritative for what is actually implemented.
 | Stage 1 — ALR-to-RLR UWB communication | Complete | Periodic broadcast, passive reception, source/sequence diagnostics |
 | Stage 2 — Hardware-delayed TX and accurate TX/RX timestamps | Hardware validated (user-reported) | Embedded antenna-referenced TX time and local raw RX time |
 | Stage 3A.1 — Multi-ALR protocol and reference acquisition | Hardware validated (user-reported) | Reference reception, loss/reacquisition, and observed wraparound |
+| Stage 3A.2 — Hardware-timed TDMA | Hardware validated (user-reported) | Both ALRs TX, passive RLR RX, approximately 500.04 ms separation, TX timestamp equality |
 
-Stages 0–2 and 3A.1 are implemented and software tested.
+Stages 0–2, 3A.1, and 3A.2 are implemented and software tested.
 Hardware-validation status follows the user's current physical-test reports;
 it is not a claim of hardware testing by Codex for this milestone.
 The prior timestamp-discrepancy investigation does not establish a root cause;
 retain that distinction when interpreting validation and diagnostics.
 
-## Hardware checkpoint — Stage 3A.2: Hardware-timed TDMA follower scheduling
+## Hardware checkpoint — Stage 3B.1: Relative clock-skew estimation
 
 Status: **Implemented/software tested; awaiting hardware validation.**
-Objective: transmit once from each fresh reference observation, using the follower's
-local hardware RX timestamp plus approximately 500 ms as the second slot.
+Objective: estimate follower/reference clock rate from reference TX/local RX
+intervals, with explicit convergence, rejection, and reset diagnostics.
+The estimate does not change the existing hardware-timed 500 ms follower slot.
 
 Current configuration, all using Bitcraze DW1000 LPS nodes:
 
@@ -50,25 +52,24 @@ Current configuration, all using Bitcraze DW1000 LPS nodes:
 | ALR 2 | `0x85` | Reference-following transmitter, approximately 500 ms later |
 | RLR | `0x86` | Passive receiver of both sources |
 
-Software acceptance covers RX/TX/RX transitions, one attempt per reference sequence,
-late/missing-reference suppression, delayed-start errors, timeouts, wraparound,
-independent source tracking, and scheduled/encoded/actual TX timestamp equality.
-Full-address role selection remains unchanged; unsupported ALR identities stay idle.
+Software acceptance covers known signed skews, median convergence, precision,
+missing/duplicate/old observations, implausible/discontinuous intervals, long-gap
+ambiguity, loss/restart/reset, and long runs across both timestamp/sequence wraps.
+Existing TDMA, independent RLR tracking, and TX timestamp verification still pass.
 
-Physical acceptance: both sources are received near 1 Hz, their slot separation
-is approximately 500 ms measured solely in the RLR's RX clock, both ALRs report
-matching TX timestamps, and loss/reacquisition suppresses/resumes follower TX.
-An already armed slot may finish after the reference is powered off; there must be
-no extrapolated transmissions for missing superframes and none after declared loss.
-Stage 3A.1's USB interruption was intentional, not a firmware fault.
-Stop at this hardware checkpoint; do not begin Stage 3B without physical results.
+Physical acceptance: stable, plausible clock skew after convergence for at least
+60 seconds across wraps; reset on reference loss and reconvergence on restart.
+Both sources must retain approximately 1 Hz reception, approximately 500 ms
+RLR-clock slot separation, and matching scheduled/packet/actual TX timestamps.
+Stage 3A.2's intentional reference interruption/USB disconnect was expected.
+Stop here for physical results; do not begin Stage 3B.2.
 
 ## Pending milestones
 
-### Stage 3B — Relative clock offset/skew estimation
+### Stage 3B.2 — Further relative clock modeling
 
-Status: **Not started.** Objective: estimate relative clock relationships while
-distinguishing propagation delay from clock offset.
+Status: **Not started.** Objective: build on validated rate estimates to model
+relative clock relationships while distinguishing propagation delay from offset.
 Acceptance: synthetic offset/skew/wrap tests pass; hardware residuals and model
 limitations are measured, with no unsupported claim of exact offset identifiability.
 

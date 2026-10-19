@@ -42,6 +42,7 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `inc/mul_alr.h`, `src/mul_alr.c` | Reference delayed TX and reference-following follower slots |
 | `inc/mul_rlr.h`, `src/mul_rlr.c` | Passive RX and bounded per-source observation state |
 | `inc/mul_rx.h`, `src/mul_rx.c` | Shared DW1000 RX setup, bounded reads, and re-arming |
+| `inc/mul_clock.h`, `src/mul_clock.c` | Bounded diagnostic follower/reference clock-rate estimation |
 | `vendor/libdw1000`, `src/dwOps.c` | Existing radio driver and board SPI operations |
 
 Both MUL roles implement `uwbAlgorithm_t.init` and `onEvent` callbacks.
@@ -113,7 +114,7 @@ RX timestamp to obtain propagation time or distance. Relative offset, skew, and
 propagation delay are distinct effects; one-way observations alone cannot identify
 exact clock offset independently of propagation delay.
 Coarse TDMA alignment uses a reference ALR and one follower ALR.
-Clock correction, uncertainty, loss/reacquisition robustness, and decentralized
+Clock correction, uncertainty, and decentralized
 operation are future work, not capabilities implied by the current timestamp pair.
 
 ## Reference-following slots and bounded source observations
@@ -154,8 +155,44 @@ source (e.g. a reboot), without changing other sources. Counters persist and wra
 as uint32 values; late arrivals do not undo counted gaps. No epoch field exists,
 so a delayed different packet after staleness is indistinguishable from a restart.
 Duplicate/old packets are counted quietly; the next fresh log reports the counters.
-There is no offset/skew estimation, TWR, or TDoA observation formation.
+There is no offset estimation, TWR, or TDoA observation formation.
 See [the focused reuse audit](mul_stage3_reuse_audit.md) for implementation decisions.
+
+## Diagnostic relative clock rate
+
+For consecutive accepted reference observations, `ratio = delta_local_RX /
+delta_reference_TX`, using signed 40-bit modular differences in each clock domain.
+The local affine approximation is `rx_local(t) ≈ ratio * tx_reference(t) + offset`
+over short intervals with approximately constant propagation delay, using unwrapped
+clock coordinates. This does not identify absolute offset or synchronize time.
+Positive `skew_ppm = (ratio - 1) * 1e6` means the follower clock runs faster.
+Motion/path-delay changes can also affect the measured slope.
+
+The estimator computes `(delta_local - delta_reference) * 1e9 / delta_reference`
+with bounded signed integer arithmetic and nearest-ppb rounding (0.001 ppm).
+It avoids near-unity floating-point cancellation and uses no float operations.
+The median of the latest five plausible intervals suppresses up to two outliers.
+State becomes VALID only with five intervals and at least three within 1 ppm
+of the median; otherwise it is WARMUP. This is a convergence heuristic, not a
+statistical confidence bound. Accepted-sample count saturates rather than wrapping.
+
+Full reference identity and packet validity are required. Duplicate/old sequences
+do not update history or age. Actual measured intervals handle missing packets;
+the current 1 Hz reference cadence must agree with sequence advance within 100 ms.
+Intervals must be positive, at most 3.1 hardware seconds, and have coarse elapsed
+time strictly below the existing three-second liveness deadline. This bounds them
+below the 40-bit half period and rejects long-gap full-wrap aliases. Coarse uptime
+only rejects stale data; it never supplies the ratio. A ±200 ppm plausibility gate
+is deliberately generous for initial hardware investigation, not a device guarantee.
+Invalid intervals/rates clear history and seed a new baseline. Initialization,
+reference loss, and subsequent reacquisition start cleanly; five new valid intervals
+are required. Without an epoch field, restart/replay ambiguity remains: backward
+sequences are ignored until existing liveness declares loss and permits rebasing.
+
+The follower updates/logs CLOCK after arming TX or rearming RX, at most once per
+fresh reference plus loss transitions, in the UWB task. Only skew is printed,
+with sign and three ppm decimals. TX/RX timestamps, TDMA targets, and RLR behavior
+are unchanged; no estimator output is used for scheduling or clock conversion.
 
 ## Planned measurement processing
 
@@ -167,7 +204,7 @@ See [the focused reuse audit](mul_stage3_reuse_audit.md) for implementation deci
 - Initially use known-map information for LOS probabilities.
 - Later investigate SLAM-derived LOS information and its uncertainty.
 
-These are architectural directions; no localization, clock estimator, or calibration
+These are architectural directions; no localization, clock-offset estimator, or calibration
 algorithm is currently implemented in MUL.
 
 ## Reuse and evidence

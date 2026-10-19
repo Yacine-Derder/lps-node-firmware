@@ -4,6 +4,7 @@
 #include "mul_rx.h"
 #include "task.h"
 #include "mul_common.h"
+#include "mul_clock.h"
 
 #include <string.h>
 

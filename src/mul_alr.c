@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "mul_alr.h"
 #include "mul_common.h"
+#include "mul_clock.h"
 #include "mul_rx.h"
 #include "task.h"
 
@@ -35,6 +36,7 @@ static mulAlrRole_t alrRole = mulAlrUnsupported;
 static mulSourceState_t followerReference;
 static bool referenceAcquired;
 static TickType_t lastReferenceTick;
+static mulClock_t followerClock;
 
 #define MUL_REFERENCE_LOSS_MS MUL_SOURCE_TIMEOUT_MS
 
@@ -102,6 +104,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   alrRole = mulAlrRoleForAddress(config->address);
   memset(&followerReference, 0, sizeof(followerReference));
   referenceAcquired = false;
+  mulClockReset(&followerClock);
   printf("MUL ALR: Mode initialized role=%s src=0x%02X\r\n",
          alrRole == mulAlrReference ? "REF" : alrRole == mulAlrFollower ? "FOLLOWER" : "UNSUPPORTED",
          (unsigned int)source[0]);
@@ -248,6 +251,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     (TickType_t)(now - lastReferenceTick) >= pdMS_TO_TICKS(MUL_REFERENCE_LOSS_MS);
   if (lostNow) {
     referenceAcquired = false;
+    mulClockReset(&followerClock);
     if (txPending) {
       abortFollowerTx(dev);
     }
@@ -306,8 +310,13 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   }
   if (lostNow) {
     printf("MUL ALR: REF_LOST src=0x84 state=SEARCHING\r\n");
+    printf("MUL ALR: CLOCK src=0x84 samples=0 state=SEARCHING\r\n");
   }
   if (fresh) {
+    // Radio is already armed/re-armed. Estimation and logging cannot shift the
+    // Stage 3A.2 slot, and its result is never fed back into scheduling.
+    mulClockResult_t clockResult = mulClockObserve(&followerClock, &packet, arrival,
+      (uint32_t)now * portTICK_PERIOD_MS, true);
     if (acquiredNow) {
       printf("MUL ALR: REF_ACQUIRED src=0x84 state=ACQUIRED\r\n");
     }
@@ -317,6 +326,14 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
            packet.sequence, (unsigned int)(packet.txTimestamp >> 32),
            (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
            armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED");
+    int32_t ppb = followerClock.skewPpb;
+    uint32_t magnitude = (uint32_t)(ppb < 0 ? -ppb : ppb);
+    printf("MUL ALR: CLOCK src=0x84 seq=%" PRIu32 " skew_ppm=%s%" PRIu32 ".%03" PRIu32
+           " samples=%" PRIu32 " state=%s result=%s\r\n", packet.sequence,
+           ppb < 0 ? "-" : "+", magnitude / 1000, magnitude % 1000, followerClock.samples,
+           followerClock.status == mulClockValid ? "VALID" : "WARMUP",
+           clockResult == mulClockDiscontinuity ? "RESET" :
+           clockResult == mulClockSample ? "ACCEPTED" : "BASELINE");
   }
   return followerWait(dev);
 }
