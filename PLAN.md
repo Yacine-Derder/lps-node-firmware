@@ -31,20 +31,21 @@ Source code remains authoritative for what is actually implemented.
 | Stage 3A.1 — Multi-ALR protocol and reference acquisition | Hardware validated (user-reported) | Reference reception, loss/reacquisition, and observed wraparound |
 | Stage 3A.2 — Hardware-timed TDMA | Hardware validated (user-reported) | Both ALRs TX, passive RLR RX, approximately 500.04 ms separation, TX timestamp equality |
 | Stage 3B.1 — Relative clock skew | Hardware validated (user-reported) | Stable negative skew, loss reset/reconvergence, preserved TX equality and RLR reception |
+| Stage 3B.2a — Arrival-aligned affine mapping | Hardware validated (user-reported) | Mapping-state behavior and loss/restart recovery; conversion accuracy not independently measured |
 
-Stages 0–2, 3A.1, 3A.2, and 3B.1 are implemented and software tested.
+Stages 0–2, 3A.1, 3A.2, 3B.1, and 3B.2a are implemented and software tested.
 Hardware-validation status follows the user's current physical-test reports;
 it is not a claim of hardware testing by Codex for this milestone.
 The prior timestamp-discrepancy investigation does not establish a root cause;
 retain that distinction when interpreting validation and diagnostics.
 
-## Hardware checkpoint — Stage 3B.2a: Arrival-aligned affine clock mapping
+## Current milestone — Stage 3B.2b.1: External propagation-delay correction
 
-Status: **Implemented/software tested; awaiting hardware validation.**
-Objective: map reference TX coordinates to expected follower arrival coordinates
-and back, using the validated rate estimate and a recent observation as origin.
-Keep propagation/true-offset ambiguity and unknown physical uncertainty explicit.
-The mapping does not change the existing hardware-timed 500 ms follower slot.
+Status: **Implemented/software tested.**
+Objective: accept independently supplied reference-to-follower one-way delay and
+provide separate simultaneous-clock forward/inverse conversions with explicit
+link, units, age, epoch, and uncertainty checks. No live measurement source exists;
+correction remains unavailable in normal firmware, with MAP still UNCALIBRATED.
 
 Current configuration, all using Bitcraze DW1000 LPS nodes:
 
@@ -54,27 +55,28 @@ Current configuration, all using Bitcraze DW1000 LPS nodes:
 | ALR 2 | `0x85` | Reference-following transmitter, approximately 500 ms later |
 | RLR | `0x86` | Passive receiver of both sources |
 
-Software acceptance covers known affine relationships, forward/inverse consistency,
-quantization, both clock wraps, re-anchoring, bounded horizons/age, invalid slope,
-skew invalidation, loss/restart, missing/duplicate/old observations, uncertainty,
-propagation ambiguity, and long runs. Existing skew, TDMA, RLR and TX tests pass.
+Software acceptance covers synthetic 0/1/5/10/30 m delays with signed skew,
+forward/inverse ground truth, wrong estimates, wraparound, precision, link/units,
+age/epoch rejection, resets, missing packets, re-anchoring, uncertainty propagation,
+and long runs. Existing skew, arrival mapping, TDMA, RLR, and TX tests still pass.
 
-Physical acceptance: MAP progresses WARMUP to VALID with stable diagnostics for
-at least 60 seconds across wraps, always UNCALIBRATED with UNKNOWN physical bound;
-mapping invalidates on reference loss and reinitializes/reconverges on restart.
-Both sources must retain approximately 1 Hz reception, approximately 500 ms
-RLR-clock slot separation, and matching scheduled/packet/actual TX timestamps.
-Stage 3B.1's intentional reference interruption/USB disconnect was expected.
-Stop here for physical results; do not begin Stage 3B.2b.
+Stage 3B.2a's supplied physical results validate WARMUP/VALID and loss/restart
+state behavior with stable skew and preserved TX/RLR operation, not independent
+conversion accuracy. The interruption and USB disconnect were intentional.
+No new correction-accuracy hardware checkpoint is meaningful without delay input;
+an optional three-node regression smoke test may check unchanged live behavior.
+Live delay acquisition will need its own physical validation. Stop here and wait
+for instructions before Stage 3B.2b.2.
 
 ## Pending milestones
 
-### Stage 3B.2b — Propagation-delay correction
+### Stage 3B.2b.2 — Live TWR-based delay acquisition
 
-Status: **Not started.** Objective: establish independent delay information before
-correcting arrival-aligned mappings toward true clock-domain conversion.
-Acceptance: separate delay/offset assumptions and uncertainty are justified;
-synthetic and hardware checks quantify correction accuracy and limitations.
+Status: **Not started.** Objective: acquire independent one-way delay information
+from validated TWR exchanges for the existing correction interface.
+Acceptance: clock-domain conversion, direction, age, epoch and uncertainty are
+justified; hardware checks quantify ranging/correction accuracy and radio effects.
+This supplies measurements; Stage 4's online error calibration remains separate.
 
 ### Stage 3C — TDoA-ready multi-ALR observation pipeline
 

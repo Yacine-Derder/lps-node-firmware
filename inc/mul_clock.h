@@ -33,6 +33,7 @@ typedef struct {
   uint32_t samples; // Accepted intervals since baseline/reset, saturating.
   int32_t skewPpb; // ratio = 1 + skewPpb/1e9; positive means faster local clock.
   mulClockStatus_t status;
+  uint64_t epoch; // Process-local binding, replaced by every reset/discontinuity.
 } mulClock_t;
 
 void mulClockReset(mulClock_t *clock);
@@ -89,5 +90,62 @@ bool mulClockMapRefToFollower(const mulClock_t *clock, uint64_t referenceTx,
                              uint32_t nowMs, mulClockMapping_t *mapping);
 bool mulClockMapFollowerToRef(const mulClock_t *clock, uint64_t localArrival,
                              uint32_t nowMs, mulClockMapping_t *mapping);
+
+// External one-way reference->follower measurement, never a raw TWR round trip.
+// Records are volatile: discard on firmware restart; do not persist/replay epochs.
+#define MUL_CLOCK_BOUND_UNKNOWN UINT64_MAX
+#define MUL_CLOCK_DELAY_DEFAULT_MAX_AGE_MS 1000
+#define MUL_CLOCK_DELAY_MAX_AGE_MS 2000
+// Initial application policy: <=1 us (~300 m), rounded up to a reference DTU.
+#define MUL_CLOCK_DELAY_MAX_DTU INT64_C(63898)
+typedef enum {
+  mulClockDelayReferenceDtu,
+} mulClockDelayUnits_t;
+
+typedef struct {
+  uint8_t reference[MUL_ADDRESS_LENGTH];
+  uint8_t follower[MUL_ADDRESS_LENGTH]; // Ordered identities define direction.
+  uint64_t epoch; // Copy current clock.epoch when measurement is acquired.
+  int64_t oneWayDtu; // Nonnegative delay in REFERENCE hardware-clock units.
+  mulClockDelayUnits_t units;
+  uint32_t measuredMs; // Same follower monotonic uptime domain as observedMs.
+  uint32_t referenceSequence; // Latest accepted reference sequence at acquisition.
+  uint32_t maxAgeMs; // Caller policy: 1..MAX_AGE, default recommendation above.
+  bool valid;
+  uint64_t measurementBoundDtu; // Reference units; UNKNOWN is not zero.
+  uint64_t motionBoundDtuPerMs; // Bound on path-delay change per coarse ms, or UNKNOWN.
+} mulClockDelay_t;
+
+typedef enum {
+  mulClockDelayMissing,
+  mulClockDelayInvalid,
+  mulClockDelayEpochMismatch,
+  mulClockDelayStale,
+  mulClockDelayValid,
+} mulClockDelayStatus_t;
+
+typedef struct {
+  uint64_t timestamp; // Corrected destination coordinate (NOT arrival-aligned).
+  mulClockMapping_t affine; // Underlying arrival API result; its uncertainty stays UNKNOWN.
+  uint32_t delayAgeMs;
+  uint32_t applicationAgeMs; // Conservative span to origin/query; governs motion/age policy.
+  uint64_t measurementBoundReferenceDtu;
+  uint64_t motionBoundReferenceDtu;
+  uint64_t conditionalDelayBoundDtu; // Destination units, conditional on estimated slope.
+  uint64_t numericalBoundDtu; // Includes affine and delay-correction rounding only.
+  uint64_t totalPhysicalBoundDtu; // UNKNOWN while any required physical component is unknown.
+} mulClockCorrectedMapping_t;
+
+// Delay validity is separate from affine validity and correction availability.
+mulClockDelayStatus_t mulClockDelayStatus(const mulClock_t *clock,
+                                         const mulClockDelay_t *delay, uint32_t nowMs);
+// Separate, stateless APIs apply correction exactly once; existing arrival APIs
+// never inspect a delay. Success means AVAILABLE, not fully bounded/calibrated.
+// Outputs stay unchanged on failure. Caller must supply the correct coordinate
+// kind/epoch and serialize clock operations in the UWB task, as for the estimator.
+bool mulClockMapRefToFollowerSimultaneous(const mulClock_t *clock, uint64_t referenceTx,
+  const mulClockDelay_t *delay, uint32_t nowMs, mulClockCorrectedMapping_t *mapping);
+bool mulClockMapFollowerSimultaneousToRef(const mulClock_t *clock, uint64_t localSimultaneous,
+  const mulClockDelay_t *delay, uint32_t nowMs, mulClockCorrectedMapping_t *mapping);
 
 #endif // MUL_CLOCK_H

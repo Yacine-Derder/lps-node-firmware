@@ -42,7 +42,7 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `inc/mul_alr.h`, `src/mul_alr.c` | Reference delayed TX and reference-following follower slots |
 | `inc/mul_rlr.h`, `src/mul_rlr.c` | Passive RX and bounded per-source observation state |
 | `inc/mul_rx.h`, `src/mul_rx.c` | Shared DW1000 RX setup, bounded reads, and re-arming |
-| `inc/mul_clock.h`, `src/mul_clock.c` | Diagnostic clock rate and anchored arrival-aligned mapping |
+| `inc/mul_clock.h`, `src/mul_clock.c` | Clock rate, arrival mapping, and dormant external-delay correction |
 | `vendor/libdw1000`, `src/dwOps.c` | Existing radio driver and board SPI operations |
 
 Both MUL roles implement `uwbAlgorithm_t.init` and `onEvent` callbacks.
@@ -239,6 +239,65 @@ MAP logs follow clock updates after radio setup, with slope, state, age/horizon,
 `sync=UNCALIBRATED`, and `bound_ns=UNKNOWN`; loss logs INVALID. Future TDoA work
 must retain source domains, validity, delay ambiguity, and uncertainty, and obtain
 independent delay information before treating this mapping as true clock conversion.
+
+## Externally supplied propagation delay
+
+The arrival-aligned APIs above remain unchanged. Separate APIs
+`mulClockMapRefToFollowerSimultaneous()` and
+`mulClockMapFollowerSimultaneousToRef()` accept a `mulClockDelay_t` record.
+Writing the arrival mapping as `F`, corrected mapping is `S(t)=F(t)-a*tau`,
+and inverse is `S^-1(l)=F^-1(l+a*tau)`. Input `t` and output `l` represent the
+same physical instant under the supplied delay/model assumptions. Delay is
+reference-clock DTU; `a*tau` is follower DTU. Code rounds that correction once
+and applies the matching modular subtraction/addition. Independent calls do not
+mutate the model or arrival APIs, and must never re-correct an already converted
+coordinate. Forward/inverse consistency does not establish physical accuracy.
+
+The producer must supply an interpreted ONE-WAY estimate for the full directed
+reference `84:00:00:00:00:00:cf:bc` to follower `85:00:00:00:00:00:cf:bc` link,
+reference-DTU units, validity, measurement uptime, latest reference sequence,
+current local epoch, age policy, measurement error bound and motion-change-rate
+bound. `UINT64_MAX` explicitly means UNKNOWN for bounds; zero asserts a bounded
+ideal component and is not a default calibration. A raw RTT or a delay expressed
+in follower units cannot be passed unchanged. No distance or live TWR is injected.
+
+Initial application policy permits nonnegative delay <=63898 reference DTU
+(approximately 1 us/300 m) and a caller-selected age limit of 1..2000 ms,
+recommended 1000 ms. These are prototype applicability limits, not hardware range
+or motion guarantees. Validity checks wrap-safe age, full ordered identities,
+units, and epoch. A sequence guard of at most three forward reference advances
+at the established 1 Hz cadence also rejects uptime full-wrap aliases.
+Both the affine origin and query must be covered: application span is the maximum
+of measurement age and `abs(measurement_age-origin_age)+ceil(abs(d_ref)/DTU_per_ms)`.
+It must fit the supplied age limit in addition to the existing affine horizon.
+This conservative envelope supports past/future queries without assuming an old
+stationary measurement stays valid after motion.
+
+Each clock reset (initialization, loss, detected restart/discontinuity) issues a
+new process-local 64-bit epoch, invalidating old records even after reconvergence.
+Ordinary re-anchoring retains the epoch; invalid affine state always rejects
+correction. Tokens are scoped to this firmware boot/UWB task, never persisted;
+producers must discard records on reboot and acquire fresh data, never retag old
+measurements. Token exhaustion fails closed. There is no new wire epoch, so an
+undetected remote restart remains subject to the existing sequence/loss policy.
+
+Results keep affine uncertainty separate from supplied delay uncertainty.
+Motion uncertainty grows as declared `motionBoundDtuPerMs * applicationAgeMs`;
+UNKNOWN inputs or overflow remain UNKNOWN. `conditionalDelayBoundDtu` scales
+measurement-plus-motion bounds upwards into destination units (by `a` forward,
+unity inverse), conditional on the estimated slope. Rate uncertainty, affine
+origin/measurement errors and extrapolation remain UNKNOWN, so the total physical
+bound remains UNKNOWN even with an ideal delay. Numerical rounding and slope
+representation allowances are reported separately from physical error bounds.
+Arrival VALID, delay VALID, corrected conversion AVAILABLE, and fully bounded
+synchronization accuracy are distinct; success currently establishes only availability.
+
+No production call supplies a delay, and CLOCK/MAP logs and radio paths are
+unchanged: normal correction is UNAVAILABLE and `sync=UNCALIBRATED` stays truthful.
+Future TWR must establish one-way interpretation, clock units, path applicability
+and uncertainty before feeding this contract. Acquisition does not implement
+Stage 4's later online ranging-error calibration or independently identify exact
+offset from broadcasts alone.
 
 ## Planned measurement processing
 
