@@ -3,6 +3,7 @@
 #include "mul_rx.h"
 #include "mul_common.h"
 #include "mul_clock.h"
+#include "mul_twr.h"
 
 #include <string.h>
 
@@ -133,6 +134,11 @@ void dwCommitConfiguration(dwDevice_t *device) {
   TEST_ASSERT_TRUE(configuring);
   configuring = false;
 }
+void dwWriteSystemConfigurationRegister(dwDevice_t *device) { (void)device; }
+void dwWriteSystemEventMaskRegister(dwDevice_t *device) {
+  (void)device;
+  configuring = false;
+}
 void dwNewReceive(dwDevice_t *device) { dwIdle(device); }
 void dwStartReceive(dwDevice_t *device) {
   (void)device;
@@ -206,7 +212,7 @@ void test_mulAlrMaintainsHardwareCadenceAcrossWrapWithConfiguredAntennaDelay(voi
   }
   TEST_ASSERT_EQUAL_UINT(1000, txCount);
   TEST_ASSERT_EQUAL_UINT(1000, actualReads);
-  TEST_ASSERT_EQUAL_UINT(0, rxCount);
+  TEST_ASSERT_EQUAL_UINT(1001, rxCount); // Reference now listens between unchanged broadcasts.
   TEST_ASSERT_EQUAL_UINT(0, aborts);
   mulAlrAlgorithm.onEvent(&dev, eventPacketSent); // duplicate completion is ignored
   TEST_ASSERT_EQUAL_UINT(1000, actualReads);

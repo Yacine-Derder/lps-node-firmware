@@ -42,7 +42,8 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `inc/mul_alr.h`, `src/mul_alr.c` | Reference delayed TX and reference-following follower slots |
 | `inc/mul_rlr.h`, `src/mul_rlr.c` | Passive RX and bounded per-source observation state |
 | `inc/mul_rx.h`, `src/mul_rx.c` | Shared DW1000 RX setup, bounded reads, and re-arming |
-| `inc/mul_clock.h`, `src/mul_clock.c` | Clock rate, arrival mapping, and dormant external-delay correction |
+| `inc/mul_clock.h`, `src/mul_clock.c` | Clock rate, arrival mapping, and delay-aware correction |
+| `inc/mul_twr.h`, `src/mul_twr.c` | Directed TWR protocol, bounded radio exchange and live delay input |
 | `vendor/libdw1000`, `src/dwOps.c` | Existing radio driver and board SPI operations |
 
 Both MUL roles implement `uwbAlgorithm_t.init` and `onEvent` callbacks.
@@ -114,7 +115,8 @@ RX timestamp to obtain propagation time or distance. Relative offset, skew, and
 propagation delay are distinct effects; one-way observations alone cannot identify
 exact clock offset independently of propagation delay.
 Coarse TDMA alignment uses a reference ALR and one follower ALR.
-Propagation-corrected clock conversion and decentralized operation are future work.
+Delay-corrected conversion is conditional on ranging assumptions; decentralized
+operation and independently bounded synchronization accuracy remain future work.
 
 ## Reference-following slots and bounded source observations
 
@@ -134,7 +136,8 @@ Follower packet sequences are independent of reference sequences and survive rea
 RX turns directly into delayed TX through `startDelayedTx()`, shared with the reference.
 No RX is enabled while the delayed TX waits in idle. Completion captures TX_STAMP,
 re-arms RX, and logs role, scheduled, packet, actual, and signed packet delta.
-RX errors/unexpected radio events cancel a pending slot. An absolute local-hardware
+RX errors/unexpected radio events cancel a pending slot, except stale TWR RX IRQs,
+which cannot displace its already-armed broadcast. An absolute local-hardware
 watchdog aborts if completion is missing 100 ms after the target; early wakeups
 leave TX armed. Late setup (under 5 ms lead), register mismatch, or delayed-start
 errors skip the attempt and return to RX. No slot is moved forward or retried.
@@ -154,7 +157,7 @@ source (e.g. a reboot), without changing other sources. Counters persist and wra
 as uint32 values; late arrivals do not undo counted gaps. No epoch field exists,
 so a delayed different packet after staleness is indistinguishable from a restart.
 Duplicate/old packets are counted quietly; the next fresh log reports the counters.
-There is no offset estimation, TWR, or TDoA observation formation.
+There is no independently calibrated offset or TDoA observation formation.
 See [the focused reuse audit](mul_stage3_reuse_audit.md) for implementation decisions.
 
 ## Diagnostic relative clock rate
@@ -259,7 +262,8 @@ reference-DTU units, validity, measurement uptime, latest reference sequence,
 current local epoch, age policy, measurement error bound and motion-change-rate
 bound. `UINT64_MAX` explicitly means UNKNOWN for bounds; zero asserts a bounded
 ideal component and is not a default calibration. A raw RTT or a delay expressed
-in follower units cannot be passed unchanged. No distance or live TWR is injected.
+in follower units cannot be passed unchanged. The live TWR producer below supplies
+this contract; synthetic distances exist only in host tests.
 
 Initial application policy permits nonnegative delay <=63898 reference DTU
 (approximately 1 us/300 m) and a caller-selected age limit of 1..2000 ms,
@@ -292,12 +296,82 @@ representation allowances are reported separately from physical error bounds.
 Arrival VALID, delay VALID, corrected conversion AVAILABLE, and fully bounded
 synchronization accuracy are distinct; success currently establishes only availability.
 
-No production call supplies a delay, and CLOCK/MAP logs and radio paths are
-unchanged: normal correction is UNAVAILABLE and `sync=UNCALIBRATED` stays truthful.
-Future TWR must establish one-way interpretation, clock units, path applicability
-and uncertainty before feeding this contract. Acquisition does not implement
-Stage 4's later online ranging-error calibration or independently identify exact
-offset from broadcasts alone.
+Live SYNC availability requires both this contract and a valid affine model;
+CLOCK/MAP diagnostics retain their original meaning and `sync=UNCALIBRATED`.
+Ranging acquisition does not implement Stage 4's online ranging-error calibration
+or independently identify exact offset from broadcasts alone.
+
+## Live inter-ALR ranging
+
+Use asymmetric double-sided TWR, following the six-marker method in Bitcraze's
+`uwb_twr_tag.c`/`uwb_twr_anchor.c` and [Decawave APS013](https://forum.qorvo.com/uploads/short-url/x34DrF7EW5fQP9wY3aNESqPKz8z.pdf).
+Single-sided TWR with 20 ms replies would require trusted drift compensation;
+symmetric DS requires matched replies. Asymmetric DS handles independent rates
+and unequal replies without feeding the broadcast skew filter into ranging.
+
+| Message | Direction | Six-marker ownership |
+|---|---|---|
+| POLL | reference → follower | `P1` reference TX, `P2` follower RX |
+| RESPONSE | follower → reference | `P3` follower TX, `P4` reference RX |
+| FINAL | reference → follower | `P5` reference TX, `P6` follower RX |
+| REPORT | follower → reference | Echo all six; RESPONSE TX stamp already verified |
+| RESULT | reference → follower | Confirm all six and accepted reference-unit ToF |
+
+All messages use a separate 68-byte MUL frame (excluding FCS). The 21-byte
+extended-address header is directed, without ACK; bytes 21–23 are MUL, byte 24
+is type 0x10..0x14, bytes 25–28 are the reference broadcast sequence/exchange ID,
+29–58 hold six five-byte markers, 59–63 the message TX timestamp, 64–67 RESULT
+ToF as uint32 reference DTU (zero otherwise). Unused future markers are zero.
+The POLL marker is echoed as a nonce; full identities, type/stage, ID, prefix
+timestamps, lengths and reserved values are checked. Broadcasts remain 34 bytes;
+the passive RLR rejects every TWR frame and continues independent source tracking.
+
+Define reference intervals `Ra=diff40(P4,P1)`, `Da=diff40(P5,P4)` and follower
+intervals `Db=diff40(P3,P2)`, `Rb=diff40(P6,P3)`. Under constant clock rates and
+reciprocal constant delay, `a=(Rb+Db)/(Ra+Da)`. Thus the asymmetric numerator
+`Ra*Rb-Da*Db`, divided by `2*(Rb+Db)`, yields ToF in REFERENCE units. This is the
+domain-specific equivalent of the usual mixed-clock DS denominator, avoiding an
+implicit nominal-clock-unit approximation. No absolute cross-clock subtraction
+occurs. Each interval must be 15..30 ms, inferred rate within ±200 ppm, numerator
+nonnegative and rounded ToF <=63898 DTU. Bounded integer products fit uint64.
+Distance diagnostics use `tof*299792458/63897600000` metres (vacuum convention).
+
+Initiation is once per eligible reference sequence (nonzero multiples of five),
+only after receiving the follower broadcast 450..600 ms into that local frame.
+Prepare at 630 ms, hardware POLL at 650 ms, then each next message 20 ms after
+its local hardware RX. Expected markers are near 650/670/690/710/730 ms; follower
+accepts POLL only 600..700 ms after both its own reference RX and remote reference TX.
+An absolute 800 ms frame cutoff and 50 ms step deadlines bound the exchange;
+targets need 5 ms setup lead and 20 ms margin before the cutoff. The next reference
+is prepared near 980 ms. All deadlines are local-domain modular hardware times;
+RTOS waits merely wake the event loop. No holdover or shared clock is assumed.
+
+Broadcasts own the radio: no TWR dispatch during an armed broadcast; a new
+broadcast cancels ranging. Reference preparation preempts TWR even after stalled
+IRQs. Priority-cancellation logs are deferred until broadcast radio setup finishes.
+Timeouts, invalid packets, RX/TX errors, timestamp mismatch or late setup abort
+without same-frame retry and restore RX. Each TX uses aligned DX_TIME, live TX_ANTD,
+readback, error flags and actual TX_STAMP verification. RX reads RX_STAMP, already
+hardware antenna-delay referenced, before re-arming; no legacy hardcoded antenna
+offset or optional received-power bias table is added. RX setup writes only RX/IRQ
+controls, avoiding full driver commits that overwrite live antenna calibration.
+
+The follower publishes delay only after matching RESULT, not after its REPORT:
+this confirms the initiator verified its own actual POLL/FINAL TX stamps. REPORT
+echo checks also retain the responder's verified RESPONSE TX. There is no delivery
+ACK for the last confirmation; either node can report a failure without peer
+delivery certainty, but an incomplete six-marker exchange cannot publish delay.
+Measurement time is backdated from the POLL callback by rounded-up hardware RX
+age; RESULT delivery and later broadcasts cannot refresh it. Epoch and reference
+ID remain bound to that exchange. The unchanged one-second age limit makes SYNC
+AVAILABLE briefly after a valid exchange and UNAVAILABLE between five-second
+attempts. Expiry timers run even without RX, without cancelling armed broadcasts.
+
+Reciprocity, nearly constant propagation/rates during the exchange, and existing
+antenna-delay settings are assumptions, not calibration evidence. Multipath,
+NLOS, motion and rate/antenna bias remain unbounded. Delay measurement and motion
+bounds stay UNKNOWN, as does total corrected physical error. A plausible ToF and
+AVAILABLE correction do not establish centimetre accuracy or exact synchronization.
 
 ## Planned measurement processing
 

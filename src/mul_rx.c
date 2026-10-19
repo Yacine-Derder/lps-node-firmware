@@ -18,7 +18,10 @@ void mulRxInit(dwDevice_t *dev)
   dwSetReceiverAutoReenable(dev, false);
   dwSetReceiveWaitTimeout(dev, 0);
   dwInterruptOnReceiveFailed(dev, true);
-  dwCommitConfiguration(dev);
+  // These changes affect only RX/IRQ controls. A full commit re-tunes the PHY
+  // and overwrites live TX_ANTD/LDE_RXANTD from the driver's cached defaults.
+  dwWriteSystemConfigurationRegister(dev);
+  dwWriteSystemEventMaskRegister(dev);
   mulRxRearm(dev);
 }
 

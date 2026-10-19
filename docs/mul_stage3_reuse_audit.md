@@ -5,7 +5,7 @@
 Use existing node firmware mechanisms for reference acquisition, coarse follower
 slots, and bounded multi-source reception. Keep the 34-byte MUL wire format unchanged.
 This audit records reuse decisions, not milestone status; see [PLAN.md](../PLAN.md).
-Coarse TDMA and diagnostic relative clock rate are implemented; no TWR or localization.
+Coarse TDMA, clock mapping and directed TWR are implemented; no localization.
 
 ## TDoA2: acquisition and RX/TX state transitions
 
@@ -19,7 +19,7 @@ Source: `src/uwb_tdoa_anchor2.c`.
 Reuse the acquisition/loss distinction and event-driven receive re-arming.
 Reuse its direct RX-to-delayed-TX transition, not its full frame/slot schedule.
 Its low-byte anchor identity and truncated timestamp arrays do not replace MUL's
-full-address matching or five-byte timestamps. There is no synchronized clock yet.
+full-address matching or five-byte timestamps. MUL does not steer hardware clocks.
 
 ## TDoA3: bounded source state and liveness
 
@@ -46,16 +46,19 @@ integers, a five-sample median/stability check, and a wider ±200 ppm initial ga
 TDoA2's frame timestamp arrays support slot/range exchanges, not a reusable
 standalone robust skew estimator; neither truncated history is copied into MUL.
 
-## TWR: later exchange reuse
+## TWR: live exchange reuse
 
 Sources: `src/uwb_twr_anchor.c` and `src/uwb_twr_tag.c`.
 - Their `txcallback()`/`rxcallback()` paths demonstrate hardware timestamp capture.
 - `initiateRanging()` and `dwWaitForResponse(true)` illustrate alternating TX/RX.
 - `twrAnchorOnEvent()`/`twrTagOnEvent()` illustrate completion/error dispatch.
 
-Retain these as references for occasional future calibration exchanges.
-Do not use request/reply or automatic response behavior in a receive-only role.
-MUL retains its explicit serialization and bounds checks instead of packet overlays.
+Reuse the six-marker asymmetric DS pattern and completion-driven progression.
+Single-sided TWR needs trusted rate compensation; symmetric DS constrains reply
+delays unnecessarily. MUL uses modular 40-bit intervals and a reference-unit
+denominator, not the legacy low32 arithmetic, packed overlays, auto-response, or
+extra ANTENNA_OFFSET correction. REPORT/RESULT confirmation prevents publishing
+before the initiator's own TX timestamps have been checked. Keep the RLR passive.
 No Crazyflie tag-side sources were needed: the local node paths cover this milestone.
 
 ## Existing MUL and driver paths retained
@@ -70,6 +73,9 @@ Sources: `src/mul_alr.c`, `src/mul_rlr.c`, `src/uwb.c`, `vendor/libdw1000/src/`.
 - The EXTI callback signals the semaphore; algorithm callbacks and diagnostics
   execute in the UWB task, not in the hardware ISR. Program RX/TX before serial output.
 - Keep PHY setup, EEPROM, USB menus, original modes, and the driver untouched.
+- `dwCommitConfiguration()` re-tunes PHY and rewrites TX_ANTD/LDE_RXANTD from cache.
+  MUL RX setup instead writes only SYS_CFG/SYS_MASK and the RX timeout, preserving
+  live antenna calibration when enabling reference reception between broadcasts.
 
 ## Current MUL decisions
 

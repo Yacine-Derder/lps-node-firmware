@@ -1,0 +1,477 @@
+/* SPDX-License-Identifier: LGPL-3.0-or-later */
+#include "unity.h"
+#include "mul_twr.h"
+#include "mul_common.h"
+#include "mul_clock.h"
+#include "mul_rx.h"
+
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "../src/mul_alr.c"
+#include "../src/mul_rlr.c"
+
+#define MS MUL_TWR_DTU_PER_MS
+#define SEC (1000*MS)
+typedef struct {
+  dwDevice_t device;
+  uint8_t tx[MUL_TWR_FRAME_LENGTH+2], rx[MUL_TWR_FRAME_LENGTH];
+  unsigned int txLength, rxLength, sends, rearms, aborts;
+  uint64_t now, raw, actual, arrival;
+  uint16_t antenna, status, injectStatus;
+  int64_t stampError, dxError;
+  uint64_t setupLag;
+  bool armed, receiving;
+} FakeRadio;
+static FakeRadio radios[2];
+static mulTwr_t contexts[2];
+static mulClock_t model;
+static int32_t skew;
+static int64_t physical, framePhysical, flight;
+static uint64_t offsets[2], origins[2];
+static uint32_t exchangeSequence;
+static TickType_t ticks;
+static bool useAlr[2];
+static const uint8_t identities[2][8] = {{0x84,0,0,0,0,0,0xcf,0xbc},{0x85,0,0,0,0,0,0xcf,0xbc}};
+
+TickType_t xTaskGetTickCount(void) { return ticks; }
+static FakeRadio *radio(dwDevice_t *device) {
+  for (int i = 0; i < 2; i++) if (device == &radios[i].device) return &radios[i];
+  TEST_FAIL_MESSAGE("Unknown radio");
+  return &radios[0];
+}
+void dwIdle(dwDevice_t *dev) { FakeRadio *r=radio(dev); if (r->armed) r->aborts++; r->armed=false; r->receiving=false; }
+void dwNewTransmit(dwDevice_t *dev) { dwIdle(dev); }
+void dwNewReceive(dwDevice_t *dev) { dwIdle(dev); }
+void dwStartReceive(dwDevice_t *dev) { radio(dev)->receiving=true; radio(dev)->rearms++; }
+void dwSetDefaults(dwDevice_t *dev) { (void)dev; }
+void dwReceivePermanently(dwDevice_t *dev, bool enable) { (void)dev; TEST_ASSERT_FALSE(enable); }
+void dwWaitForResponse(dwDevice_t *dev, bool enable) { (void)dev; TEST_ASSERT_FALSE(enable); }
+void dwNewConfiguration(dwDevice_t *dev) { dwIdle(dev); }
+void dwSetFrameFilter(dwDevice_t *dev, bool enable) { (void)dev; TEST_ASSERT_FALSE(enable); }
+void dwSetReceiverAutoReenable(dwDevice_t *dev, bool enable) { (void)dev; TEST_ASSERT_FALSE(enable); }
+void dwSetReceiveWaitTimeout(dwDevice_t *dev, uint16_t timeout) { (void)dev; TEST_ASSERT_EQUAL_UINT(0,timeout); }
+void dwInterruptOnReceiveFailed(dwDevice_t *dev, bool enable) { (void)dev; TEST_ASSERT_TRUE(enable); }
+void dwWriteSystemConfigurationRegister(dwDevice_t *dev) { (void)dev; }
+void dwWriteSystemEventMaskRegister(dwDevice_t *dev) { (void)dev; }
+void dwGetSystemTimestamp(dwDevice_t *dev, dwTime_t *time) { time->full=radio(dev)->now; }
+void dwGetTransmitTimestamp(dwDevice_t *dev, dwTime_t *time) { time->full=radio(dev)->actual; }
+void dwGetRawReceiveTimestamp(dwDevice_t *dev, dwTime_t *time) { time->full=radio(dev)->arrival; }
+void dwSetTxRxTime(dwDevice_t *dev, const dwTime_t time) {
+  TEST_ASSERT_EQUAL_UINT64(0, time.full & 511);
+  radio(dev)->raw=time.full;
+  radio(dev)->now=mulTimestampMask(radio(dev)->now+radio(dev)->setupLag);
+}
+void dwSpiRead(dwDevice_t *dev, uint8_t reg, uint32_t sub, void *data, size_t size) {
+  TEST_ASSERT_EQUAL_UINT8(DX_TIME,reg); TEST_ASSERT_EQUAL_UINT32(NO_SUB,sub); TEST_ASSERT_EQUAL_UINT(5,size);
+  mulEncodeTimestamp(data, radio(dev)->raw+radio(dev)->dxError);
+}
+uint16_t dwSpiRead16(dwDevice_t *dev, uint8_t reg, uint32_t sub) {
+  if (reg == TX_ANTD) { TEST_ASSERT_EQUAL_UINT32(NO_SUB,sub); return radio(dev)->antenna; }
+  TEST_ASSERT_EQUAL_UINT8(SYS_STATUS,reg); TEST_ASSERT_EQUAL_UINT32(3,sub); return radio(dev)->status;
+}
+void dwSpiWrite(dwDevice_t *dev, uint8_t reg, uint32_t sub, const void *data, size_t size) {
+  const uint8_t expected[] = {0x08,0x04};
+  TEST_ASSERT_EQUAL_UINT8(SYS_STATUS,reg); TEST_ASSERT_EQUAL_UINT32(3,sub);
+  TEST_ASSERT_EQUAL_UINT(2,size); TEST_ASSERT_EQUAL_UINT8_ARRAY(expected,data,size);
+  radio(dev)->status=0;
+}
+void dwSetData(dwDevice_t *dev, uint8_t *data, unsigned int size) {
+  TEST_ASSERT_TRUE(size == MUL_TEST_FRAME_LENGTH || size == MUL_TWR_FRAME_LENGTH);
+  memcpy(radio(dev)->tx,data,size+2); // Same FCS reserve read as the real driver.
+  radio(dev)->txLength=size;
+}
+void dwStartTransmit(dwDevice_t *dev) {
+  FakeRadio *r=radio(dev); r->sends++; r->armed=true; r->status=r->injectStatus;
+  r->actual=mulTimestampMask(r->raw+r->antenna+r->stampError);
+}
+unsigned int dwGetDataLength(dwDevice_t *dev) { return radio(dev)->rxLength; }
+void dwGetData(dwDevice_t *dev, uint8_t *data, unsigned int size) {
+  TEST_ASSERT_EQUAL_UINT(radio(dev)->rxLength,size); memcpy(data,radio(dev)->rx,size);
+}
+
+static long double rate(int node) { return node == 0 ? 1.0L : 1.0L+skew/1e9L; }
+static uint64_t clockAt(int node, int64_t at) {
+  return mulTimestampMask(offsets[node]+llroundl(at*rate(node)));
+}
+static void advance(int64_t at) {
+  physical=at;
+  ticks=(TickType_t)(5000+at/(int64_t)MS);
+  for (int i=0;i<2;i++) radios[i].now=clockAt(i,at);
+}
+static int64_t sendTime(int node) {
+  return physical+llroundl(mulTimestampDifference(radios[node].actual,radios[node].now)/rate(node));
+}
+static mulTwr_t *ctx(int node) { return useAlr[node] ? &ranging : &contexts[node]; }
+static mulClock_t *followerModel(void) { return useAlr[1] ? &followerClock : &model; }
+static uint32_t dispatch(int node, uwbEvent_t event) {
+  if (useAlr[node]) return mulAlrAlgorithm.onEvent(&radios[node].device,event);
+  mulTwrOnEvent(ctx(node), &radios[node].device,event,(mulAlrRole_t)node,exchangeSequence,
+    origins[node],origins[0],followerModel()->epoch,ticks);
+  return mulTwrWait(ctx(node),&radios[node].device,origins[node],3000);
+}
+static void modelAcquire(void) {
+  mulClockReset(&model);
+  mulTestPacket_t packet;
+  memcpy(packet.source,identities[0],8);
+  for (unsigned int i=0;i<6;i++) {
+    int64_t at=framePhysical-(int64_t)(5-i)*SEC;
+    packet.sequence=exchangeSequence-5+i; packet.txTimestamp=clockAt(0,at);
+    mulClockObserve(&model,&packet,clockAt(1,at+flight),i*1000,true);
+  }
+  TEST_ASSERT_EQUAL_INT(mulClockValid,model.status);
+}
+static void scenario(int32_t ppb, int64_t tof) {
+  skew=ppb; flight=tof; framePhysical=0; exchangeSequence=5;
+  origins[0]=clockAt(0,0); origins[1]=clockAt(1,tof);
+  modelAcquire(); advance(630*(int64_t)MS);
+  for (int i=0;i<2;i++) mulRxInit(&radios[i].device);
+}
+void setUp(void) {
+  memset(radios,0,sizeof(radios)); memset(contexts,0,sizeof(contexts)); memset(useAlr,0,sizeof(useAlr));
+  radios[0].antenna=0x4321; radios[1].antenna=0xffff;
+  offsets[0]=MUL_TIMESTAMP_MASK-660*MS; offsets[1]=UINT64_C(0x723456789a);
+  skew=0; flight=0; physical=framePhysical=0; ticks=5000;
+  exchangeSequence=5; mulClockReset(&model);
+}
+void tearDown(void) {}
+
+// Deliver a real encoded frame at hardware marker time, callbacks 1/2 ms later.
+static void transfer(int from) {
+  int to=1-from; FakeRadio *s=&radios[from], *r=&radios[to];
+  TEST_ASSERT_TRUE(s->armed); TEST_ASSERT_TRUE(r->receiving);
+  uint8_t payload[MUL_TWR_FRAME_LENGTH]; unsigned int length=s->txLength;
+  TEST_ASSERT_EQUAL_UINT(MUL_TWR_FRAME_LENGTH,length);
+  memcpy(payload,s->tx,length);
+  mulTwrPacket_t packet; TEST_ASSERT_TRUE(mulTwrDecode(payload,length,&packet));
+  if (s->stampError == 0) TEST_ASSERT_EQUAL_UINT64(s->actual,packet.txTimestamp);
+  int64_t when=sendTime(from);
+  advance(when+(int64_t)MS); s->armed=false; dispatch(from,eventPacketSent);
+  advance(when+flight+2*(int64_t)MS);
+  memcpy(r->rx,payload,length); r->rxLength=length; r->arrival=clockAt(to,when+flight); r->receiving=false;
+  dispatch(to,eventPacketReceived);
+}
+static void completeExchange(void) { transfer(0); transfer(1); transfer(0); transfer(1); transfer(0); }
+
+void test_mulTwrCompleteSixTimestampExchangeWithIndependentSignedClockRates(void) {
+  const int32_t skews[]={0,5000,-10000,150000,-150000};
+  const uint32_t metres[]={1,5,10,30};
+  for (unsigned int a=0;a<5;a++) for (unsigned int b=0;b<4;b++) {
+    setUp(); int64_t tof=(metres[b]*SEC+149896229)/299792458;
+    scenario(skews[a],tof);
+    TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+    completeExchange();
+    TEST_ASSERT_FALSE(ctx(0)->active); TEST_ASSERT_FALSE(ctx(1)->active);
+    TEST_ASSERT_TRUE(ctx(1)->delayValid); TEST_ASSERT_UINT32_WITHIN(1,tof,ctx(1)->tof);
+    uint32_t pollUptime=(uint32_t)(5000+(framePhysical+
+      mulTimestampDifference(ctx(0)->stamps[0],origins[0])+flight)/(int64_t)MS);
+    TEST_ASSERT_TRUE((int32_t)(pollUptime-ctx(1)->measuredMs) >= 0);
+    TEST_ASSERT_TRUE(pollUptime-ctx(1)->measuredMs <= 2); // Hardware age, not callback/RESULT time.
+    TEST_ASSERT_TRUE(radios[0].receiving && radios[1].receiving);
+    TEST_ASSERT_EQUAL_UINT(3,radios[0].sends); TEST_ASSERT_EQUAL_UINT(2,radios[1].sends);
+    // The six saved markers belong to the stated node/operation, not a common origin.
+    TEST_ASSERT_EQUAL_UINT64(ctx(0)->stamps[0],ctx(1)->stamps[0]);
+    TEST_ASSERT_EQUAL_UINT64(ctx(0)->stamps[5],ctx(1)->stamps[5]);
+    mulClockDelay_t delay; TEST_ASSERT_TRUE(mulTwrDelay(ctx(1),&model,&delay));
+    TEST_ASSERT_EQUAL_INT(mulClockDelayValid,mulClockDelayStatus(&model,&delay,ticks));
+    TEST_ASSERT_EQUAL_UINT64(MUL_CLOCK_BOUND_UNKNOWN,delay.measurementBoundDtu);
+    TEST_ASSERT_EQUAL_UINT64(MUL_CLOCK_BOUND_UNKNOWN,delay.motionBoundDtuPerMs);
+    mulTwrSync(ctx(1),&model,ticks,false); TEST_ASSERT_TRUE(ctx(1)->syncAvailable);
+    mulClockCorrectedMapping_t mapped;
+    TEST_ASSERT_TRUE(mulClockMapRefToFollowerSimultaneous(&model,model.referenceTx,&delay,ticks,&mapped));
+    TEST_ASSERT_UINT64_WITHIN(2,0,(uint64_t)llabs(mulTimestampDifference(mapped.timestamp,clockAt(1,0))));
+  }
+}
+
+void test_mulTwrMathDomainPrecisionZeroAndInvalidIntervals(void) {
+  uint64_t t[6]={0,0,0,0,0,0}; uint32_t tof=999;
+  // Exact six-marker construction with asymmetric replies and an independent -10 ppm clock.
+  const int64_t d=63898, a=18*MS, b=23*MS;
+  uint64_t localBase=UINT64_C(0xfedcba9876), remoteBase=MUL_TIMESTAMP_MASK-10*MS;
+  t[0]=remoteBase; t[1]=localBase;
+  t[2]=mulTimestampMask(localBase+llroundl(a*0.999990L));
+  t[3]=mulTimestampMask(remoteBase+a+2*d); t[4]=mulTimestampMask(t[3]+b);
+  t[5]=mulTimestampMask(localBase+llroundl((a+b+2*d)*0.999990L));
+  TEST_ASSERT_TRUE(mulTwrCalculate(t,&tof)); TEST_ASSERT_UINT32_WITHIN(1,d,tof);
+  uint64_t saved[6]; memcpy(saved,t,sizeof(t));
+  t[4]=t[3]; TEST_ASSERT_FALSE(mulTwrCalculate(t,&tof)); memcpy(t,saved,sizeof(t));
+  t[5]=mulTimestampMask(t[2]+(UINT64_C(1)<<39)); TEST_ASSERT_FALSE(mulTwrCalculate(t,&tof));
+  TEST_ASSERT_FALSE(mulTwrCalculate(NULL,&tof)); TEST_ASSERT_FALSE(mulTwrCalculate(saved,NULL));
+  t[0]=t[1]=0; t[2]=t[3]=20*MS; t[4]=t[5]=40*MS;
+  TEST_ASSERT_TRUE(mulTwrCalculate(t,&tof)); TEST_ASSERT_EQUAL_UINT32(0,tof);
+  t[5]--; TEST_ASSERT_FALSE(mulTwrCalculate(t,&tof)); // Negative ToF: never clamp.
+  t[5]=40*MS+1000000; TEST_ASSERT_FALSE(mulTwrCalculate(t,&tof)); // Implausible range/rate.
+}
+
+void test_mulTwrWireFormatStrictBoundsRolesAndBroadcastSeparation(void) {
+  mulTwrPacket_t packet={.type=mulTwrPoll,.id=UINT32_MAX,.txTimestamp=MUL_TIMESTAMP_MASK};
+  packet.stamps[0]=packet.txTimestamp;
+  uint8_t bytes[MUL_TWR_FRAME_LENGTH]; mulTwrEncode(bytes,&packet);
+  mulTwrPacket_t decoded; TEST_ASSERT_TRUE(mulTwrDecode(bytes,sizeof(bytes),&decoded));
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX,decoded.id); TEST_ASSERT_EQUAL_UINT64(MUL_TIMESTAMP_MASK,decoded.stamps[0]);
+  mulTestPacket_t broadcast; TEST_ASSERT_FALSE(mulDecodeTestPacket(bytes,sizeof(bytes),&broadcast));
+  TEST_ASSERT_FALSE(mulDecodeTestPacket(bytes,MUL_TEST_FRAME_LENGTH,&broadcast)); // Even a truncated TWR header.
+  for (unsigned int length=0;length<200;length++) {
+    if (length != sizeof(bytes)) {
+      TEST_ASSERT_FALSE(mulTwrDecode(bytes,length,&decoded));
+    }
+  }
+  const unsigned int fields[]={0,1,2,3,4,5,12,13,20,21,23,24,25,34,64};
+  for (unsigned int i=0;i<sizeof(fields)/sizeof(fields[0]);i++) {
+    bytes[fields[i]]^=0x80; TEST_ASSERT_FALSE(mulTwrDecode(bytes,sizeof(bytes),&decoded)); bytes[fields[i]]^=0x80;
+  }
+  TEST_ASSERT_FALSE(mulTwrDecode(NULL,sizeof(bytes),&decoded));
+  TEST_ASSERT_FALSE(mulTwrDecode(bytes,sizeof(bytes),NULL));
+  mulEncodeTestPacket(bytes,identities[0],5,0); TEST_ASSERT_FALSE(mulTwrDecode(bytes,34,&decoded));
+}
+
+void test_mulTwrMissingResponseAbsoluteDeadlineAndLatePollRecovery(void) {
+  scenario(5000,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  int64_t when=sendTime(0); advance(when+MS); radios[0].armed=false; dispatch(0,eventPacketSent);
+  advance(when+10*MS); dispatch(0,eventTimeout); TEST_ASSERT_TRUE(ctx(0)->active);
+  uint64_t deadline=ctx(0)->deadline;
+  advance(when+51*MS); dispatch(0,eventTimeout);
+  TEST_ASSERT_FALSE(ctx(0)->active); TEST_ASSERT_TRUE(radios[0].receiving);
+  TEST_ASSERT_EQUAL_UINT64(deadline,ctx(0)->deadline);
+  TEST_ASSERT_FALSE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  ctx(0)->attempted=false; advance(649*MS);
+  TEST_ASSERT_FALSE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  TEST_ASSERT_FALSE(radios[0].armed); TEST_ASSERT_TRUE(radios[0].receiving);
+}
+
+void test_mulTwrDelayedStartDxReadbackAndTxTimestampFailuresNeverPublish(void) {
+  for (unsigned int which=0;which<5;which++) {
+    setUp(); scenario(0,1000);
+    if (which==0) radios[0].injectStatus=0x8;
+    if (which==1) radios[0].injectStatus=0x400;
+    if (which==2) radios[0].dxError=512;
+    if (which==3) radios[0].setupLag=18*MS;
+    if (which==4) radios[0].stampError=1;
+    bool started=mulTwrStart(ctx(0),&radios[0].device,5,origins[0]);
+    if (which==4) {
+      TEST_ASSERT_TRUE(started); advance(sendTime(0)+MS); radios[0].armed=false; dispatch(0,eventPacketSent);
+    } else TEST_ASSERT_FALSE(started);
+    TEST_ASSERT_FALSE(ctx(0)->active); TEST_ASSERT_FALSE(ctx(1)->delayValid);
+    TEST_ASSERT_TRUE(radios[0].receiving); TEST_ASSERT_FALSE(radios[0].armed);
+  }
+}
+
+void test_mulTwrMismatchedStaleMalformedAndDuplicateMessagesCancelSafely(void) {
+  for (unsigned int which=0;which<5;which++) {
+    setUp(); scenario(-10000,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+    transfer(0); // Responder now has one scheduled response, never a second response to a replay.
+    int64_t when=sendTime(1); advance(when+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
+    advance(when+2*MS); memcpy(radios[0].rx,radios[1].tx,MUL_TWR_FRAME_LENGTH);
+    radios[0].rxLength=MUL_TWR_FRAME_LENGTH; radios[0].arrival=clockAt(0,when+flight); radios[0].receiving=false;
+    if (which==0) { radios[0].rx[25]++; radios[0].rx[2]++; } // Wrong exchange, valid MAC sequence.
+    if (which==1) radios[0].rx[29]++; // Wrong POLL nonce, same exchange id.
+    if (which==2) radios[0].rx[13]^=1; // Wrong full identity.
+    if (which==3) radios[0].rx[21]^=1;
+    if (which==4) radios[0].arrival=mulTimestampMask(radios[0].arrival-100*MS); // Failed/stale RX capture.
+    dispatch(0,eventPacketReceived);
+    TEST_ASSERT_FALSE(ctx(0)->active); TEST_ASSERT_FALSE(ctx(1)->delayValid);
+    TEST_ASSERT_TRUE(radios[0].receiving);
+  }
+}
+
+void test_mulTwrResultMustConfirmActualSixMarkersBeforeDelayAcceptance(void) {
+  scenario(5000,2000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  transfer(0); transfer(1); transfer(0); transfer(1);
+  TEST_ASSERT_FALSE(ctx(1)->delayValid); // A REPORT transmission alone cannot validate initiator TX stamps.
+  radios[0].tx[64] ^= 1; // Wrong ToF result despite matching exchange timestamps.
+  transfer(0);
+  TEST_ASSERT_FALSE(ctx(1)->active); TEST_ASSERT_FALSE(ctx(1)->delayValid);
+  TEST_ASSERT_TRUE(radios[1].receiving);
+}
+
+void test_mulTwrExpirationLossEpochAndHardWindowInvalidateCorrection(void) {
+  scenario(-10000,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  completeExchange(); mulTwrSync(ctx(1),&model,ticks,false); TEST_ASSERT_TRUE(ctx(1)->syncAvailable);
+  uint32_t expiry=ctx(1)->measuredMs+MUL_CLOCK_DELAY_DEFAULT_MAX_AGE_MS+1;
+  mulTwrSync(ctx(1),&model,expiry,false); TEST_ASSERT_FALSE(ctx(1)->syncAvailable);
+  mulClockReset(&model); mulClockDelay_t delay;
+  TEST_ASSERT_FALSE(mulTwrDelay(ctx(1),&model,&delay));
+  setUp(); scenario(0,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  advance(801*MS); dispatch(0,eventTimeout);
+  TEST_ASSERT_FALSE(ctx(0)->active); TEST_ASSERT_FALSE(radios[0].armed); TEST_ASSERT_TRUE(radios[0].receiving);
+}
+
+static void injectBroadcast(int receiver, int senderNode, uint32_t seq, uint64_t tx, uint64_t rx) {
+  FakeRadio *r=&radios[receiver]; mulEncodeTestPacket(r->rx,identities[senderNode],seq,tx);
+  r->rxLength=MUL_TEST_FRAME_LENGTH; r->arrival=rx; r->receiving=false;
+  dispatch(receiver,eventPacketReceived);
+}
+
+static void modeFollower(void) {
+  useAlr[1]=true; uwbConfig_t configuration={0}; memcpy(configuration.address,identities[1],8);
+  mulAlrAlgorithm.init(&configuration,&radios[1].device);
+  for (unsigned int i=0;i<6;i++) {
+    int64_t at=-(int64_t)(5-i)*SEC; advance(at+flight+MS);
+    injectBroadcast(1,0,i,clockAt(0,at),clockAt(1,at+flight));
+    TEST_ASSERT_TRUE(txPending); TEST_ASSERT_FALSE(ranging.active);
+    advance(sendTime(1)+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
+  }
+  TEST_ASSERT_EQUAL_INT(mulClockValid,followerClock.status);
+}
+
+void test_mulTwrLiveFollowerIntegrationBroadcastPriorityAvailabilityAndLoss(void) {
+  scenario(5000,2131); modeFollower();
+  advance(630*MS); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  completeExchange(); TEST_ASSERT_TRUE(ranging.delayValid); TEST_ASSERT_TRUE(ranging.syncAvailable);
+  TEST_ASSERT_TRUE(radios[1].receiving); TEST_ASSERT_FALSE(txPending);
+  // Next reference broadcast remains the only source of follower scheduling.
+  advance(SEC+flight+MS); injectBroadcast(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));
+  TEST_ASSERT_TRUE(txPending); TEST_ASSERT_FALSE(ranging.active);
+  uint64_t raw=radios[1].raw; unsigned int sends=radios[1].sends;
+  // A spurious ranging RX while the mandatory TX is armed must never schedule another TX.
+  radios[1].rxLength=MUL_TWR_FRAME_LENGTH;
+  dispatch(1,eventPacketReceived);
+  TEST_ASSERT_EQUAL_UINT(sends,radios[1].sends); TEST_ASSERT_EQUAL_UINT64(raw,radios[1].raw);
+  TEST_ASSERT_TRUE(txPending); TEST_ASSERT_TRUE(radios[1].armed);
+  TEST_ASSERT_FALSE(ranging.active);
+  advance(4*SEC+MS); dispatch(1,eventTimeout);
+  TEST_ASSERT_FALSE(referenceAcquired); TEST_ASSERT_FALSE(ranging.delayValid); TEST_ASSERT_FALSE(ranging.syncAvailable);
+  TEST_ASSERT_FALSE(radios[1].armed); TEST_ASSERT_TRUE(radios[1].receiving);
+}
+
+void test_mulTwrReferenceModeGatesOnFollowerAndPreservesNextBroadcast(void) {
+  skew=-10000; flight=1066; useAlr[0]=true;
+  uwbConfig_t configuration={0}; memcpy(configuration.address,identities[0],8);
+  advance(-5*(int64_t)SEC-20*(int64_t)MS); mulAlrAlgorithm.init(&configuration,&radios[0].device);
+  for (unsigned int i=0;i<6;i++) {
+    if (i != 0) advance(framePhysical+(int64_t)SEC-20*(int64_t)MS);
+    dispatch(0,eventTimeout); TEST_ASSERT_TRUE(txPending);
+    int64_t when=sendTime(0); advance(when+MS); radios[0].armed=false; dispatch(0,eventPacketSent);
+    framePhysical=when; TEST_ASSERT_EQUAL_UINT32(i,pendingSequence);
+    advance(when+500*MS+flight);
+    injectBroadcast(0,1,100+i,clockAt(1,when+500*MS),clockAt(0,when+500*MS+flight));
+  }
+  origins[0]=pendingTimestamp; origins[1]=clockAt(1,framePhysical+flight); modelAcquire();
+  mulRxInit(&radios[1].device);
+  advance(framePhysical+630*MS); dispatch(0,eventTimeout);
+  TEST_ASSERT_TRUE(ranging.active); TEST_ASSERT_FALSE(txPending);
+  completeExchange(); TEST_ASSERT_TRUE(contexts[1].delayValid);
+  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_EQUAL_UINT32(5,pendingSequence);
+  advance(framePhysical+(int64_t)SEC-20*(int64_t)MS); dispatch(0,eventTimeout);
+  TEST_ASSERT_TRUE(txPending); TEST_ASSERT_FALSE(ranging.active);
+  mulTestPacket_t next; TEST_ASSERT_TRUE(mulDecodeTestPacket(radios[0].tx,34,&next));
+  TEST_ASSERT_EQUAL_UINT32(6,next.sequence);
+  TEST_ASSERT_EQUAL_INT64(SEC,mulTimestampDifference(next.txTimestamp,origins[0]));
+}
+
+void test_mulTwrRlrRemainsPassiveAndCannotDecodeDirectedRangingAsBroadcast(void) {
+  scenario(0,1000); uwbConfig_t configuration={0};
+  mulRlrAlgorithm.init(&configuration,&radios[1].device);
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  memcpy(radios[1].rx,radios[0].tx,MUL_TWR_FRAME_LENGTH); radios[1].rxLength=MUL_TWR_FRAME_LENGTH;
+  radios[1].receiving=false; mulRlrAlgorithm.onEvent(&radios[1].device,eventPacketReceived);
+  TEST_ASSERT_TRUE(radios[1].receiving); TEST_ASSERT_EQUAL_UINT(0,radios[1].sends);
+  TEST_ASSERT_FALSE(rlrSources[0].hasSequence); TEST_ASSERT_FALSE(rlrSources[1].hasSequence);
+}
+
+void test_mulTwrDuplicatePollAndCompletionNeverCreateSecondReply(void) {
+  scenario(0,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  uint8_t poll[MUL_TWR_FRAME_LENGTH]; memcpy(poll,radios[0].tx,sizeof(poll));
+  completeExchange(); unsigned int sends=radios[1].sends;
+  advance(740*MS); memcpy(radios[1].rx,poll,sizeof(poll)); radios[1].rxLength=sizeof(poll);
+  radios[1].arrival=clockAt(1,650*MS+flight); radios[1].receiving=false;
+  dispatch(1,eventPacketReceived);
+  TEST_ASSERT_EQUAL_UINT(sends,radios[1].sends); TEST_ASSERT_FALSE(ctx(1)->active);
+  dispatch(1,eventPacketSent); TEST_ASSERT_EQUAL_UINT(sends,radios[1].sends);
+  TEST_ASSERT_TRUE(radios[1].receiving);
+}
+
+void test_mulTwrUnverifiedInitiatorFinalCannotPublishEvenIfReportArrives(void) {
+  scenario(-10000,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  transfer(0); radios[0].stampError=1; transfer(1); // FINAL's actual TX now disagrees with encoding.
+  transfer(0); TEST_ASSERT_FALSE(ctx(0)->active); TEST_ASSERT_TRUE(ctx(1)->active);
+  TEST_ASSERT_FALSE(ctx(1)->delayValid);
+  if (radios[1].armed) transfer(1); // Initiator refuses to confirm the unverified FINAL.
+  advance(790*MS); dispatch(1,eventTimeout);
+  TEST_ASSERT_FALSE(ctx(1)->active); TEST_ASSERT_FALSE(ctx(1)->delayValid);
+  TEST_ASSERT_TRUE(radios[0].receiving && radios[1].receiving);
+}
+
+void test_mulTwrReceiveErrorsAndExplicitCancellationRestoreRx(void) {
+  const uwbEvent_t errors[]={eventReceiveFailed,eventReceiveTimeout};
+  for (unsigned int i=0;i<2;i++) {
+    setUp(); scenario(0,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+    transfer(0); dispatch(1,errors[i]);
+    TEST_ASSERT_FALSE(ctx(1)->active); TEST_ASSERT_FALSE(radios[1].armed); TEST_ASSERT_TRUE(radios[1].receiving);
+    mulTwrCancel(ctx(0),&radios[0].device,"test_cancel",true);
+    TEST_ASSERT_FALSE(ctx(0)->active); TEST_ASSERT_TRUE(radios[0].receiving);
+  }
+}
+
+void test_mulTwrFollowerNewBroadcastPreemptsExchangeAndReacquiresAfterLoss(void) {
+  scenario(5000,2131); modeFollower(); advance(630*MS);
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  transfer(0); // Follower response armed, still lower priority than a new broadcast.
+  int64_t when=sendTime(1); advance(when+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
+  TEST_ASSERT_TRUE(ranging.active); TEST_ASSERT_FALSE(txPending);
+  advance(SEC+flight+MS); injectBroadcast(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));
+  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_TRUE(txPending); TEST_ASSERT_FALSE(ranging.delayValid);
+  advance(sendTime(1)+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
+  advance(4*SEC+MS); dispatch(1,eventTimeout); TEST_ASSERT_FALSE(referenceAcquired);
+  uint64_t oldEpoch=followerClock.epoch;
+  advance(5*SEC+flight+MS); injectBroadcast(1,0,0,clockAt(0,5*SEC),clockAt(1,5*SEC+flight));
+  TEST_ASSERT_TRUE(referenceAcquired); TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_EQUAL_INT(mulClockWarmup,followerClock.status);
+  TEST_ASSERT_TRUE(followerClock.epoch == oldEpoch); // Loss already issued the clean epoch.
+  TEST_ASSERT_FALSE(ranging.delayValid);
+}
+
+void test_mulTwrReferenceHardBroadcastPriorityCancelsMissingResponse(void) {
+  useAlr[0]=true; uwbConfig_t configuration={0}; memcpy(configuration.address,identities[0],8);
+  advance(-20*(int64_t)MS); mulAlrAlgorithm.init(&configuration,&radios[0].device);
+  dispatch(0,eventTimeout); advance(sendTime(0)+MS); radios[0].armed=false; dispatch(0,eventPacketSent);
+  uint64_t previous=pendingTimestamp;
+  // Simulate a pending exchange whose IRQ/timeout was delayed until mandatory slot preparation.
+  ranging.active=true; ranging.txPending=true; ranging.id=0; ranging.stage=mulTwrPoll;
+  ranging.deadline=mulTimestampMask(nextRawTx+100*MS); radios[0].armed=true;
+  advance(physical+979*MS); dispatch(0,eventTimeout);
+  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_TRUE(txPending);
+  mulTestPacket_t next; TEST_ASSERT_TRUE(mulDecodeTestPacket(radios[0].tx,34,&next));
+  TEST_ASSERT_EQUAL_INT64(SEC,mulTimestampDifference(next.txTimestamp,previous));
+}
+
+void test_mulTwrLiveFollowerDelayExpiresBetweenFiveSecondAttempts(void) {
+  scenario(-10000,1066); modeFollower(); advance(630*MS);
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  completeExchange(); TEST_ASSERT_TRUE(ranging.syncAvailable);
+  advance(SEC+flight+MS); injectBroadcast(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));
+  advance(sendTime(1)+MS); radios[1].armed=false; uint32_t wait=dispatch(1,eventPacketSent);
+  TEST_ASSERT_TRUE(wait < 200); // Delay expiry, not the next reference-loss watchdog.
+  advance(physical+(int64_t)wait*MS); dispatch(1,eventTimeout);
+  TEST_ASSERT_FALSE(ranging.syncAvailable); TEST_ASSERT_TRUE(referenceAcquired);
+  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_FALSE(txPending); TEST_ASSERT_TRUE(radios[1].receiving);
+}
+
+void test_mulTwrExchangeIdAndFollowerHardwareCounterWrap(void) {
+  offsets[1]=MUL_TIMESTAMP_MASK-670*MS;
+  scenario(-10000,2131); exchangeSequence=UINT32_MAX; modelAcquire();
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,exchangeSequence,origins[0]));
+  completeExchange(); TEST_ASSERT_TRUE(ctx(1)->delayValid);
+  TEST_ASSERT_UINT32_WITHIN(1,2131,ctx(1)->tof);
+  TEST_ASSERT_TRUE(ctx(1)->stamps[2] > MUL_TIMESTAMP_MASK-10*MS);
+  TEST_ASSERT_TRUE(ctx(1)->stamps[5] < 30*MS);
+  mulClockDelay_t delay; TEST_ASSERT_TRUE(mulTwrDelay(ctx(1),&model,&delay));
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX,delay.referenceSequence);
+  mulTestPacket_t next; memcpy(next.source,identities[0],8); next.sequence=0;
+  next.txTimestamp=clockAt(0,SEC);
+  TEST_ASSERT_EQUAL_INT(mulClockSample,mulClockObserve(&model,&next,clockAt(1,SEC+flight),6000,true));
+  TEST_ASSERT_EQUAL_INT(mulClockDelayValid,mulClockDelayStatus(&model,&delay,6000));
+}
+
+void test_mulTwrReferenceLossWhileResponseArmedCancelsAndRequiresNewEpoch(void) {
+  scenario(5000,2131); modeFollower(); advance(630*MS);
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  transfer(0); TEST_ASSERT_TRUE(ranging.active); TEST_ASSERT_TRUE(radios[1].armed);
+  uint64_t epoch=followerClock.epoch;
+  ticks=lastReferenceTick+pdMS_TO_TICKS(MUL_SOURCE_TIMEOUT_MS);
+  dispatch(1,eventTimeout);
+  TEST_ASSERT_FALSE(referenceAcquired); TEST_ASSERT_FALSE(ranging.active);
+  TEST_ASSERT_FALSE(radios[1].armed); TEST_ASSERT_TRUE(radios[1].receiving);
+  TEST_ASSERT_FALSE(ranging.delayValid); TEST_ASSERT_TRUE(epoch != followerClock.epoch);
+}

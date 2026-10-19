@@ -1,0 +1,69 @@
+/* SPDX-License-Identifier: LGPL-3.0-or-later */
+#ifndef MUL_TWR_H
+#define MUL_TWR_H
+
+#include "mul_clock.h"
+#include "uwb.h"
+
+#define MUL_TWR_FRAME_LENGTH 68
+#define MUL_TWR_DTU_PER_MS UINT64_C(63897600)
+#define MUL_TWR_POLL_MS 650
+#define MUL_TWR_PREPARE_MS 630
+#define MUL_TWR_END_MS 800
+#define MUL_TWR_REPLY_MS 20
+#define MUL_TWR_STEP_MS 50
+
+typedef enum {
+  mulTwrPoll = 0x10,
+  mulTwrResponse,
+  mulTwrFinal,
+  mulTwrReport,
+  mulTwrResult,
+} mulTwrType_t;
+
+typedef struct {
+  mulTwrType_t type;
+  uint32_t id; // Reference broadcast sequence defines the ranging superframe.
+  uint64_t stamps[6]; // P1(ref TX), P2(fol RX), P3(fol TX), P4(ref RX), P5(ref TX), P6(fol RX).
+  uint64_t txTimestamp; // This message's verified scheduled antenna TX time.
+  uint32_t tof; // RESULT only, reference DTU.
+} mulTwrPacket_t;
+
+// Bounded radio/measurement state. Packet buffers live on the UWB task stack.
+typedef struct {
+  uint64_t stamps[6];
+  uint64_t expectedTx;
+  uint64_t deadline;
+  uint64_t windowEnd;
+  uint64_t epoch;
+  uint32_t id;
+  uint32_t measuredMs;
+  uint32_t tof;
+  mulTwrType_t stage;
+  bool active;
+  bool txPending;
+  bool attempted;
+  bool delayValid;
+  bool syncAvailable;
+  bool deferredCancel;
+  bool syncDirty;
+} mulTwr_t;
+
+void mulTwrEncode(uint8_t frame[MUL_TWR_FRAME_LENGTH], const mulTwrPacket_t *packet);
+bool mulTwrDecode(const uint8_t *frame, size_t length, mulTwrPacket_t *packet);
+bool mulTwrCalculate(const uint64_t stamps[6], uint32_t *tofReferenceDtu);
+void mulTwrInit(mulTwr_t *twr);
+void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool invalidateDelay);
+void mulTwrFlush(mulTwr_t *twr);
+bool mulTwrDue(uint32_t referenceSequence);
+bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t origin);
+// Caller never dispatches here while a broadcast TX is armed. A normal broadcast
+// is left unread for the ALR path and cancels any exchange, giving it priority.
+bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_t role,
+  uint32_t sequence, uint64_t localOrigin, uint64_t referenceOrigin, uint64_t epoch, uint32_t nowMs);
+uint32_t mulTwrWait(const mulTwr_t *twr, dwDevice_t *dev, uint64_t localOrigin, uint32_t fallback);
+bool mulTwrDelay(const mulTwr_t *twr, const mulClock_t *clock, mulClockDelay_t *delay);
+void mulTwrSync(mulTwr_t *twr, const mulClock_t *clock, uint32_t nowMs, bool force);
+uint32_t mulTwrDelayWait(const mulTwr_t *twr, uint32_t nowMs, uint32_t fallback);
+
+#endif

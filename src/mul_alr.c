@@ -3,6 +3,7 @@
 #include "mul_common.h"
 #include "mul_clock.h"
 #include "mul_rx.h"
+#include "mul_twr.h"
 #include "task.h"
 
 #include <inttypes.h>
@@ -37,6 +38,8 @@ static mulSourceState_t followerReference;
 static bool referenceAcquired;
 static TickType_t lastReferenceTick;
 static mulClock_t followerClock;
+static mulTwr_t ranging;
+static bool followerSeen;
 
 #define MUL_REFERENCE_LOSS_MS MUL_SOURCE_TIMEOUT_MS
 
@@ -105,6 +108,8 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   memset(&followerReference, 0, sizeof(followerReference));
   referenceAcquired = false;
   mulClockReset(&followerClock);
+  mulTwrInit(&ranging);
+  followerSeen = false;
   printf("MUL ALR: Mode initialized role=%s src=0x%02X\r\n",
          alrRole == mulAlrReference ? "REF" : alrRole == mulAlrFollower ? "FOLLOWER" : "UNSUPPORTED",
          (unsigned int)source[0]);
@@ -116,6 +121,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   }
   nextRawTx = mulTimestampMask((readHardwareTime(dev) + MUL_TX_LEAD_DTU +
                                MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1));
+  mulRxInit(dev); // Reference listens for the follower and directed TWR responses.
 }
 
 // Shared, tested Stage 2 TX setup. The caller supplies a raw local-clock target
@@ -184,8 +190,12 @@ static uint32_t scheduleTx(dwDevice_t *dev)
 
   dwTime_t rawTx = {.full = nextRawTx};
   nextRawTx = mulTimestampMask(nextRawTx + MUL_TX_PERIOD_DTU);
+  mulTwrCancel(&ranging, dev, NULL, false);
+  followerSeen = false;
   uint16_t antennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
-  if (startDelayedTx(dev, rawTx, antennaDelay)) {
+  bool started = startDelayedTx(dev, rawTx, antennaDelay);
+  mulTwrFlush(&ranging);
+  if (started) {
     return MUL_TX_COMPLETION_MS;
   }
   return waitForNextTx(dev);
@@ -203,6 +213,9 @@ static void abortFollowerTx(dwDevice_t *dev)
 
 static uint32_t followerWait(dwDevice_t *dev)
 {
+  mulTwrFlush(&ranging);
+  uint32_t nowMs = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+  mulTwrSync(&ranging, &followerClock, nowMs, false);
   uint32_t wait = MUL_REFERENCE_LOSS_MS;
   if (referenceAcquired) {
     TickType_t elapsed = (TickType_t)(xTaskGetTickCount() - lastReferenceTick);
@@ -221,7 +234,8 @@ static uint32_t followerWait(dwDevice_t *dev)
       wait = txWait;
     }
   }
-  return wait;
+  wait = mulTwrDelayWait(&ranging, nowMs, wait);
+  return mulTwrWait(&ranging, dev, followerReference.rxTimestamp, wait);
 }
 
 static bool scheduleFollowerTx(dwDevice_t *dev, uint64_t localRx)
@@ -252,12 +266,17 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   if (lostNow) {
     referenceAcquired = false;
     mulClockReset(&followerClock);
+    mulTwrCancel(&ranging, dev, "reference_lost", true);
+    ranging.attempted = false;
     if (txPending) {
       abortFollowerTx(dev);
     }
   }
 
   if (txPending) {
+    if (event == eventPacketReceived && dwGetDataLength(dev) == MUL_TWR_FRAME_LENGTH) {
+      return followerWait(dev); // A stale ranging IRQ must not displace an armed TDMA slot.
+    }
     if (event == eventTimeout &&
         mulTimestampDifference(readHardwareTime(dev),
           mulTimestampMask(pendingRawTx + MUL_TX_COMPLETION_MS * MUL_DTU_PER_MS)) < 0) {
@@ -278,6 +297,12 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       printf("MUL ALR: SLOT aborted ref_seq=%" PRIu32 " reason=%s\r\n",
              followerReference.sequence, event == eventTimeout ? "tx_timeout" : "radio_event");
     }
+    return followerWait(dev);
+  }
+
+  if (referenceAcquired && mulTwrOnEvent(&ranging, dev, event, mulAlrFollower,
+      followerReference.sequence, followerReference.rxTimestamp, followerReference.txTimestamp,
+      followerClock.epoch, (uint32_t)now * portTICK_PERIOD_MS)) {
     return followerWait(dev);
   }
 
@@ -318,6 +343,10 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     // Stage 3A.2 slot, and its result is never fed back into scheduling.
     mulClockResult_t clockResult = mulClockObserve(&followerClock, &packet, arrival,
       (uint32_t)now * portTICK_PERIOD_MS, true);
+    if (clockResult == mulClockDiscontinuity || acquiredNow) {
+      mulTwrCancel(&ranging, dev, "clock_epoch", true);
+      ranging.attempted = false;
+    }
     if (acquiredNow) {
       printf("MUL ALR: REF_ACQUIRED src=0x84 state=ACQUIRED\r\n");
     }
@@ -350,6 +379,20 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   return followerWait(dev);
 }
 
+static uint32_t referenceWait(dwDevice_t *dev)
+{
+  uint32_t wait = waitForNextTx(dev);
+  if (followerSeen && mulTwrDue(pendingSequence) &&
+      !(ranging.attempted && ranging.id == pendingSequence)) {
+    int64_t remaining = mulTimestampDifference(
+      mulTimestampMask(pendingTimestamp + MUL_TWR_PREPARE_MS*MUL_DTU_PER_MS), readHardwareTime(dev));
+    uint32_t twrWait = remaining <= 0 ? 1 :
+      (uint32_t)(((uint64_t)remaining + MUL_DTU_PER_MS - 1) / MUL_DTU_PER_MS);
+    if (twrWait < wait) wait = twrWait;
+  }
+  return mulTwrWait(&ranging, dev, pendingTimestamp, wait);
+}
+
 static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
 {
   if (alrRole == mulAlrFollower) {
@@ -358,6 +401,40 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
   if (alrRole != mulAlrReference) {
     dwIdle(dev);
     return MAX_TIMEOUT;
+  }
+  if (!txPending) {
+    // A delayed or stale IRQ cannot retain TWR ownership across the next mandatory
+    // broadcast preparation deadline. Hardware time always wins over ranging.
+    int64_t remaining = mulTimestampDifference(nextRawTx, readHardwareTime(dev));
+    if (remaining <= (int64_t)(MUL_TX_LEAD_DTU + MUL_TX_ALIGNMENT) ||
+        remaining > (int64_t)(MUL_TX_PERIOD_DTU + MUL_TX_LEAD_DTU)) {
+      mulTwrCancel(&ranging, dev, NULL, false);
+      if (event == eventTimeout) return scheduleTx(dev);
+    } else {
+      if (mulTwrOnEvent(&ranging, dev, event, mulAlrReference, pendingSequence,
+          pendingTimestamp, pendingTimestamp, 0, (uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS)) {
+        return referenceWait(dev);
+      }
+      if (event == eventPacketReceived) {
+        mulTestPacket_t packet;
+        uint64_t arrival;
+        if (mulRxRead(dev, &packet, &arrival) && mulAlrRoleForAddress(packet.source) == mulAlrFollower) {
+          int64_t phase = mulTimestampDifference(arrival, pendingTimestamp);
+          if (phase >= (int64_t)(450*MUL_DTU_PER_MS) && phase <= (int64_t)(600*MUL_DTU_PER_MS))
+            followerSeen = true;
+        }
+        mulRxRearm(dev);
+        return referenceWait(dev);
+      }
+      if (event == eventTimeout) {
+        int64_t phase = mulTimestampDifference(readHardwareTime(dev), pendingTimestamp);
+        if (followerSeen && mulTwrDue(pendingSequence) && phase >= (int64_t)(MUL_TWR_PREPARE_MS*MUL_DTU_PER_MS) &&
+            !(ranging.attempted && ranging.id == pendingSequence)) {
+          mulTwrStart(&ranging, dev, pendingSequence, pendingTimestamp);
+        }
+        return referenceWait(dev);
+      }
+    }
   }
   switch (event) {
     case eventTimeout:
@@ -375,6 +452,7 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
         dwGetTransmitTimestamp(dev, &actual);
         actual.full = mulTimestampMask(actual.full);
         txPending = false;
+        mulRxRearm(dev);
         logCompletedTx(actual.full);
       }
       break;
@@ -383,6 +461,7 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       dwIdle(dev);
       clearTxErrors(dev);
       txPending = false;
+      mulRxRearm(dev);
       printf("MUL ALR: Unexpected RX error\r\n");
       break;
     case eventPacketReceived:
@@ -391,7 +470,7 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       }
       break;
   }
-  return waitForNextTx(dev);
+  return referenceWait(dev);
 }
 
 uwbAlgorithm_t mulAlrAlgorithm = {

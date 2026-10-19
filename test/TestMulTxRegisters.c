@@ -5,6 +5,7 @@
 #include "task.h"
 #include "mul_common.h"
 #include "mul_clock.h"
+#include "mul_twr.h"
 
 #include <string.h>
 
@@ -15,7 +16,7 @@
 
 // Include the LDE sub-register address range used by normal RX configuration.
 static uint8_t registers[64][0x3000];
-static uint8_t transmitted[MUL_TEST_FRAME_LENGTH];
+static uint8_t transmitted[MUL_TWR_FRAME_LENGTH];
 static dwDevice_t radio;
 static uwbConfig_t nodeConfig;
 static uint64_t systemTime;
@@ -24,6 +25,11 @@ TickType_t xTaskGetTickCount(void) { return 0; }
 static bool started;
 static unsigned int completionCount;
 static unsigned int receiveCount;
+static mulTwr_t *directTwr;
+static uint64_t directOrigin;
+static uint64_t directReferenceOrigin;
+static uint64_t directEpoch;
+static mulAlrRole_t directRole;
 
 static unsigned int spiOffset(const uint8_t *header, size_t length) {
   unsigned int offset = length > 1 ? header[1] & 0x7f : 0;
@@ -68,12 +74,14 @@ static void radioWrite(dwDevice_t *device, const void *header, size_t headerLeng
 
 static void sentCallback(dwDevice_t *device) {
   completionCount++;
-  mulAlrAlgorithm.onEvent(device, eventPacketSent);
+  if (directTwr) mulTwrOnEvent(directTwr,device,eventPacketSent,directRole,5,directOrigin,directReferenceOrigin,directEpoch,0);
+  else mulAlrAlgorithm.onEvent(device, eventPacketSent);
 }
 
 static void receivedCallback(dwDevice_t *device) {
   receiveCount++;
-  mulAlrAlgorithm.onEvent(device, eventPacketReceived);
+  if (directTwr) mulTwrOnEvent(directTwr,device,eventPacketReceived,directRole,5,directOrigin,directReferenceOrigin,directEpoch,0);
+  else mulAlrAlgorithm.onEvent(device, eventPacketReceived);
 }
 
 static dwOps_t radioOps = {.spiRead = radioRead, .spiWrite = radioWrite};
@@ -89,6 +97,8 @@ void setUp(void) {
   started = false;
   completionCount = 0;
   receiveCount = 0;
+  directTwr = NULL;
+  directRole = mulAlrReference; directEpoch = 0; directReferenceOrigin = 0;
   dwInit(&radio, &radioOps);
   dwAttachSentHandler(&radio, sentCallback);
   dwAttachReceivedHandler(&radio, receivedCallback);
@@ -103,7 +113,7 @@ static void checkTimestamp(uint64_t expectedRaw, uint16_t antenna) {
   TEST_ASSERT_EQUAL_UINT32(100, mulAlrAlgorithm.onEvent(&radio, eventTimeout));
   TEST_ASSERT_TRUE(started);
   mulTestPacket_t decoded;
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(transmitted, sizeof(transmitted), &decoded));
+  TEST_ASSERT_TRUE(mulDecodeTestPacket(transmitted, MUL_TEST_FRAME_LENGTH, &decoded));
   TEST_ASSERT_EQUAL_UINT32(0, decoded.sequence);
   TEST_ASSERT_EQUAL_UINT8(0x84, decoded.source[0]);
   TEST_ASSERT_EQUAL_UINT64(expectedRaw, mulDecodeTimestamp(registers[DX_TIME]));
@@ -141,7 +151,7 @@ void test_mulFollowerRealDriverTurnsRxIntoDelayedTxAndBack(void) {
   TEST_ASSERT_EQUAL_UINT(IDLE_MODE, radio.deviceMode); // Driver caches IDLE while delayed TX waits.
   TEST_ASSERT_TRUE(started);
   mulTestPacket_t packet;
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(transmitted, sizeof(transmitted), &packet));
+  TEST_ASSERT_TRUE(mulDecodeTestPacket(transmitted, MUL_TEST_FRAME_LENGTH, &packet));
   TEST_ASSERT_EQUAL_UINT8(0x85, packet.source[0]);
   TEST_ASSERT_EQUAL_UINT32(0, packet.sequence);
   int64_t slot = mulTimestampDifference(packet.txTimestamp, rx);
@@ -162,4 +172,94 @@ void test_mulFollowerRealDriverTurnsRxIntoDelayedTxAndBack(void) {
   TEST_ASSERT_EQUAL_UINT(2, receiveCount);
   TEST_ASSERT_EQUAL_UINT(RX_MODE, radio.deviceMode);
   TEST_ASSERT_FALSE(started);
+}
+
+void test_mulRxSetupPreservesLiveAntennaCalibrationRegisters(void) {
+  registers[TX_ANTD][0]=0x34; registers[TX_ANTD][1]=0x12;
+  registers[LDE_IF][LDE_RXANTD_SUB]=0x78; registers[LDE_IF][LDE_RXANTD_SUB+1]=0x56;
+  mulRxInit(&radio);
+  TEST_ASSERT_EQUAL_HEX16(0x1234,dwSpiRead16(&radio,TX_ANTD,NO_SUB));
+  TEST_ASSERT_EQUAL_HEX16(0x5678,dwSpiRead16(&radio,LDE_IF,LDE_RXANTD_SUB));
+  TEST_ASSERT_EQUAL_UINT(RX_MODE,radio.deviceMode);
+}
+
+static void twrRealTxComplete(void) {
+  mulTwrPacket_t packet;
+  TEST_ASSERT_TRUE(mulTwrDecode(transmitted,MUL_TWR_FRAME_LENGTH,&packet));
+  TEST_ASSERT_EQUAL_UINT64(mulDecodeTimestamp(registers[TX_TIME]),packet.txTimestamp);
+  systemTime=mulTimestampMask(packet.txTimestamp+UINT64_C(63897600));
+  registers[SYS_STATUS][0] |= 1 << TXFRS_BIT;
+  dwHandleInterrupt(&radio);
+  TEST_ASSERT_EQUAL_UINT(RX_MODE,radio.deviceMode);
+}
+
+static void twrRealRx(mulTwrPacket_t *packet, uint64_t arrival) {
+  mulTwrEncode(registers[RX_BUFFER],packet);
+  registers[RX_FINFO][0]=MUL_TWR_FRAME_LENGTH+2;
+  mulEncodeTimestamp(registers[RX_TIME],arrival);
+  systemTime=mulTimestampMask(arrival+UINT64_C(63897600));
+  registers[SYS_STATUS][1] |= 1 << (RXFCG_BIT-8);
+  dwHandleInterrupt(&radio);
+}
+
+void test_mulTwrRealDriverPollFinalResultTimestampsAndRxTransitions(void) {
+  const uint64_t ms=UINT64_C(63897600);
+  const uint64_t tof=1000;
+  mulTwr_t context; mulTwrInit(&context); directTwr=&context;
+  directOrigin=MUL_TIMESTAMP_MASK-640*ms;
+  directReferenceOrigin=directOrigin;
+  systemTime=mulTimestampMask(directOrigin+630*ms);
+  registers[TX_ANTD][0]=0x21; registers[TX_ANTD][1]=0x43;
+  mulRxInit(&radio);
+  TEST_ASSERT_TRUE(mulTwrStart(&context,&radio,5,directOrigin));
+  uint64_t p1=context.stamps[0]; twrRealTxComplete();
+  mulTwrPacket_t response={.type=mulTwrResponse,.id=5};
+  response.stamps[0]=p1; response.stamps[1]=UINT64_C(0xfedcba9876);
+  response.stamps[2]=mulTimestampMask(response.stamps[1]+20*ms);
+  response.txTimestamp=response.stamps[2];
+  twrRealRx(&response,mulTimestampMask(p1+20*ms+2*tof));
+  TEST_ASSERT_TRUE(context.txPending); TEST_ASSERT_EQUAL_INT(mulTwrFinal,context.stage);
+  twrRealTxComplete();
+  mulTwrPacket_t report={.type=mulTwrReport,.id=5};
+  memcpy(report.stamps,context.stamps,sizeof(report.stamps));
+  report.stamps[5]=mulTimestampMask(response.stamps[1]+mulTimestampDifference(context.stamps[4],p1));
+  report.txTimestamp=mulTimestampMask(report.stamps[5]+20*ms);
+  twrRealRx(&report,mulTimestampMask(context.stamps[4]+20*ms+2*tof));
+  TEST_ASSERT_TRUE(context.txPending); TEST_ASSERT_EQUAL_INT(mulTwrResult,context.stage);
+  TEST_ASSERT_EQUAL_UINT32(tof,context.tof);
+  twrRealTxComplete();
+  TEST_ASSERT_FALSE(context.active); TEST_ASSERT_EQUAL_UINT(3,completionCount);
+  TEST_ASSERT_EQUAL_UINT(2,receiveCount); directTwr=NULL;
+}
+
+void test_mulTwrRealDriverResponseReportAndResultAcceptance(void) {
+  const uint64_t ms=UINT64_C(63897600), tof=2131;
+  mulTwr_t context; mulTwrInit(&context); directTwr=&context;
+  directRole=mulAlrFollower; directEpoch=7;
+  directOrigin=MUL_TIMESTAMP_MASK-680*ms;
+  directReferenceOrigin=UINT64_C(0x123456789a);
+  registers[TX_ANTD][0]=0x34; registers[TX_ANTD][1]=0x12;
+  mulRxInit(&radio);
+  mulTwrPacket_t poll={.type=mulTwrPoll,.id=5};
+  poll.stamps[0]=mulTimestampMask(directReferenceOrigin+650*ms); poll.txTimestamp=poll.stamps[0];
+  uint64_t p2=mulTimestampMask(directOrigin+650*ms);
+  twrRealRx(&poll,p2);
+  TEST_ASSERT_TRUE(context.txPending); TEST_ASSERT_EQUAL_INT(mulTwrResponse,context.stage);
+  twrRealTxComplete();
+  mulTwrPacket_t final={.type=mulTwrFinal,.id=5};
+  memcpy(final.stamps,context.stamps,sizeof(final.stamps));
+  uint64_t db=(uint64_t)mulTimestampDifference(context.stamps[2],p2);
+  final.stamps[3]=mulTimestampMask(final.stamps[0]+db+2*tof);
+  final.stamps[4]=mulTimestampMask(final.stamps[3]+20*ms); final.txTimestamp=final.stamps[4];
+  twrRealRx(&final,mulTimestampMask(context.stamps[2]+20*ms+2*tof));
+  TEST_ASSERT_TRUE(context.txPending); TEST_ASSERT_EQUAL_INT(mulTwrReport,context.stage);
+  twrRealTxComplete(); TEST_ASSERT_FALSE(context.delayValid);
+  mulTwrPacket_t result={.type=mulTwrResult,.id=5,.tof=tof};
+  memcpy(result.stamps,context.stamps,sizeof(result.stamps));
+  result.txTimestamp=mulTimestampMask(context.stamps[4]+40*ms);
+  twrRealRx(&result,mulTimestampMask(context.stamps[5]+40*ms));
+  TEST_ASSERT_TRUE(context.delayValid); TEST_ASSERT_FALSE(context.active);
+  TEST_ASSERT_EQUAL_UINT32(tof,context.tof); TEST_ASSERT_EQUAL_UINT64(7,context.epoch);
+  TEST_ASSERT_EQUAL_UINT(2,completionCount); TEST_ASSERT_EQUAL_UINT(3,receiveCount);
+  TEST_ASSERT_EQUAL_UINT(RX_MODE,radio.deviceMode); directTwr=NULL;
 }
