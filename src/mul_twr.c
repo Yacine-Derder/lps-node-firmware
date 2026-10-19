@@ -296,7 +296,8 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
       sequence != twr->id || (role == mulAlrFollower && epoch != twr->epoch))) {
     mulTwrCancel(twr, dev, "window_or_epoch", true);
   }
-  if (event == eventPacketReceived && dwGetDataLength(dev) == MUL_TEST_FRAME_LENGTH) {
+  if (event == eventPacketReceived &&
+      (dwGetDataLength(dev) == MUL_TEST_FRAME_LENGTH || dwGetDataLength(dev) == MUL_RELATION_FRAME_LENGTH)) {
     mulTwrCancel(twr, dev, NULL, false); // Caller programs/re-arms broadcast radio before logging.
     return false;
   }

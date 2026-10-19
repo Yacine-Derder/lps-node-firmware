@@ -6,6 +6,7 @@
 #include "mul_common.h"
 #include "mul_clock.h"
 #include "mul_twr.h"
+#include "mul_relation.h"
 #include "mul_power.h"
 
 #include <string.h>
@@ -152,7 +153,9 @@ void test_mulFollowerRealDriverTurnsRxIntoDelayedTxAndBack(void) {
   TEST_ASSERT_EQUAL_UINT(IDLE_MODE, radio.deviceMode); // Driver caches IDLE while delayed TX waits.
   TEST_ASSERT_TRUE(started);
   mulTestPacket_t packet;
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(transmitted, MUL_TEST_FRAME_LENGTH, &packet));
+  mulRelation_t relation;
+  TEST_ASSERT_TRUE(mulBroadcastDecode(transmitted,MUL_RELATION_FRAME_LENGTH,&packet,&relation));
+  TEST_ASSERT_FALSE(relation.available);
   TEST_ASSERT_EQUAL_UINT8(0x85, packet.source[0]);
   TEST_ASSERT_EQUAL_UINT32(0, packet.sequence);
   int64_t slot = mulTimestampDifference(packet.txTimestamp, rx);

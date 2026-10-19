@@ -21,6 +21,8 @@ typedef struct {
   bool powerCorrectedTwr;
 } mulRelation_t;
 
+mulRelation_t mulRelationPublish(const mulClock_t *clock,const mulClockDelay_t *delay,
+  uint64_t followerTx,uint64_t hardwareNow,uint32_t nowMs,bool powerCorrectedTwr);
 void mulRelationEncode(uint8_t frame[MUL_RELATION_FRAME_LENGTH],
   const mulTestPacket_t *packet,const mulRelation_t *relation);
 // Strict old type-1/34 OR type-2/74/version-1; outputs unchanged on failure.

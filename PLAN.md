@@ -144,14 +144,16 @@ Codex. Stage 4 remains pending; do not infer accuracy from successful ranging.
 
 ## Codex continuation checkpoint
 
-Stage 3D CP1 implemented: strict type-2/version-1 74-byte follower relation
-contract, unchanged base field positions and fixed full 0x84->0x85 identities.
-Carries simultaneous origins, skew, acquisition-local epoch, reference/TWR IDs,
-TX-time ages and remaining existing one-second lifetime; physical bounds UNKNOWN.
-Legacy type-1/34 is explicitly relation-unavailable. No publication/integration yet.
-Validation: contract round-trip, malformed length/version/direction, signed-rate,
-wraparound and expiry tests; firmware build. Previous baseline `5e1c1e5`.
-Next: CP2, construct metadata from existing corrected APIs for the scheduled TX,
-using the just-received reference model without changing hardware slot timing.
-RLR rate conversion will require explicit stationary experimental opt-in; default
-must not assume identical nominal hardware rates or report fabricated TDoA.
+Stage 3D CP1–CP2 implemented. Previous pushed checkpoint `ba81341`; CP2 is this
+commit. Follower broadcasts are versioned 74 bytes, reference remains 34 bytes,
+TWR remains 84 bytes. Fresh reference clock estimation precedes metadata encoding;
+hardware slot scheduling and TX verification are unchanged. Corrected APIs check
+origin and follower TX at predicted TX uptime; unavailable/stale/missing/epoch-
+mismatched delays yield explicit unavailable metadata, never suppress broadcasts.
+Validation: 157 host tests and clean firmware build pass, including real-driver
+TX equality and a live TWR->next follower publication with wraparound. No failures.
+Next: CP3, retain/validate current-frame metadata at the passive RLR and bind it
+to associated reference sequence/TX and follower generation. Reuse mutually
+exclusive ALR TWR/RLR scratch storage before adding state (RAM currently tight).
+Default geometric TDoA must remain unavailable without an explicit justified RLR
+rate policy; stationary cadence-rate experiment will be opt-in.

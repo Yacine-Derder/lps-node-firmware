@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "unity.h"
 #include "mul_twr.h"
+#include "mul_relation.h"
 #include "mul_power.h"
 #include "mul_observation.h"
 #include <math.h>
@@ -83,7 +84,7 @@ void dwSpiWrite(dwDevice_t *dev, uint8_t reg, uint32_t sub, const void *data, si
   radio(dev)->status=0;
 }
 void dwSetData(dwDevice_t *dev, uint8_t *data, unsigned int size) {
-  TEST_ASSERT_TRUE(size == MUL_TEST_FRAME_LENGTH || size == MUL_TWR_FRAME_LENGTH);
+  TEST_ASSERT_TRUE(size == MUL_TEST_FRAME_LENGTH || size == MUL_RELATION_FRAME_LENGTH || size == MUL_TWR_FRAME_LENGTH);
   memcpy(radio(dev)->tx,data,size+2); // Same FCS reserve read as the real driver.
   radio(dev)->txLength=size;
 }
@@ -340,6 +341,12 @@ void test_mulTwrLiveFollowerIntegrationBroadcastPriorityAvailabilityAndLoss(void
   // Next reference broadcast remains the only source of follower scheduling.
   advance(SEC+flight+MS); injectBroadcast(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));
   TEST_ASSERT_TRUE(txPending); TEST_ASSERT_FALSE(ranging.active);
+  mulRelation_t relation; mulTestPacket_t extended;
+  TEST_ASSERT_EQUAL_UINT(MUL_RELATION_FRAME_LENGTH,radios[1].txLength);
+  TEST_ASSERT_TRUE(mulBroadcastDecode(radios[1].tx,radios[1].txLength,&extended,&relation));
+  TEST_ASSERT_TRUE(relation.available); TEST_ASSERT_EQUAL_UINT32(6,relation.referenceSequence);
+  TEST_ASSERT_EQUAL_UINT64(radios[1].actual,extended.txTimestamp);
+  TEST_ASSERT_TRUE(relation.delayAgeMs>=850 && relation.remainingMs<=150);
   uint64_t raw=radios[1].raw; unsigned int sends=radios[1].sends;
   // A spurious ranging RX while the mandatory TX is armed must never schedule another TX.
   radios[1].rxLength=MUL_TWR_FRAME_LENGTH;

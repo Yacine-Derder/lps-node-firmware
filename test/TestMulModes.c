@@ -4,6 +4,7 @@
 #include "mul_common.h"
 #include "mul_clock.h"
 #include "mul_twr.h"
+#include "mul_relation.h"
 #include "mul_power.h"
 #include "mul_observation.h"
 #include <math.h>
@@ -20,8 +21,8 @@ static dwDevice_t dev;
 static uwbConfig_t config;
 static unsigned int txCount, rxCount, idleCount, readCount, timestampCount;
 static unsigned int rxLength;
-static uint8_t capturedTxFrame[MUL_TEST_FRAME_LENGTH + 2];
-static uint8_t rxFrame[MUL_TEST_FRAME_LENGTH];
+static uint8_t capturedTxFrame[MUL_RELATION_FRAME_LENGTH + 2];
+static uint8_t rxFrame[MUL_RELATION_FRAME_LENGTH];
 static bool receiving, configuring, delayedArmed;
 static uint64_t hardwareNow, delayedRaw, actualTx;
 static uint64_t setupDelay;
@@ -100,7 +101,7 @@ void dwNewTransmit(dwDevice_t *device) { dwIdle(device); }
 void dwSetDefaults(dwDevice_t *device) { (void)device; }
 void dwSetData(dwDevice_t *device, uint8_t *data, unsigned int length) {
   (void)device;
-  TEST_ASSERT_EQUAL_UINT(MUL_TEST_FRAME_LENGTH, length);
+  TEST_ASSERT_EQUAL_UINT(alrRole==mulAlrFollower ? MUL_RELATION_FRAME_LENGTH : MUL_TEST_FRAME_LENGTH,length);
   if (packetTimestampError != 0) {
     mulEncodeTimestamp(data + MUL_TX_TIMESTAMP_OFFSET,
       mulDecodeTimestamp(data + MUL_TX_TIMESTAMP_OFFSET) - packetTimestampError);
@@ -155,7 +156,7 @@ void dwStartReceive(dwDevice_t *device) {
 unsigned int dwGetDataLength(dwDevice_t *device) { (void)device; return rxLength; }
 void dwGetData(dwDevice_t *device, uint8_t *data, unsigned int length) {
   (void)device;
-  TEST_ASSERT_EQUAL_UINT(sizeof(rxFrame), length);
+  TEST_ASSERT_EQUAL_UINT(rxLength, length);
   memcpy(data, rxFrame, length);
   readCount++;
 }
@@ -164,6 +165,11 @@ void dwGetRawReceiveTimestamp(dwDevice_t *device, dwTime_t *time) {
   TEST_ASSERT_FALSE(receiving);
   time->full = incomingTimestamp;
   timestampCount++;
+}
+
+static bool decodeCaptured(mulTestPacket_t *packet) {
+  mulRelation_t relation;
+  return mulBroadcastDecode(capturedTxFrame,alrRole==mulAlrFollower ? MUL_RELATION_FRAME_LENGTH : MUL_TEST_FRAME_LENGTH,packet,&relation);
 }
 
 void setUp(void) {
@@ -181,7 +187,7 @@ void setUp(void) {
   testTick = 0;
   simulatedPower=NAN; simulatedCorrection=0;
   incomingTimestamp = UINT64_C(0xfedcba9876);
-  rxLength = sizeof(rxFrame);
+  rxLength = MUL_TEST_FRAME_LENGTH;
   mulEncodeTestPacket(rxFrame, config.address, 42, UINT64_C(0x0123456789));
 }
 void tearDown(void) {}
@@ -206,7 +212,7 @@ void test_mulAlrMaintainsHardwareCadenceAcrossWrapWithConfiguredAntennaDelay(voi
   for (uint32_t sequence = 0; sequence < 1000; sequence++) {
     TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(wait));
     mulTestPacket_t packet;
-    TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &packet));
+    TEST_ASSERT_TRUE(decodeCaptured(&packet));
     TEST_ASSERT_EQUAL_UINT32(sequence, packet.sequence);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(config.address, packet.source, sizeof(packet.source));
     TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(delayedRaw + antennaDelay), packet.txTimestamp);
@@ -288,14 +294,14 @@ void test_mulAlrAntennaTimestampWrapsAndZeroDelayNeedsNoCorrection(void) {
   mulAlrAlgorithm.init(&config, &dev);
   TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(0));
   mulTestPacket_t packet;
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &packet));
+  TEST_ASSERT_TRUE(decodeCaptured(&packet));
   TEST_ASSERT_EQUAL_UINT64(UINT64_C(0x4121), packet.txTimestamp);
   completeTx(-7);
 
   antennaDelay = 0;
   mulAlrAlgorithm.init(&config, &dev);
   TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(0));
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &packet));
+  TEST_ASSERT_TRUE(decodeCaptured(&packet));
   TEST_ASSERT_EQUAL_UINT64(delayedRaw, packet.txTimestamp);
   completeTx(0);
 }
@@ -336,7 +342,7 @@ void test_mulAlrReadsAntennaDelayForEachEncodedPacket(void) {
   antennaDelay = 0x1234; // The configured value changed after initialization.
   TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(0));
   mulTestPacket_t decoded;
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &decoded));
+  TEST_ASSERT_TRUE(decodeCaptured(&decoded));
   TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(delayedRaw + antennaDelay), decoded.txTimestamp);
   completeTx(0);
 }
@@ -348,7 +354,7 @@ void test_mulAlrCompletionDeltaUsesPacketBytesInsteadOfSchedulingCache(void) {
   packetTimestampError = UINT64_C(0x809e00);
   TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(0));
   mulTestPacket_t decoded;
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &decoded));
+  TEST_ASSERT_TRUE(decodeCaptured(&decoded));
   TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(delayedRaw + antennaDelay - packetTimestampError),
                          decoded.txTimestamp);
   completeTx(0);
@@ -366,13 +372,13 @@ void test_mulRlrRearmsAfterValidMalformedAndUnrelatedPackets(void) {
   TEST_ASSERT_TRUE(receiving);
   TEST_ASSERT_EQUAL_UINT(1, timestampCount);
   for (unsigned int length = 0; length <= 1024; length++) {
-    if (length != sizeof(rxFrame)) {
+    if (length != MUL_TEST_FRAME_LENGTH) {
       rxLength = length;
       TEST_ASSERT_EQUAL_UINT32(MAX_TIMEOUT, mulRlrAlgorithm.onEvent(&dev, eventPacketReceived));
       TEST_ASSERT_TRUE(receiving);
     }
   }
-  TEST_ASSERT_EQUAL_UINT(2, readCount);
+  TEST_ASSERT_EQUAL_UINT(3, readCount); // 34-byte valid/malformed plus malformed 74-byte version.
   TEST_ASSERT_EQUAL_UINT(0, txCount);
 }
 
@@ -391,7 +397,7 @@ void test_mulRlrRearmsOnTimeoutsAndReceiveFailuresWithoutTransmitting(void) {
 static uint32_t deliver(const uint8_t address[8], uint32_t sequence,
                         uint64_t tx, uint64_t rx, bool follower) {
   mulEncodeTestPacket(rxFrame, address, sequence, tx);
-  rxLength = sizeof(rxFrame);
+  rxLength = MUL_TEST_FRAME_LENGTH;
   incomingTimestamp = rx;
   receiving = false; // Hardware auto-reenable is off.
   return follower ? mulAlrAlgorithm.onEvent(&dev, eventPacketReceived) :
@@ -506,7 +512,7 @@ void test_mulFollowerRearmsAndNeverTransmitsForEveryEventAndWrongSource(void) {
     TEST_ASSERT_TRUE(receiving);
   }
   for (unsigned int length = 0; length <= 1024; length++) {
-    if (length != sizeof(rxFrame)) {
+    if (length != MUL_TEST_FRAME_LENGTH) {
       rxLength = length;
       mulAlrAlgorithm.onEvent(&dev, eventPacketReceived);
       TEST_ASSERT_TRUE(receiving);
@@ -615,7 +621,7 @@ void test_mulFollowerSlotUsesLocalRxClockAndOwnTimestampAcrossWrap(void) {
   TEST_ASSERT_EQUAL_UINT(rearmCount, rxCount); // Direct RX -> TX; no intermediate RX race.
   TEST_ASSERT_EQUAL_UINT64(0, delayedRaw & 511);
   mulTestPacket_t packet;
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &packet));
+  TEST_ASSERT_TRUE(decodeCaptured(&packet));
   TEST_ASSERT_EQUAL_UINT8_ARRAY(config.address, packet.source, 8);
   TEST_ASSERT_EQUAL_UINT32(0, packet.sequence); // Not the reference's sequence.
   TEST_ASSERT_TRUE(packet.txTimestamp != UINT64_C(0x123456789a));
@@ -795,7 +801,7 @@ void test_mulFollowerRepeatsHardwareSlotsAcrossManyClockWraps(void) {
     uint64_t rx = mulTimestampMask(MUL_TIMESTAMP_MASK - 100*DTU_PER_MS + frame*PERIOD_DTU + 123);
     receiveReference(100000 + frame, mulTimestampMask(frame * PERIOD_DTU), rx);
     mulTestPacket_t packet;
-    TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &packet));
+    TEST_ASSERT_TRUE(decodeCaptured(&packet));
     TEST_ASSERT_EQUAL_UINT32(frame, packet.sequence);
     TEST_ASSERT_EQUAL_UINT8(0x85, packet.source[0]);
     int64_t offset = mulTimestampDifference(packet.txTimestamp, rx);
@@ -811,7 +817,7 @@ void test_mulRlrReceivesInterleavedReferenceAndActualFollowerPackets(void) {
   initFollower();
   receiveReference(100, UINT64_C(0x123456789a), MUL_TIMESTAMP_MASK - 200*DTU_PER_MS);
   mulTestPacket_t follower;
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &follower));
+  TEST_ASSERT_TRUE(decodeCaptured(&follower));
   finishFollowerSlot();
   mulRlrAlgorithm.init(&config, &dev);
   uint64_t refRx = MUL_TIMESTAMP_MASK - 100*DTU_PER_MS;
@@ -836,7 +842,7 @@ void test_mulFollowerCanTransmitAtCounterZeroWithZeroAntennaDelay(void) {
   TEST_ASSERT_TRUE(txPending);
   TEST_ASSERT_EQUAL_UINT64(0, delayedRaw);
   mulTestPacket_t packet;
-  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &packet));
+  TEST_ASSERT_TRUE(decodeCaptured(&packet));
   TEST_ASSERT_EQUAL_UINT64(0, packet.txTimestamp);
   finishFollowerSlot();
   TEST_ASSERT_EQUAL_UINT64(0, actualTx);
@@ -853,7 +859,7 @@ void test_mulFollowerClockConvergesWithoutChangingTdmaAndResetsOnLoss(void) {
     receiveReference(42 + frame, mulTimestampMask(remoteStart + frame*PERIOD_DTU), local);
     TEST_ASSERT_TRUE(txPending);
     mulTestPacket_t outgoing;
-    TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &outgoing));
+    TEST_ASSERT_TRUE(decodeCaptured(&outgoing));
     int64_t slot = mulTimestampDifference(outgoing.txTimestamp, local);
     TEST_ASSERT_TRUE(slot >= INT64_C(31948800000) && slot < INT64_C(31948800512));
     TEST_ASSERT_EQUAL_UINT32(frame, outgoing.sequence);

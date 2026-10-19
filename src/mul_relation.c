@@ -68,3 +68,29 @@ bool mulBroadcastDecode(const uint8_t *frame,size_t length,mulTestPacket_t *p,mu
   }
   *p=packet; *r=relation; return true;
 }
+
+mulRelation_t mulRelationPublish(const mulClock_t *clock,const mulClockDelay_t *delay,
+  uint64_t tx,uint64_t hardwareNow,uint32_t nowMs,bool powerCorrectedTwr)
+{
+  mulRelation_t unavailable={.epoch=clock->epoch,.referenceSequence=clock->sequence};
+  int64_t lead=mulTimestampDifference(tx,hardwareNow);
+  if (!delay || delay->maxAgeMs!=1000 || lead < 0 || lead > INT64_C(600)*63897600) return unavailable;
+  // Outward coarse rounding plus one ms guard; check contracts at actual TX,
+  // not the reference RX callback roughly half a second earlier.
+  uint32_t atTx=nowMs+(uint32_t)((lead+63897599)/63897600)+1;
+  mulClockCorrectedMapping_t origin,inverse;
+  if (!mulClockMapRefToFollowerSimultaneous(clock,clock->referenceTx,delay,atTx,&origin) ||
+      !mulClockMapFollowerSimultaneousToRef(clock,tx,delay,atTx,&inverse)) return unavailable;
+  uint32_t span=origin.applicationAgeMs > inverse.applicationAgeMs ? origin.applicationAgeMs : inverse.applicationAgeMs;
+  uint32_t remaining=1000-span;
+  uint32_t originRemaining=2000-origin.affine.ageMs;
+  if (remaining>originRemaining) remaining=originRemaining;
+  if (remaining<=1) return unavailable;
+  mulRelation_t result={.available=true,.epoch=clock->epoch,.referenceSequence=clock->sequence,
+    .twrSequence=delay->referenceSequence,.referenceOrigin=clock->referenceTx,.followerOrigin=origin.timestamp,
+    .skewPpb=clock->skewPpb,.originAgeMs=origin.affine.ageMs,.delayAgeMs=origin.delayAgeMs,
+    .remainingMs=remaining-1,.powerCorrectedTwr=powerCorrectedTwr};
+  uint64_t check;
+  if (!mulRelationInverse(&result,tx,0,&check)) return unavailable;
+  return result;
+}

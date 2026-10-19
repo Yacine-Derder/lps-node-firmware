@@ -4,6 +4,7 @@
 #include "mul_clock.h"
 #include "mul_rx.h"
 #include "mul_twr.h"
+#include "mul_relation.h"
 #include "task.h"
 
 #include <inttypes.h>
@@ -26,7 +27,7 @@
 
 static uint8_t source[MUL_ADDRESS_LENGTH];
 // dwSetData() reads length + 2 bytes when hardware FCS is enabled.
-static uint8_t txFrame[MUL_TEST_FRAME_LENGTH + 2];
+static uint8_t txFrame[MUL_RELATION_FRAME_LENGTH + 2];
 static uint32_t nextSequence;
 static uint32_t pendingSequence;
 static uint64_t nextRawTx;
@@ -147,7 +148,16 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
   }
   pendingTimestamp = mulTimestampMask(programmed.full + txAntennaDelay);
   mulEncodeTestPacket(txFrame, source, pendingSequence, pendingTimestamp);
-  dwSetData(dev, txFrame, MUL_TEST_FRAME_LENGTH);
+  unsigned int length=MUL_TEST_FRAME_LENGTH;
+  if (alrRole==mulAlrFollower) {
+    mulClockDelay_t delay;
+    bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
+    mulRelation_t relation=mulRelationPublish(&followerClock,supplied ? &delay : NULL,
+      pendingTimestamp,readHardwareTime(dev),(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,ranging.powerCorrected);
+    mulTestPacket_t packet={.sequence=pendingSequence,.txTimestamp=pendingTimestamp}; memcpy(packet.source,source,8);
+    mulRelationEncode(txFrame,&packet,&relation); length=MUL_RELATION_FRAME_LENGTH;
+  }
+  dwSetData(dev, txFrame, length);
 
   // Check again after SPI setup, before arming. Leave room for preamble/power-up.
   if (mulTimestampDifference(rawTx.full, readHardwareTime(dev)) <
@@ -313,6 +323,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   bool fresh = false;
   bool acquiredNow = false;
   bool armed = false;
+  mulClockResult_t clockResult=mulClockIgnored;
   if (valid && mulAlrRoleForAddress(packet.source) == mulAlrReference) {
     // Preserve Stage 3A.1's restart policy after loss, without accepting replays
     // of the last sequence. Epoch identification is deliberately not added here.
@@ -326,6 +337,12 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       acquiredNow = !referenceAcquired;
       referenceAcquired = true;
       lastReferenceTick = now;
+      // Build metadata from THIS reference observation before encoding TX.
+      // Bounded integer estimation does not steer the hardware slot.
+      clockResult=mulClockObserve(&followerClock,&packet,arrival,(uint32_t)now*portTICK_PERIOD_MS,true);
+      if (clockResult==mulClockDiscontinuity || acquiredNow) {
+        mulTwrCancel(&ranging,dev,"clock_epoch",true); ranging.attempted=false;
+      }
       armed = scheduleFollowerTx(dev, arrival);
     }
   }
@@ -340,14 +357,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     printf("MUL ALR: MAP src=0x84 state=INVALID sync=UNCALIBRATED bound_ns=UNKNOWN\r\n");
   }
   if (fresh) {
-    // Radio is already armed/re-armed. Estimation and logging cannot shift the
-    // Stage 3A.2 slot, and its result is never fed back into scheduling.
-    mulClockResult_t clockResult = mulClockObserve(&followerClock, &packet, arrival,
-      (uint32_t)now * portTICK_PERIOD_MS, true);
-    if (clockResult == mulClockDiscontinuity || acquiredNow) {
-      mulTwrCancel(&ranging, dev, "clock_epoch", true);
-      ranging.attempted = false;
-    }
+    // All logging stays after the hardware slot is armed/re-armed.
     if (acquiredNow) {
       printf("MUL ALR: REF_ACQUIRED src=0x84 state=ACQUIRED\r\n");
     }

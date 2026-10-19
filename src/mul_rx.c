@@ -44,19 +44,25 @@ void mulRxInit(dwDevice_t *dev)
   mulRxRearm(dev);
 }
 
-bool mulRxRead(dwDevice_t *dev, mulTestPacket_t *packet, uint64_t *localRx)
+bool mulRxReadBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localRx,mulRelation_t *relation)
 {
-  uint8_t frame[MUL_TEST_FRAME_LENGTH];
+  uint8_t frame[MUL_RELATION_FRAME_LENGTH];
+  mulRelation_t ignored;
   unsigned int length = dwGetDataLength(dev);
-  if (length != sizeof(frame)) {
+  if (length != MUL_TEST_FRAME_LENGTH && length != MUL_RELATION_FRAME_LENGTH) {
     return false;
   }
   dwGetData(dev, frame, length);
-  if (!mulDecodeTestPacket(frame, length, packet)) {
+  if (!mulBroadcastDecode(frame,length,packet,relation ? relation : &ignored)) {
     return false;
   }
   dwTime_t arrival = {.full = 0};
   dwGetRawReceiveTimestamp(dev, &arrival);
   *localRx = mulTimestampMask(arrival.full);
   return true;
+}
+
+bool mulRxRead(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localRx)
+{
+  return mulRxReadBroadcast(dev,packet,localRx,NULL);
 }

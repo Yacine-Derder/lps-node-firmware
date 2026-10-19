@@ -2,6 +2,7 @@
 #include "unity.h"
 #include "mul_relation.h"
 #include "mul_common.h"
+#include "mul_clock.h"
 #include <string.h>
 static const uint8_t follower[8]={0x85,0,0,0,0,0,0xcf,0xbc};
 static mulTestPacket_t packet;
@@ -56,4 +57,26 @@ void test_mulRelationInverseSignedRatesWrapAndExpiry(void) {
     TEST_ASSERT_FALSE(mulRelationInverse(&relation,tx,151,&ref));
     TEST_ASSERT_FALSE(mulRelationInverse(&relation,mulTimestampMask(relation.followerOrigin+(UINT64_C(1)<<39)),0,&ref));
   }
+}
+
+void test_mulRelationPublicationUsesSimultaneousOriginAndTxTimeExpiry(void) {
+  mulClock_t clock={.hasBaseline=true,.sequence=6,.epoch=9,.referenceTx=100,
+    .localRx=1000000,.observedMs=6000,.status=mulClockValid,.skewPpb=5000};
+  mulClockDelay_t delay={.epoch=9,.oneWayDtu=2131,.units=mulClockDelayReferenceDtu,
+    .measuredMs=5650,.referenceSequence=5,.maxAgeMs=1000,.valid=true,
+    .measurementBoundDtu=UINT64_MAX,.motionBoundDtuPerMs=UINT64_MAX};
+  const uint8_t ref[8]={0x84,0,0,0,0,0,0xcf,0xbc};
+  memcpy(delay.reference,ref,8); memcpy(delay.follower,follower,8);
+  uint64_t tx=mulTimestampMask(clock.localRx+500*UINT64_C(63897600));
+  mulRelation_t r=mulRelationPublish(&clock,&delay,tx,clock.localRx,6000,true);
+  TEST_ASSERT_TRUE(r.available); TEST_ASSERT_EQUAL_UINT64(clock.localRx-2131,r.followerOrigin);
+  TEST_ASSERT_TRUE(r.delayAgeMs>=850 && r.remainingMs<=150);
+  TEST_ASSERT_EQUAL_UINT32(6,r.referenceSequence); TEST_ASSERT_EQUAL_UINT32(5,r.twrSequence);
+  uint64_t converted; TEST_ASSERT_TRUE(mulRelationInverse(&r,tx,0,&converted));
+  // Available at RX, stale by scheduled follower TX: must publish UNAVAILABLE.
+  delay.measuredMs=5200;
+  TEST_ASSERT_FALSE(mulRelationPublish(&clock,&delay,tx,clock.localRx,6000,true).available);
+  delay.measuredMs=5650; delay.epoch++;
+  TEST_ASSERT_FALSE(mulRelationPublish(&clock,&delay,tx,clock.localRx,6000,true).available);
+  TEST_ASSERT_FALSE(mulRelationPublish(&clock,NULL,tx,clock.localRx,6000,true).available);
 }
