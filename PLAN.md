@@ -127,7 +127,9 @@ Stage 3C checkpoint 1 implemented: reusable `mulPowerCapture()` preserves raw
 RX_STAMP and reuses `dwGetReceivePower()` / `dwCorrectTimestamp()` and the
 Bitcraze 500 MHz 16/64 MHz PRF tables. Unsupported/invalid/out-of-range inputs
 retain raw values with explicit status; no correction is integrated into TWR yet.
-Validation: focused real-driver tests and firmware build (see checkpoint commit).
+Validation: 137 host tests pass and firmware build passes. The initial checkpoint
+commit `7d49fc2` had a failing strong-signal fixture; its follow-up fixes simulated
+CIR power overflow without changing firmware. No known failing tests remain.
 Known limits: vendor endpoint-bin hold behavior retained; 900 MHz unsupported
 because its negative signed shifts are undefined. Physical bias remains unbounded.
 Next: checkpoint 2, transport per-RX correction metadata and preserve raw/corrected

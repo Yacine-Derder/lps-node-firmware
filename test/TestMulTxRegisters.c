@@ -307,7 +307,7 @@ void test_mulAntennaDetectsCacheMismatchAndFullCommitOverwrite(void) {
 // power estimator. Quantization is deliberate; reference correction uses that RSL.
 static void powerAt(float dbm, uint8_t prf) {
   radio.channel=CHANNEL_2; radio.pulseFrequency=prf;
-  const unsigned int n=dbm > -61 ? 100 : 1000;
+  const unsigned int n=dbm > -78 ? 100 : 1000;
   float a=prf==TX_PULSE_FREQ_16MHZ ? 113.77f : 121.74f;
   float fac=prf==TX_PULSE_FREQ_16MHZ ? 2.3334f : 1.1667f;
   float estimated=dbm <= -88 ? dbm : (dbm-88*fac)/(1+fac);
