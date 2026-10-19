@@ -2,6 +2,7 @@
 #include "unity.h"
 #include "mul_twr.h"
 #include "mul_power.h"
+#include "mul_observation.h"
 #include <math.h>
 #include "mul_common.h"
 #include "mul_clock.h"
@@ -383,7 +384,7 @@ void test_mulTwrRlrRemainsPassiveAndCannotDecodeDirectedRangingAsBroadcast(void)
   memcpy(radios[1].rx,radios[0].tx,MUL_TWR_FRAME_LENGTH); radios[1].rxLength=MUL_TWR_FRAME_LENGTH;
   radios[1].receiving=false; mulRlrAlgorithm.onEvent(&radios[1].device,eventPacketReceived);
   TEST_ASSERT_TRUE(radios[1].receiving); TEST_ASSERT_EQUAL_UINT(0,radios[1].sends);
-  TEST_ASSERT_FALSE(rlrSources[0].hasSequence); TEST_ASSERT_FALSE(rlrSources[1].hasSequence);
+  TEST_ASSERT_FALSE(rlrObservations[0].source.hasSequence); TEST_ASSERT_FALSE(rlrObservations[1].source.hasSequence);
 }
 
 void test_mulTwrDuplicatePollAndCompletionNeverCreateSecondReply(void) {

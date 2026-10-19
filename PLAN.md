@@ -42,7 +42,7 @@ retain that distinction when interpreting validation and diagnostics.
 
 ## Hardware checkpoint — Stage 3B.2b.3: Antenna-delay bias correction
 
-Status: **Implemented/software tested; awaiting physical validation of the fix.**
+Status: **Functional correction hardware validated (user-reported); accuracy unresolved.**
 The user validated Stage 3B.2b.2 exchange cadence, matching results, TX delta=0,
 RLR reception and SYNC state behavior, but reported approximately 33300 DTU /
 156.2 m at close range. Ranging accuracy therefore failed acceptance.
@@ -74,26 +74,18 @@ Physical acceptance: both ALRs/RLR retain approximately 1 Hz broadcasts/receptio
 500 ms RLR-clock slot separation, and exact broadcast TX timestamp equality.
 TWR should succeed near every five seconds without slot loss or lockups; measured
 distances must be assessed at known separations, with calibration uncertainty explicit.
-At 1 m LOS collect at least 20 matched exchange IDs on 0x84/0x85 while 0x86 logs
-both broadcasts, then repeat at 5 m if available. Expect local ANT diagnostics
-`tx_antd=14498 rx_antd=18453 source=BITCRAZE_LPS_INITIAL`, six matching
-markers, equal ToF on both ALRs and no `antenna_config` errors. Ideal ToF is about
-213 DTU (1 m) and 1066 DTU (5 m). Provisional functional acceptance: at least 19/20
-exchanges succeed, broadcast sequences have no new gaps, every TX delta is zero,
-and mean range error is <=2 m at each separation, with the 5 m minus 1 m means
-within 4 +/-1 m. This checks removal of the gross bias, not precision calibration.
-A stricter subsequent calibration target is mean error <=0.10 m at both distances,
-using at least 100 measurements per distance and reporting spread; passing it
-does not bound synchronization error or prove calibration across PHY/temperature.
-SYNC should become AVAILABLE after confirmed ranging and UNAVAILABLE after the
-unchanged one-second delay lifetime or reference loss, then recover after restart.
-Stop here for hardware results; do not proceed to Stage 3C.
+The user now reports about 0.97 m at approximately 1 m and 5.51–7.24 m at
+approximately 5 m, with functioning TWR, broadcasts, clock estimation and RLR
+reception. The gross antenna-delay omission is fixed; remaining distance-dependent
+bias may involve power, multipath, orientation or other effects. Stage 3C is now
+authorized to add existing Bitcraze power correction and observation processing.
+Physical accuracy and synchronization uncertainty remain unbounded.
 
 ## Pending milestones
 
 ### Stage 3C — TDoA-ready multi-ALR observation pipeline
 
-Status: **Not started.** Objective: associate observations by source and transmission,
+Status: **In progress.** Objective: associate observations by source and transmission,
 retaining clock domain, correction model, validity, and uncertainty.
 Acceptance: tests reject missing/stale/inconsistent associations; hardware
 observations from multiple ALRs can be paired without mixing clock domains.
@@ -123,17 +115,15 @@ Update milestone status in place as evidence changes; Git preserves earlier stat
 
 ## Codex continuation checkpoint
 
-Stage 3C checkpoints 1–2 implemented. Previous pushed checkpoint: `6161e11`.
-CP2 is the commit containing this section; TWR now transports receiver-owned
-power metadata for P2/P4/P6 in a versioned 84-byte frame (both ALRs must upgrade).
-The unchanged equation produces raw and, only with all three corrections,
-corrected ToF; missing power preserves raw ranging. Mapping uses the selected
-result with physical uncertainty UNKNOWN. Diagnostics show power/status/table,
-corrections, raw/corrected ToF and distance. Broadcasts remain 34 bytes.
-Validation: 141 host tests pass, including distributed ownership/echo checks,
-missing metadata, wraparound and real-driver correction. Firmware build passes.
-No known failing tests. Initial CP1 fixture failure at `7d49fc2` fixed in `6161e11`.
-Limits: 900 MHz PHY correction unsupported; vendor endpoint-bin holds retained;
-power correction does not explain or bound all physical range error.
-Next exact task: checkpoint 3, bounded RLR observations with raw/corrected RX,
-full clock identities, power metadata and locally known generation metadata.
+Stage 3C checkpoints 1–3 implemented. Previous pushed checkpoint: `8a93f47`.
+CP3 is the commit containing this section: two fixed RLR observation slots reuse
+source counters while retaining full source/receiver clock identities, raw and
+corrected RX, TX markers, power metadata, validity and receiver-local generation.
+Remote source epochs remain UNKNOWN; duplicates/old packets do not refresh age.
+The existing passive path freezes timestamp/power before RX re-arm. No association
+yet. CP2 TWR requires both ALRs on the versioned 84-byte format; broadcasts unchanged.
+Validation: 145 host tests and clean firmware build pass. No known failing tests.
+Physical accuracy remains unbounded; vendor endpoint holds and 900 MHz limitation
+still apply. Initial CP1 fixture failure fixed in `6161e11`.
+Next exact task: checkpoint 4, order/cadence/age/domain-checked association with
+raw/corrected RLR arrival differences and explicitly unavailable geometric TDoA.

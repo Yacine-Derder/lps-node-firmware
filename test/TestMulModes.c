@@ -5,6 +5,7 @@
 #include "mul_clock.h"
 #include "mul_twr.h"
 #include "mul_power.h"
+#include "mul_observation.h"
 #include <math.h>
 
 #include <string.h>
@@ -540,22 +541,22 @@ void test_mulRlrMaintainsIndependentFullIdentitySourceState(void) {
   deliver(second, 43, 200, 2, false); // 40-bit RX wrap and two sequence gaps.
   deliver(first, 0, 999, 999, false);
   deliver(second, 42, 999, 999, false);
-  TEST_ASSERT_EQUAL_UINT32(0, rlrSources[0].sequence);
-  TEST_ASSERT_EQUAL_UINT32(0, rlrSources[0].gaps);
-  TEST_ASSERT_EQUAL_UINT32(1, rlrSources[0].duplicates);
-  TEST_ASSERT_EQUAL_UINT32(0, rlrSources[0].outOfOrder);
-  TEST_ASSERT_EQUAL_UINT64(3, rlrSources[0].txTimestamp);
-  TEST_ASSERT_EQUAL_UINT64(12, rlrSources[0].rxTimestamp);
-  TEST_ASSERT_EQUAL_UINT32(43, rlrSources[1].sequence);
-  TEST_ASSERT_EQUAL_UINT32(2, rlrSources[1].gaps);
-  TEST_ASSERT_EQUAL_UINT32(0, rlrSources[1].duplicates);
-  TEST_ASSERT_EQUAL_UINT32(1, rlrSources[1].outOfOrder);
-  TEST_ASSERT_EQUAL_UINT64(200, rlrSources[1].txTimestamp);
-  TEST_ASSERT_EQUAL_UINT64(2, rlrSources[1].rxTimestamp);
+  TEST_ASSERT_EQUAL_UINT32(0, rlrObservations[0].source.sequence);
+  TEST_ASSERT_EQUAL_UINT32(0, rlrObservations[0].source.gaps);
+  TEST_ASSERT_EQUAL_UINT32(1, rlrObservations[0].source.duplicates);
+  TEST_ASSERT_EQUAL_UINT32(0, rlrObservations[0].source.outOfOrder);
+  TEST_ASSERT_EQUAL_UINT64(3, rlrObservations[0].source.txTimestamp);
+  TEST_ASSERT_EQUAL_UINT64(12, rlrObservations[0].source.rxTimestamp);
+  TEST_ASSERT_EQUAL_UINT32(43, rlrObservations[1].source.sequence);
+  TEST_ASSERT_EQUAL_UINT32(2, rlrObservations[1].source.gaps);
+  TEST_ASSERT_EQUAL_UINT32(0, rlrObservations[1].source.duplicates);
+  TEST_ASSERT_EQUAL_UINT32(1, rlrObservations[1].source.outOfOrder);
+  TEST_ASSERT_EQUAL_UINT64(200, rlrObservations[1].source.txTimestamp);
+  TEST_ASSERT_EQUAL_UINT64(2, rlrObservations[1].source.rxTimestamp);
   first[7] ^= 1;
   deliver(first, 20, 1, 1, false);
-  TEST_ASSERT_EQUAL_UINT32(3, rlrSources[0].received);
-  TEST_ASSERT_EQUAL_UINT32(3, rlrSources[1].received);
+  TEST_ASSERT_EQUAL_UINT32(3, rlrObservations[0].source.received);
+  TEST_ASSERT_EQUAL_UINT32(3, rlrObservations[1].source.received);
   TEST_ASSERT_EQUAL_UINT(0, txCount);
   TEST_ASSERT_TRUE(receiving);
 }
@@ -570,11 +571,11 @@ void test_mulRlrRebasesOnlyTheStaleSourceAfterReferenceRestart(void) {
   deliver(second, 43, 501, 601, false);
   testTick = 3000;
   deliver(first, 42, 999, 999, false); // Duplicate does not reset a stale stream.
-  TEST_ASSERT_EQUAL_UINT64(100, rlrSources[0].txTimestamp);
+  TEST_ASSERT_EQUAL_UINT64(100, rlrObservations[0].source.txTimestamp);
   deliver(first, 0, 1, 202, false);
-  TEST_ASSERT_EQUAL_UINT32(0, rlrSources[0].sequence);
-  TEST_ASSERT_EQUAL_UINT32(43, rlrSources[1].sequence);
-  TEST_ASSERT_EQUAL_UINT64(501, rlrSources[1].txTimestamp);
+  TEST_ASSERT_EQUAL_UINT32(0, rlrObservations[0].source.sequence);
+  TEST_ASSERT_EQUAL_UINT32(43, rlrObservations[1].source.sequence);
+  TEST_ASSERT_EQUAL_UINT64(501, rlrObservations[1].source.txTimestamp);
   TEST_ASSERT_EQUAL_UINT(0, txCount);
 }
 
@@ -814,12 +815,12 @@ void test_mulRlrReceivesInterleavedReferenceAndActualFollowerPackets(void) {
   uint64_t followerRx = mulTimestampMask(refRx + 500*DTU_PER_MS);
   deliver(referenceAddress, 100, UINT64_C(0x123456789a), refRx, false);
   deliver(follower.source, follower.sequence, follower.txTimestamp, followerRx, false);
-  TEST_ASSERT_EQUAL_UINT32(100, rlrSources[0].sequence);
-  TEST_ASSERT_EQUAL_UINT32(0, rlrSources[1].sequence);
-  TEST_ASSERT_EQUAL_UINT64(UINT64_C(0x123456789a), rlrSources[0].txTimestamp);
-  TEST_ASSERT_EQUAL_UINT64(actualTx, rlrSources[1].txTimestamp);
+  TEST_ASSERT_EQUAL_UINT32(100, rlrObservations[0].source.sequence);
+  TEST_ASSERT_EQUAL_UINT32(0, rlrObservations[1].source.sequence);
+  TEST_ASSERT_EQUAL_UINT64(UINT64_C(0x123456789a), rlrObservations[0].source.txTimestamp);
+  TEST_ASSERT_EQUAL_UINT64(actualTx, rlrObservations[1].source.txTimestamp);
   TEST_ASSERT_EQUAL_INT64(INT64_C(31948800000),
-    mulTimestampDifference(rlrSources[1].rxTimestamp, rlrSources[0].rxTimestamp));
+    mulTimestampDifference(rlrObservations[1].source.rxTimestamp, rlrObservations[0].source.rxTimestamp));
   TEST_ASSERT_TRUE(receiving);
   TEST_ASSERT_EQUAL_UINT(1, txCount); // Only follower code transmitted, RLR never did.
 }

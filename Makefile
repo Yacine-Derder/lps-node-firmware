@@ -40,7 +40,7 @@ OBJS+=src/lpp.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o
 OBJS+=src/mul_common.o src/mul_alr.o src/mul_rlr.o
 OBJS+=src/mul_rx.o src/mul_power.o
 OBJS+=src/mul_clock.o
-OBJS+=src/mul_twr.o
+OBJS+=src/mul_twr.o src/mul_observation.o
 
 HALS+=gpio rcc cortex i2c pcd dma pcd_ex rcc_ex spi uart pwr
 OBJS+=$(foreach mod, $(HALS), $(HAL_ROOT)/Src/stm32$(CPU)xx_hal_$(mod).o)
