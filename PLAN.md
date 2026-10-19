@@ -144,15 +144,14 @@ Codex. Stage 4 remains pending; do not infer accuracy from successful ranging.
 
 ## Codex continuation checkpoint
 
-Stage 3C checkpoints 1–5 implemented; hardware validation is next. Previous pushed
-checkpoint: `6f0577e`; final checkpoint is the commit containing this section.
-Reusable Bitcraze power correction, receiver-owned TWR metadata/raw fallback,
-bounded RLR observations and conservative ordered association are implemented.
-No inter-ALR model is transmitted: only local arrival differences are identifiable;
-final geometric TDoA is explicitly UNAVAILABLE. Physical uncertainty remains UNKNOWN.
-Validation: 152 host tests, 139 MUL ASan/UBSan tests, clean firmware build and
-whitespace/scope review pass. No known failing or unrun required software tests.
-Static stack-frame checks: RLR event 400 bytes, TWR event 296 bytes; on-device
-stack high-water and RF accuracy remain unmeasured. No Stage 4 work.
-Next exact task: collect the hardware logs above and assess power correction and
-association behavior; do not assume the unresolved distance bias is eliminated.
+Stage 3D CP1 implemented: strict type-2/version-1 74-byte follower relation
+contract, unchanged base field positions and fixed full 0x84->0x85 identities.
+Carries simultaneous origins, skew, acquisition-local epoch, reference/TWR IDs,
+TX-time ages and remaining existing one-second lifetime; physical bounds UNKNOWN.
+Legacy type-1/34 is explicitly relation-unavailable. No publication/integration yet.
+Validation: contract round-trip, malformed length/version/direction, signed-rate,
+wraparound and expiry tests; firmware build. Previous baseline `5e1c1e5`.
+Next: CP2, construct metadata from existing corrected APIs for the scheduled TX,
+using the just-received reference model without changing hardware slot timing.
+RLR rate conversion will require explicit stationary experimental opt-in; default
+must not assume identical nominal hardware rates or report fabricated TDoA.
