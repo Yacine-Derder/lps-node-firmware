@@ -35,9 +35,9 @@ it is not a claim of hardware testing by Codex during documentation setup.
 The prior timestamp-discrepancy investigation does not establish a root cause;
 retain that distinction when interpreting validation and diagnostics.
 
-## Next — Stage 3A.1: Multi-ALR protocol and reference acquisition
+## Hardware checkpoint — Stage 3A.1: Multi-ALR protocol and reference acquisition
 
-Status: **Not started; immediate next milestone.**
+Status: **Implemented/software tested; awaiting hardware validation.**
 Objective: distinguish reference/follower roles and acquire reference broadcasts,
 while preparing the RLR to retain observations separately for multiple sources.
 
@@ -53,8 +53,9 @@ Acceptance: reference acquisition and loss/reacquisition are observable; source
 identity is preserved and RLR source state is isolated in software tests.
 On hardware, `0x85` and `0x86` receive `0x84` without autonomous follower TX.
 Stop at this three-node hardware checkpoint before Stage 3A.2.
-These are planned roles: current mode 5 transmits regardless of node address;
-the follower behavior must be implemented, not assumed from setting address `0x85`.
+The implementation now selects these mode-5 roles by full configured address.
+Unsupported ALR identities remain idle. Software tests cover synthetic multi-source
+RLR observations; physical three-node acceptance remains outstanding.
 
 ## Pending milestones
 

@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "mul_alr.h"
 #include "mul_common.h"
+#include "mul_rx.h"
+#include "task.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -26,6 +28,62 @@ static uint32_t pendingSequence;
 static uint64_t nextRawTx;
 static uint64_t pendingTimestamp;
 static bool txPending;
+static mulAlrRole_t alrRole = mulAlrUnsupported;
+static mulSourceState_t followerReference;
+static bool referenceAcquired;
+static TickType_t lastReferenceTick;
+
+#define MUL_REFERENCE_LOSS_MS MUL_SOURCE_TIMEOUT_MS
+
+static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
+{
+  // RTOS ticks are only a liveness watchdog, not a UWB time or a clock model.
+  TickType_t now = xTaskGetTickCount();
+  bool lostNow = false;
+  if (referenceAcquired &&
+      (TickType_t)(now - lastReferenceTick) >= pdMS_TO_TICKS(MUL_REFERENCE_LOSS_MS)) {
+    referenceAcquired = false;
+    lostNow = true;
+  }
+
+  mulTestPacket_t packet;
+  uint64_t arrival = 0;
+  bool valid = event == eventPacketReceived && mulRxRead(dev, &packet, &arrival);
+  mulRxRearm(dev); // All events, even malformed packets and unexpected TX events.
+  if (lostNow) {
+    printf("MUL ALR: REF_LOST src=0x84 state=SEARCHING\r\n");
+  }
+  if (valid && mulAlrRoleForAddress(packet.source) == mulAlrReference) {
+    // After loss a different sequence may begin a new epoch (e.g. reference
+    // reboot). Replaying the last sequence alone must not reacquire or refresh RX.
+    if (!referenceAcquired && followerReference.hasSequence &&
+        packet.sequence != followerReference.sequence) {
+      followerReference.hasSequence = false;
+    }
+    mulSequenceResult_t result = mulObservePacket(&followerReference, &packet, arrival);
+    if (result != mulSequenceDuplicate && result != mulSequenceOld) {
+      bool acquiredNow = !referenceAcquired;
+      referenceAcquired = true;
+      lastReferenceTick = now;
+      if (acquiredNow) {
+        printf("MUL ALR: REF_ACQUIRED src=0x84 state=ACQUIRED\r\n");
+      }
+      printf("MUL ALR: REF_RX src=0x84 seq=%" PRIu32
+             " tx=0x%02X%08" PRIX32 " rx=0x%02X%08" PRIX32
+             " state=ACQUIRED gaps=%" PRIu32 " dup=%" PRIu32 " old=%" PRIu32 "\r\n",
+             packet.sequence, (unsigned int)(packet.txTimestamp >> 32),
+             (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
+             followerReference.gaps, followerReference.duplicates, followerReference.outOfOrder);
+    }
+  }
+  if (!referenceAcquired) {
+    return MUL_REFERENCE_LOSS_MS;
+  }
+  // Recompute the remaining deadline on every event. Unrelated packets and
+  // duplicate/old sequences must not postpone loss detection indefinitely.
+  TickType_t elapsed = (TickType_t)(now - lastReferenceTick);
+  return MUL_REFERENCE_LOSS_MS - elapsed * portTICK_PERIOD_MS;
+}
 
 static void logCompletedTx(uint64_t actual)
 {
@@ -46,10 +104,10 @@ static void logCompletedTx(uint64_t actual)
   if (difference < 0) {
     *--end = '-';
   }
-  printf("MUL ALR: TX seq=%" PRIu32 " src=0x%02X scheduled=0x%02X%08" PRIX32
+  printf("MUL ALR: TX role=REF src=0x%02X seq=%" PRIu32 " scheduled=0x%02X%08" PRIX32
          " packet=0x%02X%08" PRIX32
          " actual=0x%02X%08" PRIX32 " delta=%s\r\n",
-         pendingSequence, (unsigned int)source[0],
+         (unsigned int)source[0], pendingSequence,
          (unsigned int)(pendingTimestamp >> 32), (uint32_t)pendingTimestamp,
          (unsigned int)(packetTimestamp >> 32), (uint32_t)packetTimestamp,
          (unsigned int)(actual >> 32), (uint32_t)actual, end);
@@ -87,9 +145,20 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   memcpy(source, config->address, sizeof(source));
   nextSequence = 0;
   txPending = false;
+  alrRole = mulAlrRoleForAddress(config->address);
+  memset(&followerReference, 0, sizeof(followerReference));
+  referenceAcquired = false;
+  printf("MUL ALR: Mode initialized role=%s src=0x%02X\r\n",
+         alrRole == mulAlrReference ? "REF" : alrRole == mulAlrFollower ? "FOLLOWER" : "UNSUPPORTED",
+         (unsigned int)source[0]);
+  if (alrRole != mulAlrReference) {
+    if (alrRole == mulAlrFollower) {
+      mulRxInit(dev);
+    }
+    return; // Unknown identities remain idle; no default transmit behavior.
+  }
   nextRawTx = mulTimestampMask((readHardwareTime(dev) + MUL_TX_LEAD_DTU +
                                MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1));
-  printf("MUL ALR: Mode initialized\r\n");
 }
 
 static uint32_t scheduleTx(dwDevice_t *dev)
@@ -158,6 +227,13 @@ static uint32_t scheduleTx(dwDevice_t *dev)
 
 static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
 {
+  if (alrRole == mulAlrFollower) {
+    return followerOnEvent(dev, event);
+  }
+  if (alrRole != mulAlrReference) {
+    dwIdle(dev);
+    return MAX_TIMEOUT;
+  }
   switch (event) {
     case eventTimeout:
       if (!txPending) {

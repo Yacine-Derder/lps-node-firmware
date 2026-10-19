@@ -88,3 +88,51 @@ void test_mulTimestampDifferenceHandlesWrapAndHalfPeriod(void) {
                         mulTimestampDifference(UINT64_C(1) << 39, 0));
   TEST_ASSERT_EQUAL_INT64(1, mulTimestampDifference(UINT64_C(1) << 40, MUL_TIMESTAMP_MASK));
 }
+
+void test_mulRoleSelectionUsesEveryAddressByteAndFailsClosed(void) {
+  const uint8_t reference[8] = {0x84,0,0,0,0,0,0xcf,0xbc};
+  uint8_t address[8];
+  TEST_ASSERT_EQUAL_INT(mulAlrReference, mulAlrRoleForAddress(reference));
+  memcpy(address, reference, sizeof(address));
+  address[0] = 0x85;
+  TEST_ASSERT_EQUAL_INT(mulAlrFollower, mulAlrRoleForAddress(address));
+  TEST_ASSERT_EQUAL_INT(mulAlrUnsupported, mulAlrRoleForAddress(NULL));
+  for (unsigned int i = 0; i < sizeof(address); i++) {
+    memcpy(address, reference, sizeof(address));
+    address[i] ^= 2;
+    TEST_ASSERT_EQUAL_INT(mulAlrUnsupported, mulAlrRoleForAddress(address));
+  }
+}
+
+void test_mulSourceObservationOrdersModuloSequenceAndRetainsAcceptedPair(void) {
+  mulSourceState_t state = {0};
+  mulTestPacket_t packet = {.sequence = UINT32_MAX, .txTimestamp = MUL_TIMESTAMP_MASK};
+  TEST_ASSERT_EQUAL_INT(mulSequenceFirst, mulObservePacket(&state, &packet, 7));
+  packet.sequence = 0;
+  packet.txTimestamp = 3;
+  TEST_ASSERT_EQUAL_INT(mulSequenceForward, mulObservePacket(&state, &packet, 9));
+  packet.sequence = 3;
+  TEST_ASSERT_EQUAL_INT(mulSequenceGap, mulObservePacket(&state, &packet, 10));
+  TEST_ASSERT_EQUAL_UINT32(2, state.gaps);
+  packet.txTimestamp = 99;
+  TEST_ASSERT_EQUAL_INT(mulSequenceDuplicate, mulObservePacket(&state, &packet, 99));
+  packet.sequence = 1;
+  TEST_ASSERT_EQUAL_INT(mulSequenceOld, mulObservePacket(&state, &packet, 99));
+  packet.sequence = 3 + UINT32_C(0x80000000);
+  TEST_ASSERT_EQUAL_INT(mulSequenceOld, mulObservePacket(&state, &packet, 99));
+  TEST_ASSERT_EQUAL_UINT32(3, state.sequence);
+  TEST_ASSERT_EQUAL_UINT32(6, state.received);
+  TEST_ASSERT_EQUAL_UINT32(1, state.duplicates);
+  TEST_ASSERT_EQUAL_UINT32(2, state.outOfOrder);
+  TEST_ASSERT_EQUAL_UINT64(3, state.txTimestamp);
+  TEST_ASSERT_EQUAL_UINT64(10, state.rxTimestamp);
+}
+
+void test_mulSourceObservationMasksTimestampsWithoutRelatingClockDomains(void) {
+  mulSourceState_t state = {0};
+  mulTestPacket_t packet = {.sequence = 0, .txTimestamp = UINT64_MAX};
+  TEST_ASSERT_EQUAL_INT(mulSequenceFirst,
+    mulObservePacket(&state, &packet, UINT64_C(0x123400000001)));
+  TEST_ASSERT_EQUAL_UINT64(MUL_TIMESTAMP_MASK, state.txTimestamp);
+  TEST_ASSERT_EQUAL_UINT64(UINT64_C(0x3400000001), state.rxTimestamp);
+}

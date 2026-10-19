@@ -3,6 +3,47 @@
 
 #include <string.h>
 
+mulAlrRole_t mulAlrRoleForAddress(const uint8_t address[MUL_ADDRESS_LENGTH])
+{
+  static const uint8_t addresses[MUL_ALR_COUNT][MUL_ADDRESS_LENGTH] = {
+    {0x84, 0, 0, 0, 0, 0, 0xcf, 0xbc},
+    {0x85, 0, 0, 0, 0, 0, 0xcf, 0xbc},
+  };
+  if (address != NULL) {
+    for (int i = 0; i < MUL_ALR_COUNT; i++) {
+      if (memcmp(address, addresses[i], MUL_ADDRESS_LENGTH) == 0) {
+        return (mulAlrRole_t)i;
+      }
+    }
+  }
+  return mulAlrUnsupported;
+}
+
+mulSequenceResult_t mulObservePacket(mulSourceState_t *state,
+                                    const mulTestPacket_t *packet, uint64_t localRx)
+{
+  state->received++;
+  mulSequenceResult_t result = mulSequenceFirst;
+  if (state->hasSequence) {
+    uint32_t advance = packet->sequence - state->sequence;
+    if (advance == 0) {
+      state->duplicates++;
+      return mulSequenceDuplicate;
+    }
+    if (advance >= UINT32_C(0x80000000)) {
+      state->outOfOrder++;
+      return mulSequenceOld;
+    }
+    state->gaps += advance - 1;
+    result = advance == 1 ? mulSequenceForward : mulSequenceGap;
+  }
+  state->hasSequence = true;
+  state->sequence = packet->sequence;
+  state->txTimestamp = mulTimestampMask(packet->txTimestamp);
+  state->rxTimestamp = mulTimestampMask(localRx);
+  return result;
+}
+
 uint64_t mulTimestampMask(uint64_t timestamp)
 {
   return timestamp & MUL_TIMESTAMP_MASK;

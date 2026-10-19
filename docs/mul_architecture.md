@@ -39,8 +39,9 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `inc/uwb.h`, `src/uwb.c` | Algorithm interface, registry, PHY setup, IRQ/task dispatch |
 | `src/cfg.c`, `src/eeprom.c` | Existing persistent configuration |
 | `inc/mul_common.h`, `src/mul_common.c` | Wire encoding/validation and modular timestamp utilities |
-| `inc/mul_alr.h`, `src/mul_alr.c` | DW1000 delayed broadcasts and TX diagnostics |
-| `inc/mul_rlr.h`, `src/mul_rlr.c` | Passive RX, raw hardware timestamps, receiver re-arming |
+| `inc/mul_alr.h`, `src/mul_alr.c` | Reference delayed TX or receive-only follower acquisition |
+| `inc/mul_rlr.h`, `src/mul_rlr.c` | Passive RX and bounded per-source observation state |
+| `inc/mul_rx.h`, `src/mul_rx.c` | Shared DW1000 RX setup, bounded reads, and re-arming |
 | `vendor/libdw1000`, `src/dwOps.c` | Existing radio driver and board SPI operations |
 
 Both MUL roles implement `uwbAlgorithm_t.init` and `onEvent` callbacks.
@@ -51,7 +52,9 @@ Mode IDs remain: 0 TWR Anchor, 1 TWR Tag, 2 Sniffer, 3 TDoA Anchor V2,
 4 TDoA Anchor V3, 5 MUL ALR, and 6 MUL RLR.
 The serial `m` menu lists/selects modes; stored changes take effect after reset.
 Node addresses and modes use the existing EEPROM layout with no MUL-specific fields.
-Current mode 5 broadcasts for every configured address; no follower role selector exists.
+Mode 5 selects roles via `mulAlrRoleForAddress()`, comparing all eight address bytes.
+`84:00:00:00:00:00:cf:bc` is reference TX; `85:00:00:00:00:00:cf:bc` is receive-only.
+Unsupported mode-5 identities remain idle. There are no new EEPROM/menu fields.
 
 ## Current packet protocol
 
@@ -88,7 +91,7 @@ They count at nominally `499.2 MHz × 128` and wrap approximately every 17.2 sec
 `mulTimestampDifference(a, b)` is signed modular `a - b`; interpretation is
 unambiguous only within half a counter period, with the half-period case negative.
 
-Current ALR operation uses hardware-delayed TX at approximately 1 Hz.
+The reference ALR uses hardware-delayed TX at approximately 1 Hz.
 Raw targets are aligned to 512 ticks, normally prepared 20 ms ahead, and advanced
 by one hardware-clock second rather than one second after callback completion.
 The packet timestamp is `(verified DX_TIME + live TX_ANTD) modulo 2^40`.
@@ -115,6 +118,29 @@ exact clock offset independently of propagation delay.
 Initial TDMA synchronization will use a reference ALR and follower ALRs.
 Clock correction, uncertainty, loss/reacquisition robustness, and decentralized
 operation are future work, not capabilities implied by the current timestamp pair.
+
+## Reference acquisition and bounded source observations
+
+Stage 3A.1 is software tested, awaiting the three-node hardware checkpoint.
+The follower initializes in RX and only accepts the full reference identity.
+Its first valid reference packet acquires; three seconds without forward sequence
+progress loses acquisition. RTOS ticks provide this coarse watchdog, including
+RTOS counter wrap; no RX/TX clock difference is used for liveness or scheduling.
+All relevant events re-arm RX. Unsupported/malformed, duplicate, and old traffic
+cannot postpone loss. A stale stream may restart from a different sequence;
+replays of the last accepted sequence alone cannot reacquire.
+
+RLR state is fixed to two supported full identities. Each slot counts valid received
+packets, skipped sequence positions, latest-sequence duplicates, and out-of-order
+packets independently. Forward advances use modulo-2^32 ordering below half a period.
+Only accepted observations update the source TX/local RX timestamp pair.
+After three seconds without accepted progress, a different sequence rebases that
+source (e.g. a reboot), without changing other sources. Counters persist and wrap
+as uint32 values; late arrivals do not undo counted gaps. No epoch field exists,
+so a delayed different packet after staleness is indistinguishable from a restart.
+Duplicate/old packets are counted quietly; the next fresh log reports the counters.
+There is no follower TX, clock correction, or TDoA observation formation.
+See [the focused reuse audit](mul_stage3_reuse_audit.md) for implementation decisions.
 
 ## Planned measurement processing
 

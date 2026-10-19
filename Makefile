@@ -38,6 +38,7 @@ OBJS+=src/cfg.o src/usbcomm.o src/test_support.o src/production_test.o
 OBJS+=src/uwb.o src/uwb_twr_anchor.o src/uwb_sniffer.o src/uwb_twr_tag.o
 OBJS+=src/lpp.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o
 OBJS+=src/mul_common.o src/mul_alr.o src/mul_rlr.o
+OBJS+=src/mul_rx.o
 
 HALS+=gpio rcc cortex i2c pcd dma pcd_ex rcc_ex spi uart pwr
 OBJS+=$(foreach mod, $(HALS), $(HAL_ROOT)/Src/stm32$(CPU)xx_hal_$(mod).o)
