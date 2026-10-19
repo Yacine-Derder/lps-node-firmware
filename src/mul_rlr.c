@@ -81,6 +81,7 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
                observation->generation);
       }
       if (associated) {
+        pair.follower.remoteEpochKnown=observation->remoteEpochKnown;
         mulDownlink_t downlink=mulDownlinkCompute(&relation,&pair,&mulRoleScratch.rlr.rate,
           now,captureAgeMs,MUL_EXPERIMENTAL_STATIONARY_RLR_RATE!=0);
         bool clockAvailable=pair.clockRelationAvailable;

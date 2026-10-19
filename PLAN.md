@@ -74,22 +74,34 @@ Physical acceptance: both ALRs/RLR retain approximately 1 Hz broadcasts/receptio
 500 ms RLR-clock slot separation, and exact broadcast TX timestamp equality.
 TWR should succeed near every five seconds without slot loss or lockups; measured
 distances must be assessed at known separations, with calibration uncertainty explicit.
-The user now reports about 0.97 m at approximately 1 m and 5.51–7.24 m at
-approximately 5 m, with functioning TWR, broadcasts, clock estimation and RLR
-reception. The gross antenna-delay omission is fixed; remaining distance-dependent
-bias may involve power, multipath, orientation or other effects. Stage 3C is now
-authorized to add existing Bitcraze power correction and observation processing.
-Physical accuracy and synchronization uncertainty remain unbounded.
+After Stage 3C, the user reports corrected TWR mean approximately 0.977 m at
+approximately 1 m. At approximately 5 m the six corrected ranges were 4.955,
+4.973, 4.959, 5.006, 4.945 and 4.936 m (mean approximately 4.962 m); all six
+shown exchanges succeeded. Eleven consecutive RLR pairs associated independent
+counters differing by two, without gaps/duplicates in the excerpt. Arrival slots
+were 499997–499998 us; wraparound and TX equality remained functional. These are
+user-reported excerpts, not bounded accuracy evidence. The user elects to proceed
+without the earlier additional 20-sample and deliberate restart experiments.
 
 ## Pending milestones
 
 ### Stage 3C — TDoA-ready multi-ALR observation pipeline
 
-Status: **Implemented/software tested; awaiting hardware validation.**
+Status: **Implemented/software tested; functional hardware evidence (user-reported excerpts).**
 Objective: associate observations by source and transmission,
 retaining clock domain, correction model, validity, and uncertainty.
 Acceptance: tests reject missing/stale/inconsistent associations; hardware
 observations from multiple ALRs can be paired without mixing clock domains.
+
+### Stage 3D — Distributed clock relation and downlink TDoA
+
+Status: **Implemented/software tested; awaiting hardware validation.**
+Versioned follower metadata transports the existing propagation-corrected model.
+RLR association binds the current model to both transmissions. Default firmware
+exposes clock-relation availability but TDoA remains UNAVAILABLE without a justified
+RLR/reference rate. Explicit stationary experimental opt-in enables cadence-rate
+conversion and signed raw/corrected TDoA; physical uncertainty remains UNKNOWN.
+No Stage 4 online calibration or Stage 5 position solving is implemented.
 
 ### Stage 4 — Occasional TWR and online measurement-error calibration
 
@@ -114,48 +126,53 @@ compare accuracy, uncertainty consistency, robustness, and relevant baselines.
 
 Update milestone status in place as evidence changes; Git preserves earlier states.
 
-## Stage 3C hardware validation checkpoint
+## Stage 3D hardware validation checkpoint
 
-Use the same Stage 3C build on both ALRs (TWR is now versioned 84 bytes) and RLR
-0x86; retain the existing modes, addresses and PHY. No hardware was flashed by
-Codex. Stage 4 remains pending; do not infer accuracy from successful ranging.
+No physical hardware was flashed by Codex. Use the same current build on 0x84,
+0x85 (mode 5) and 0x86 (mode 6), retaining addresses and PHY.
 
-1. At measured 1 m LOS, fixed orientation, collect at least 20 matched TWR IDs
-   plus continuous RLR output. Repeat at 5 m, then change orientation separately.
-   Record raw_mm, selected distance_m, raw_tof, corrected_tof, Q status/table and
-   signal power. Table 2 is expected for the present channel 2 / PRF 64 PHY;
-   Q status 1 means applied. Missing/out-of-range power must preserve raw ranging
-   and explicitly report corrected_tof=UNAVAILABLE. Do not expect correction alone
-   to remove metres of bias. Ideal ToF is about 213 DTU / 1066 DTU at 1 m / 5 m.
-2. Require >=19/20 completed exchanges with matching selected ToF at both ALRs,
-   five-second cadence, every TX delta=0, and no new broadcast gaps or lockups.
-   Compare raw and corrected mean error/spread; report either improvement or
-   degradation. Precision calibration target remains mean error <=0.10 m over
-   >=100 samples per distance AFTER calibration, not an acceptance claim here.
-3. After two consecutive healthy frames, expect at most one ASSOCIATED PAIR per
-   reference, independent source sequences, slot_us normally about 500000
-   (accept 450000..550000), and clock_relation=UNAVAILABLE tdoa=UNAVAILABLE.
-   Corrected local DTU difference appears only with both RLR corrections available.
-   RX and PAIR records must retain raw values and uncertainty=UNKNOWN.
-4. Stop/restart the reference and deliberately miss a broadcast: no stale pair,
-   no RLR TX, no follower free-running; new pairs require fresh cadence/generation.
-   Verify clock/SYNC loss, expiry and reacquisition remain as before. Observe
-   timestamp wrap for at least 40 seconds. Save matching ALR/RLR logs for review.
+1. Default `make clean && make`: expect reference packets at 34 bytes, follower
+   packets at 74 bytes, TWR at 84 bytes. TX scheduled/packet/actual must still
+   match, TWR remain near five-second cadence, and PAIR retain raw/corrected local
+   differences. After a successful TWR, the following follower slot can show
+   clock_relation=AVAILABLE; other frames revert to UNAVAILABLE. Default TDOA
+   must report reason=RLR_RATE_UNAVAILABLE whenever the relation is available.
+2. Only for a declared stationary bench experiment, build with
+   `make clean && make EXTRA_CFLAGS=-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1`.
+   Keep all three nodes fixed and allow at least six fresh reference observations
+   plus the next successful TWR. Expect intermittent TDOA status=AVAILABLE with
+   rate=STATIC/<ppb>, signed dtu/mm, and power=1 only with both RLR RX corrections.
+   Missing power retains raw TDoA (power=0); UNKNOWN physical uncertainty remains.
+3. Place RLR at equal known distances from the ALRs, then nearer the reference,
+   then nearer the follower. After each reposition, remain stationary for at
+   least six reference observations before interpreting another fresh relation.
+   Expected signed range difference is distance(follower,RLR)-distance(reference,RLR):
+   near zero, positive, negative respectively. Compare logged mm against measured
+   geometry and save all three logs; do not fit an offset from these observations.
+4. Observe at least 40 seconds for counter wrap and several availability cycles.
+   No extra transmissions, gaps, lockups or nonzero TX deltas should appear.
+   Stale/missing model or rate must report unavailable, never a carried-forward
+   TDoA. Additional deliberate restart tests are optional; software covers them.
+
+The static option is an experimental declaration, not automatic stationarity
+recognition. Constant radial motion can masquerade as skew, so never enable it
+for mobile robots. No centimetre accuracy or finite confidence bound is claimed.
 
 ## Codex continuation checkpoint
 
-Stage 3D CP1–CP4 implemented. Previous pushed checkpoint `3c7262b`; CP4 is this
-commit. Corrected inter-ALR mapping converts follower TX into reference units;
-explicit RLR/reference rate conversion precedes signed RX-minus-TX subtraction.
-Raw/corrected intervals and TDoA are retained with UNKNOWN physical uncertainty.
-Default build reports RLR_RATE_UNAVAILABLE. Stationary bench opt-in is
-`EXTRA_CFLAGS=-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1`; rate=STATIC explicitly
-assumes constant path delay/RX bias. Existing skew estimator is reused only for
-rate, never an RLR arrival intercept. It resets on source/acquisition changes;
-stale/unbound/invalid rate or relation cannot yield AVAILABLE.
-Validation: 165 host tests and firmware build pass. Synthetic independent rates,
-signed/zero geometry, inter-ALR propagation, wrap, power fallback, invalid models
-and motion/rate ambiguity covered. No known failures. No physical validation yet.
-Next: CP5 full regression, ASan/UBSan including stationary opt-in integration,
-real-driver tests, clean builds, memory/stack review and documentation/hardware
-instructions. Keep Stage 4/5 pending; no hardware flashing.
+Stage 3D CP1–CP5 implemented/software tested. Previous pushed checkpoint
+`c76a106`; final checkpoint is the commit containing this section. Reference
+broadcast remains 34 bytes, follower is explicit type-2/version-1 74 bytes, TWR
+unchanged at 84 bytes. Current-frame corrected clock metadata is validated at RLR;
+rate-domain conversion yields signed raw/corrected TDoA only under explicit
+stationary opt-in. Default rate is unavailable; physical uncertainty UNKNOWN.
+Validation: 166 host tests, 153 MUL ASan/UBSan tests, 66 additional stationary
+opt-in sanitizer tests, real-driver publication/expiry across wrap, and clean
+default/stationary firmware builds pass. No required software checks remain unrun.
+Static RAM: data 1072 + bss/reservations 15292 = 16364 bytes (20 spare); scratch
+overlay stays 128 bytes. Compiler stack frames: RLR event 512, ALR entry 184,
+delayed setup 248, publisher 376, corrected API up to 240 bytes; nested publication
+path reviewed against the 1600-byte UWB reservation, without claiming on-device
+high-water verification. RX/PAIR/TDOA worst-case diagnostic burst <=501 bytes.
+Next exact task: three-node hardware validation above, without assuming bounded
+accuracy. Stage 4 online calibration and Stage 5 localization remain pending.

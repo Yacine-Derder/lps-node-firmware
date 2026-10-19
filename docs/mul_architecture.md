@@ -44,6 +44,9 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `inc/mul_rx.h`, `src/mul_rx.c` | Shared DW1000 RX setup, bounded reads, and re-arming |
 | `inc/mul_power.h`, `src/mul_power.c` | Optional Bitcraze RX power correction with raw preservation |
 | `inc/mul_observation.h`, `src/mul_observation.c` | Bounded RLR observations and ordered association |
+| `inc/mul_relation.h`, `src/mul_relation.c` | Versioned simultaneous clock transport and inverse |
+| `inc/mul_downlink.h`, `src/mul_downlink.c` | Pair/model binding and explicit rate-domain TDoA |
+| `inc/mul_role_state.h`, `src/mul_role_state.c` | Mode-exclusive fixed scratch storage |
 | `inc/mul_clock.h`, `src/mul_clock.c` | Clock rate, arrival mapping, and delay-aware correction |
 | `inc/mul_twr.h`, `src/mul_twr.c` | Directed TWR protocol, bounded radio exchange and live delay input |
 | `vendor/libdw1000`, `src/dwOps.c` | Existing radio driver and board SPI operations |
@@ -62,7 +65,8 @@ Unsupported mode-5 identities remain idle. There are no new EEPROM/menu fields.
 
 ## Current packet protocol
 
-The test broadcast is 34 bytes excluding the two-byte hardware-generated FCS.
+Reference and legacy broadcasts are 34 bytes; versioned follower broadcasts are
+74 bytes, excluding the two-byte hardware-generated FCS.
 Multibyte fields are explicitly encoded little endian; C struct padding is not on wire.
 
 | Byte offsets | Width | Current meaning |
@@ -73,7 +77,7 @@ Multibyte fields are explicitly encoded little endian; C struct padding is not o
 | 5–12 | 8 | Broadcast destination, all `0xff` |
 | 13–20 | 8 | Configured source address |
 | 21–23 | 3 | Protocol identifier ASCII `MUL` |
-| 24 | 1 | Test-broadcast type `1` |
+| 24 | 1 | Legacy/reference type `1`, extended follower type `2` |
 | 25–28 | 4 | Unsigned MUL sequence number |
 | 29–33 | 5 | Expected antenna-referenced TX timestamp, radio time units |
 
@@ -83,7 +87,7 @@ Diagnostics show the node ID; future source tracking should retain full identity
 The sequence restarts at zero on role initialization and wraps as an unsigned 32-bit value.
 Decoding checks exact length, FCF, PAN, destination, identifier, type, and MAC-sequence
 consistency before extracting fields. Stage 1's shorter frame is not accepted now.
-There are no role, reference, slot, clock-model, or localization fields yet.
+The type-2 extension below supplies clock-model metadata. No position fields exist.
 
 ## Hardware timing and synchronization
 
@@ -136,6 +140,9 @@ The reference's embedded TX time is stored/logged, never used as a local TX targ
 Follower packet sequences are independent of reference sequences and survive reacquisition.
 
 RX turns directly into delayed TX through `startDelayedTx()`, shared with the reference.
+The just-received reference updates the bounded clock estimator before metadata
+encoding; estimation does not steer the hardware target. All logging remains
+after radio programming.
 No RX is enabled while the delayed TX waits in idle. Completion captures TX_STAMP,
 re-arms RX, and logs role, scheduled, packet, actual, and signed packet delta.
 RX errors/unexpected radio events cancel a pending slot, except stale TWR RX IRQs,
@@ -193,10 +200,10 @@ reference loss, and subsequent reacquisition start cleanly; five new valid inter
 are required. Without an epoch field, restart/replay ambiguity remains: backward
 sequences are ignored until existing liveness declares loss and permits rebasing.
 
-The follower updates/logs CLOCK after arming TX or rearming RX, at most once per
+The follower logs CLOCK after arming TX or rearming RX, at most once per
 fresh reference plus loss transitions, in the UWB task. Only skew is printed,
-with sign and three ppm decimals. TX/RX timestamps, TDMA targets, and RLR behavior
-are unchanged; no estimator or mapping output is used for scheduling.
+with sign and three ppm decimals. Broadcast hardware targets remain unchanged; no estimator or mapping output
+steers the radio clock or slot scheduling.
 
 ## Arrival-aligned affine mapping
 
@@ -285,8 +292,9 @@ new process-local 64-bit epoch, invalidating old records even after reconvergenc
 Ordinary re-anchoring retains the epoch; invalid affine state always rejects
 correction. Tokens are scoped to this firmware boot/UWB task, never persisted;
 producers must discard records on reboot and acquire fresh data, never retag old
-measurements. Token exhaustion fails closed. There is no new wire epoch, so an
-undetected remote restart remains subject to the existing sequence/loss policy.
+measurements. Token exhaustion fails closed. Reference broadcasts still lack an
+epoch; Stage 3D transports only the follower acquisition token. Undetected remote
+restart remains subject to existing sequence/loss policy.
 
 Results keep affine uncertainty separate from supplied delay uncertainty.
 Motion uncertainty grows as declared `motionBoundDtuPerMs * applicationAgeMs`;
@@ -331,7 +339,8 @@ C padding goes on wire. Unused future markers/records are zero. Both ALRs must
 upgrade: old 68-byte TWR packets are explicitly rejected, not misinterpreted.
 Legacy and current TWR RX IRQs still cannot displace an armed follower broadcast.
 The POLL marker is echoed as a nonce; full identities, type/stage, ID, prefix
-timestamps, correction metadata, lengths and reserved values are checked. Broadcasts remain 34 bytes;
+timestamps, correction metadata, lengths and reserved values are checked. Reference
+broadcasts remain 34 bytes; follower broadcasts are now 74 bytes;
 the passive RLR rejects every TWR frame and continues independent source tracking.
 
 Define reference intervals `Ra=diff40(P4,P1)`, `Da=diff40(P5,P4)` and follower
@@ -472,7 +481,9 @@ the same reception. See [APS011 section 3](https://manuals.plus/m/2ca85a466f2a54
 for received-power bias and design/calibration dependence. Multipath, orientation,
 NLOS, power-estimate error and board variation remain unresolved. Current table 2
 bias magnitudes are only about 0.11 m; they must not be assumed to explain the
-entire user-reported 5.51–7.24 m range at approximately 5 m.
+entire earlier user-reported 5.51–7.24 m range at approximately 5 m. The newer
+4.962 m mean is recorded in PLAN.md; the excerpts do not identify how much of
+the improvement came from power correction versus other RF conditions.
 
 The follower corrects P2/P6; the reference corrects P4. TX P1/P3/P5 are unchanged.
 Only the receiving owner captures power/corrects; later messages echo markers and
@@ -486,7 +497,8 @@ reported as fully corrected. RESULT confirms the selected reference-unit ToF.
 Logs expose `raw_tof`, `corrected_tof` (or UNAVAILABLE), `raw_mm`, selected
 `distance_m` and `power=APPLIED/UNAVAILABLE`. The existing delay producer uses the
 selected estimate, with unchanged epoch/age rules and UNKNOWN physical bounds.
-Broadcast clock estimation and TDMA continue using raw observations.
+Broadcast clock estimation and TDMA continue using raw observations; its rate
+may include propagation/RX-bias changes and is not independently calibrated.
 
 ## Passive RLR observations and association
 
@@ -495,8 +507,10 @@ source TX/raw local RX, corrected RX, full source/receiver clock identities, pow
 metadata, accepted uptime, validity and a receiver-local generation. Full identity
 validation precedes storage. Generations advance on first acquisition or a changed
 stale sequence; duplicates/old packets cannot refresh timestamps, metadata or age.
-Freshness is <3 seconds. No remote boot epoch is broadcast: `remoteEpochKnown`
-remains false, and local generations do not invent remote restart certainty.
+Freshness is <3 seconds. Type-2 follower metadata carries its acquisition-local epoch, reflected in
+`remoteEpochKnown`; reference/legacy observations still have no transmitted epoch.
+These tokens are not persistent boot UUIDs, and local generations do not invent
+remote restart certainty.
 Same-sequence restarts and delayed packets after staleness remain ambiguous.
 
 A single `mulAssociation_t` candidate is armed only by a consecutive reference
@@ -519,19 +533,106 @@ PAIR diagnostics are bounded to one per eligible reference and show sequences,
 raw/corrected local DTU differences (hex), and raw arrival slot separation in us.
 RLR RX diagnostics remain, with raw/corrected timestamps and Q metadata.
 
-`clockRelationAvailable` and `geometricTdoaAvailable` are false; physical bound is
-UINT64_MAX/UNKNOWN. The follower's inter-ALR affine mapping is local and absent
-from broadcasts, so provenance is “no clock model on wire.” The roughly 500 ms
-arrival interval includes transmission spacing and geometry; it is not geometric
-TDoA. No independent arrival-aligned RLR mappings are fitted to erase propagation.
-A calibrated downlink TDoA requires a shared transmission association plus a fresh,
-identifiable inter-ALR clock conversion with epoch, age and uncertainty information,
-adequate antenna/power calibration, and treatment of motion/path effects.
+## Transported simultaneous clock relationship
 
-Storage remains fixed, no heap is added. The current image reserves the existing
-1600-byte UWB task stack and 2048-byte main/ISR stack; only about 60 bytes of RAM
-remain outside existing reservations. Future state growth needs a deliberate memory
-review. Software tests do not establish on-device stack high-water or RF accuracy.
+The follower sends `F(t)=f0+(1+skewPpb/1e9)*diff40(t,t0)`, reference -> follower.
+`t0` is the just-received reference TX; `f0` is
+`mulClockMapRefToFollowerSimultaneous(clock,t0,delay)` at predicted follower TX
+uptime. This subtracts the scaled one-way TWR delay exactly once from the arrival
+origin. The inverse API checks the actual scheduled follower TX at that same
+uptime before publication. Thus the origin is simultaneous, not arrival-aligned;
+TX hardware antenna conventions and raw broadcast RX estimation are unchanged.
+Skew can contain path changes and physical error remains UNKNOWN.
+
+The type-2 broadcast preserves header/source/sequence/TX offsets 0..33 and adds:
+
+| Bytes | Meaning |
+|---|---|
+| 34 | Version 1 |
+| 35 | Flags: bit 0 AVAILABLE, bit 1 physical uncertainty UNKNOWN (required), bit 2 TWR power corrected; other bits rejected |
+| 36..43 | uint64 follower acquisition-local epoch |
+| 44..47 | uint32 current reference observation sequence |
+| 48..51 | uint32 TWR reference/exchange sequence |
+| 52..56 | uint40 reference simultaneous origin t0 |
+| 57..61 | uint40 follower simultaneous origin f0 |
+| 62..65 | signed int32 skew ppb |
+| 66..67 | uint16 origin age at TX, ms |
+| 68..69 | uint16 TWR delay age at TX, ms |
+| 70..71 | uint16 delay lifetime, exactly 1000 ms |
+| 72..73 | uint16 remaining conservative lifetime at TX, ms |
+
+All integers are little endian, explicit fields, no C padding. Ordered full clock
+identities are fixed unambiguously by version 1 and the full follower source
+85:00:00:00:00:00:cf:bc; reference is 84:00:00:00:00:00:cf:bc. Only the follower
+may send type 2. Length/type/version/flags/identities/skew/age/span checks are strict;
+legacy type-1/34 means unavailable metadata. Unavailable type 2 retains only epoch
+and reference sequence, with other model fields zero. All nodes must update their
+parser to receive type-2 broadcasts; old parsers reject them rather than silently
+reinterpreting. TWR stays versioned 84 bytes; no new transmission is scheduled.
+
+Publication uses the current model BEFORE arming, with outward-rounded hardware
+lead time plus a one-ms guard. Both existing corrected-API contracts must hold at
+TX; remaining lifetime covers the maximum application span to origin and follower
+TX, and affine horizon, with an extra ms guard. It is never extended to the
+five-second TWR interval. Typically only the follower slot after a TWR is available
+(delay age about 850 ms, remaining <150 ms); subsequent slots report unavailable.
+
+RLR freezes hardware RX age before re-arm (max 15 ms accepted for a relation),
+then binds metadata to the current follower frame and associated reference sequence
+AND exact TX marker. It never substitutes cached available metadata. Local age,
+40-bit query horizon, original one-second delay span, full receiver/source clock
+identities and direction all apply. An accepted follower epoch change advances its
+local observation generation, drops that pair and resets experimental rate state.
+Fresh cadence is required. Epochs distinguish acquisitions within the follower boot;
+reference boot epochs are absent, and undetected restart/replay ambiguity remains
+subject to existing cadence/liveness checks. This is not authenticated time transfer.
+
+## RLR rate domains and signed downlink TDoA
+
+First compute `tx_ref = F_inverse(follower TX)` and
+`Delta_TX_ref = diff40(tx_ref, reference TX)`. Raw and optional corrected
+`Delta_RX_rlr` remain in the RLR clock. They cannot be subtracted numerically from
+reference intervals until a relative RATE is supplied. The default build explicitly
+reports `clock_relation=AVAILABLE tdoa=UNAVAILABLE`, reason RLR_RATE_UNAVAILABLE.
+
+`MUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1` is an explicit bench-only opt-in.
+It reuses `mulClockObserve()` and its five-interval median/convergence checks on
+reference TX versus raw RLR RX cadence. Only the skew is used; no RLR arrival
+intercept is used to erase propagation geometry. It assumes constant propagation
+and RX bias over estimation and measurement, requiring a stationary declaration.
+There is no independent stationarity detector: constant radial motion is
+indistinguishable from skew. This assumption is not a mobile-robot solution.
+Observable cadence discontinuities, reference rebasing, follower epoch changes,
+incomplete convergence, or a stale rate invalidate availability.
+
+The rate must match the exact current reference sequence/TX/raw RX and be <=700
+ms old. Convert each bounded interval with
+`Delta_RX_ref = Delta_RX_rlr - round(Delta_RX_rlr*skewPpb/(1e9+skewPpb))`, then
+`TDoA_ref = Delta_RX_ref - Delta_TX_ref`. Positive means follower->RLR propagation
+minus reference->RLR propagation; sign is retained. Convert signed DTU to signed
+mm with the existing 299792458/63897600000 convention. The existing <=1 us
+prototype inter-ALR envelope also rejects grossly inconsistent selected residuals;
+it is not a physical error bound. Raw and corrected RX/TDoA are separate results;
+missing power preserves raw-only measurement with power=0, not false full correction.
+Total physical uncertainty always remains UNKNOWN, including skew, origin, TWR,
+antenna, power, motion and path errors. Numerical rounding is not synchronization
+accuracy. A plausible result is conditional experimental availability, not calibration.
+
+PAIR diagnostics retain raw/corrected local intervals, slot separation and statuses.
+The following TDOA line reports hex `tx`/`rx` intervals in REFERENCE DTU, signed
+`dtu`/`mm`, rate=STATIC/<ppb>, model age in ms and power=0/1; uncertainty UNKNOWN
+is carried on its PAIR line. Unavailable reasons distinguish no relation, no rate,
+stale rate and inconsistency. At most one burst per associated pair is emitted;
+worst-case RX/PAIR/TDOA output fits the 512-byte best-effort nonblocking USB queue
+when empty. The pair object preserves original TX clocks and both local RX kinds.
+No position solver, distributed synchronization framework, or online calibration.
+
+`mul_role_state` overlays 128 bytes of ALR TWR state with mode-6 relation/rate
+scratch because one persisted mode runs until reboot. No heap is added. The
+1600-byte UWB task and 2048-byte main/ISR stack reservations remain; static RAM
+has approximately 20 bytes outside existing reservations. Compiler stack frames
+are reviewed separately; on-device high-water and RF accuracy remain unmeasured.
+Further state growth requires an explicit memory review.
 
 ## Planned measurement processing
 

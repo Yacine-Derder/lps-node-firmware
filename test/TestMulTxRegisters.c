@@ -25,7 +25,8 @@ static uint8_t transmitted[MUL_TWR_FRAME_LENGTH];
 static dwDevice_t radio;
 static uwbConfig_t nodeConfig;
 static uint64_t systemTime;
-TickType_t xTaskGetTickCount(void) { return 0; }
+static TickType_t fakeTicks;
+TickType_t xTaskGetTickCount(void) { return fakeTicks; }
 
 static bool started;
 static unsigned int completionCount;
@@ -98,7 +99,7 @@ void setUp(void) {
   nodeConfig.address[0] = 0x84;
   nodeConfig.address[6] = 0xcf;
   nodeConfig.address[7] = 0xbc;
-  systemTime = 0;
+  systemTime = 0; fakeTicks=0;
   started = false;
   completionCount = 0;
   receiveCount = 0;
@@ -366,4 +367,40 @@ void test_mulPowerUnavailableDoesNotAlterTimestamp(void) {
   TEST_ASSERT_EQUAL_INT(mulPowerUnsupported,mulPowerCapture(&radio,123).power.status);
   radio.channel=CHANNEL_2; radio.pulseFrequency=0;
   TEST_ASSERT_EQUAL_INT(mulPowerUnsupported,mulPowerCapture(&radio,123).power.status);
+}
+
+void test_mulRelationRealDriverPublishesFreshTxBoundOriginsThenExpiresAcrossWrap(void) {
+  nodeConfig.address[0]=0x85; mulAntennaConfigure(&radio);
+  mulAlrAlgorithm.init(&nodeConfig,&radio);
+  const uint8_t ref[8]={0x84,0,0,0,0,0,0xcf,0xbc};
+  const uint64_t ms=UINT64_C(63897600), refBase=MUL_TIMESTAMP_MASK-6200*ms;
+  const uint64_t folBase=MUL_TIMESTAMP_MASK-6100*ms, tof=2131;
+  uint64_t epoch=0;
+  for (unsigned int i=0;i<8;i++) {
+    if (i==6) {
+      // Seed a confirmed delay producer; the existing real-driver TWR tests
+      // separately exercise all five messages. This tests its publication contract.
+      mulRoleScratch.twr.delayValid=true; mulRoleScratch.twr.epoch=epoch;
+      mulRoleScratch.twr.tof=tof; mulRoleScratch.twr.id=5;
+      mulRoleScratch.twr.measuredMs=5650; mulRoleScratch.twr.powerCorrected=true;
+    }
+    uint64_t tx=mulTimestampMask(refBase+i*1000*ms),rx=mulTimestampMask(folBase+i*1000*ms+tof);
+    mulEncodeTestPacket(registers[RX_BUFFER],ref,i,tx);
+    registers[RX_FINFO][0]=MUL_TEST_FRAME_LENGTH+2;
+    mulEncodeTimestamp(registers[RX_TIME],rx); systemTime=mulTimestampMask(rx+ms); fakeTicks=i*1000+1;
+    registers[SYS_STATUS][1]=1 << (RXFCG_BIT-8); dwHandleInterrupt(&radio);
+    mulTestPacket_t p; mulRelation_t r;
+    TEST_ASSERT_TRUE(mulBroadcastDecode(transmitted,MUL_RELATION_FRAME_LENGTH,&p,&r));
+    TEST_ASSERT_EQUAL_UINT64(mulDecodeTimestamp(registers[TX_TIME]),p.txTimestamp);
+    TEST_ASSERT_EQUAL_UINT32(i,p.sequence); epoch=r.epoch;
+    if (i==6) {
+      TEST_ASSERT_TRUE(r.available); TEST_ASSERT_EQUAL_UINT32(6,r.referenceSequence);
+      TEST_ASSERT_EQUAL_UINT32(5,r.twrSequence); TEST_ASSERT_EQUAL_UINT64(tx,r.referenceOrigin);
+      TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(rx-tof),r.followerOrigin);
+      uint64_t converted; TEST_ASSERT_TRUE(mulRelationInverse(&r,p.txTimestamp,1,&converted));
+    } else { TEST_ASSERT_FALSE(r.available); }
+    systemTime=mulTimestampMask(p.txTimestamp+ms); fakeTicks=i*1000+501;
+    registers[SYS_STATUS][0]=1 << TXFRS_BIT; dwHandleInterrupt(&radio);
+    TEST_ASSERT_EQUAL_UINT(RX_MODE,radio.deviceMode);
+  }
 }
