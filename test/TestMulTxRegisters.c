@@ -209,7 +209,7 @@ void test_mulTwrRealDriverPollFinalResultTimestampsAndRxTransitions(void) {
   directOrigin=MUL_TIMESTAMP_MASK-640*ms;
   directReferenceOrigin=directOrigin;
   systemTime=mulTimestampMask(directOrigin+630*ms);
-  registers[TX_ANTD][0]=0x21; registers[TX_ANTD][1]=0x43;
+  mulAntennaConfigure(&radio);
   mulRxInit(&radio);
   TEST_ASSERT_TRUE(mulTwrStart(&context,&radio,5,directOrigin));
   uint64_t p1=context.stamps[0]; twrRealTxComplete();
@@ -238,7 +238,7 @@ void test_mulTwrRealDriverResponseReportAndResultAcceptance(void) {
   directRole=mulAlrFollower; directEpoch=7;
   directOrigin=MUL_TIMESTAMP_MASK-680*ms;
   directReferenceOrigin=UINT64_C(0x123456789a);
-  registers[TX_ANTD][0]=0x34; registers[TX_ANTD][1]=0x12;
+  mulAntennaConfigure(&radio);
   mulRxInit(&radio);
   mulTwrPacket_t poll={.type=mulTwrPoll,.id=5};
   poll.stamps[0]=mulTimestampMask(directReferenceOrigin+650*ms); poll.txTimestamp=poll.stamps[0];
@@ -262,4 +262,42 @@ void test_mulTwrRealDriverResponseReportAndResultAcceptance(void) {
   TEST_ASSERT_EQUAL_UINT32(tof,context.tof); TEST_ASSERT_EQUAL_UINT64(7,context.epoch);
   TEST_ASSERT_EQUAL_UINT(2,completionCount); TEST_ASSERT_EQUAL_UINT(3,receiveCount);
   TEST_ASSERT_EQUAL_UINT(RX_MODE,radio.deviceMode); directTwr=NULL;
+}
+
+void test_mulAntennaInitializesMissingZeroAndMismatchedRegistersWithoutPhyChange(void) {
+  TEST_ASSERT_EQUAL_UINT32((uint32_t)(154.6 * 63897600000.0 / 299792458.0 + 0.5),
+                          MUL_ANTENNA_TX_DTU + MUL_ANTENNA_RX_DTU);
+  // Reproduce uwbInit: the legacy zero cache is committed to both directions.
+  radio.antennaDelay.full=0;
+  dwNewConfiguration(&radio); dwSetDefaults(&radio); dwCommitConfiguration(&radio);
+  TEST_ASSERT_FALSE(mulAntennaValid(&radio));
+  uint8_t channel[LEN_CHAN_CTRL]; memcpy(channel,registers[CHAN_CTRL],sizeof(channel));
+  const uint16_t bad[]={0,1,0xffff};
+  for (unsigned int i=0;i<3;i++) {
+    const uint8_t tx[]={bad[i] & 0xff,bad[i] >> 8};
+    const uint8_t rx[]={bad[2-i] & 0xff,bad[2-i] >> 8};
+    dwSpiWrite(&radio,TX_ANTD,NO_SUB,tx,sizeof(tx));
+    dwSpiWrite(&radio,LDE_IF,LDE_RXANTD_SUB,rx,sizeof(rx));
+    mulAntennaConfigure(&radio);
+    TEST_ASSERT_TRUE(mulAntennaValid(&radio));
+    TEST_ASSERT_EQUAL_UINT16(14498,dwSpiRead16(&radio,TX_ANTD,NO_SUB));
+    TEST_ASSERT_EQUAL_UINT16(18453,dwSpiRead16(&radio,LDE_IF,LDE_RXANTD_SUB));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(channel,registers[CHAN_CTRL],sizeof(channel));
+    mulRxInit(&radio); dwNewTransmit(&radio); dwSetDefaults(&radio); mulRxRearm(&radio);
+    TEST_ASSERT_TRUE(mulAntennaValid(&radio));
+  }
+}
+
+void test_mulAntennaDetectsCacheMismatchAndFullCommitOverwrite(void) {
+  mulAntennaConfigure(&radio);
+  radio.antennaDelay.full=0;
+  TEST_ASSERT_FALSE(mulAntennaValid(&radio));
+  mulAntennaConfigure(&radio);
+  dwNewConfiguration(&radio); dwCommitConfiguration(&radio);
+  // This driver only has one cached delay; full commit writes TX into RX.
+  TEST_ASSERT_FALSE(mulAntennaValid(&radio));
+  mulTwr_t twr; mulTwrInit(&twr);
+  TEST_ASSERT_FALSE(mulTwrStart(&twr,&radio,5,systemTime));
+  TEST_ASSERT_FALSE(twr.active); TEST_ASSERT_FALSE(twr.delayValid); TEST_ASSERT_FALSE(started);
+  mulAntennaConfigure(&radio); TEST_ASSERT_TRUE(mulAntennaValid(&radio));
 }

@@ -29,6 +29,7 @@
 #include "uwb.h"
 #include "mul_alr.h"
 #include "mul_rlr.h"
+#include "mul_rx.h"
 
 #include "libdw1000.h"
 #include "dwOps.h"
@@ -180,6 +181,11 @@ void uwbInit()
   dwSetPreambleCode(dwm, PREAMBLE_CODE_64MHZ_9);
 
   dwCommitConfiguration(dwm);
+  // Original modes retain their software antenna compensation and zero registers.
+  // Configure only ALRs, after the last full commit, without changing PHY/EEPROM.
+  if (config.mode == 5) {
+    mulAntennaConfigure(dwm);
+  }
 
   isInit = true;
 }

@@ -462,7 +462,8 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       clearTxErrors(dev);
       txPending = false;
       mulRxRearm(dev);
-      printf("MUL ALR: Unexpected RX error\r\n");
+      printf("MUL ALR: RX %s outside_TWR recovery=rearm\r\n",
+             event == eventReceiveTimeout ? "timeout" : "failure");
       break;
     case eventPacketReceived:
       if (txPending) {

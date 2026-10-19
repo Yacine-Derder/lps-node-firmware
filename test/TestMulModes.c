@@ -64,6 +64,7 @@ uint16_t dwSpiRead16(dwDevice_t *device, uint8_t reg, uint32_t offset) {
     TEST_ASSERT_EQUAL_UINT32(NO_SUB, offset);
     return antennaDelay;
   }
+  if (reg == LDE_IF) { TEST_ASSERT_EQUAL_UINT32(LDE_RXANTD_SUB, offset); return MUL_ANTENNA_RX_DTU; }
   TEST_ASSERT_EQUAL_UINT8(SYS_STATUS, reg);
   TEST_ASSERT_EQUAL_UINT32(3, offset);
   return txError;

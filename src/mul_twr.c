@@ -141,6 +141,10 @@ void mulTwrFlush(mulTwr_t *twr)
 
 static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64_t target)
 {
+  if (!mulAntennaValid(dev)) {
+    mulTwrCancel(twr, dev, "antenna_config", true);
+    return false;
+  }
   // Same raw-DX_TIME/live-TX_ANTD contract as Stage 2; never use immediate TX.
   uint16_t antenna = dwSpiRead16(dev, TX_ANTD, NO_SUB);
   dwTime_t raw = {.full=mulTimestampMask((mulTimestampMask(target-antenna)+511) & ~UINT64_C(511))};
@@ -195,20 +199,40 @@ bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t ori
   return sendPacket(twr, dev, mulTwrPoll, mulTimestampMask(origin+MUL_TWR_POLL_MS*MUL_TWR_DTU_PER_MS));
 }
 
-static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role)
+static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
 {
+  // Only after RESULT: no next TWR TX to schedule, >200 ms before broadcast prep.
+  // Keep this and OK/SYNC below the 512-byte USB queue for one completion.
+  printf("MUL TWR D: id=%" PRIu32 " tx_antd=%u rx_antd=%u source=%s P=",
+    twr->id, (unsigned int)dwSpiRead16(dev, TX_ANTD, NO_SUB),
+    (unsigned int)dwSpiRead16(dev, LDE_IF, LDE_RXANTD_SUB), MUL_ANTENNA_SOURCE);
+  for (unsigned int i=0; i<6; i++) {
+    printf("%02X%08" PRIX32 "%s", (unsigned int)(twr->stamps[i]>>32),
+      (uint32_t)twr->stamps[i], i == 5 ? "" : ",");
+  }
+  printf(" I=%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 "\r\n",
+    (uint32_t)mulTimestampDifference(twr->stamps[3],twr->stamps[0]),
+    (uint32_t)mulTimestampDifference(twr->stamps[4],twr->stamps[3]),
+    (uint32_t)mulTimestampDifference(twr->stamps[5],twr->stamps[2]),
+    (uint32_t)mulTimestampDifference(twr->stamps[2],twr->stamps[1]));
   // Vacuum speed of light 299792458 m/s; display integer millimetres, not an accuracy claim.
   uint32_t mm = (uint32_t)(((uint64_t)twr->tof*UINT64_C(299792458000) + UINT64_C(31948800000)) /
                          UINT64_C(63897600000));
   printf("MUL TWR: id=%" PRIu32 " role=%s ref=0x84 fol=0x85 result=OK tof_dtu=%" PRIu32
-         " distance_m=%" PRIu32 ".%03" PRIu32 " poll_tx=0x%02X%08" PRIX32 " uncertainty=UNKNOWN\r\n",
-         twr->id, role == mulAlrReference ? "INIT" : "RESP", twr->tof, mm/1000, mm%1000,
-         (unsigned int)(twr->stamps[0]>>32), (uint32_t)twr->stamps[0]);
+         " distance_m=%" PRIu32 ".%03" PRIu32 " uncertainty=UNKNOWN\r\n",
+         twr->id, role == mulAlrReference ? "INIT" : "RESP", twr->tof, mm/1000, mm%1000);
 }
 
 bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_t role,
   uint32_t sequence, uint64_t origin, uint64_t referenceOrigin, uint64_t epoch, uint32_t nowMs)
 {
+  if ((twr->active || (event == eventPacketReceived && dwGetDataLength(dev) == MUL_TWR_FRAME_LENGTH)) &&
+      !mulAntennaValid(dev)) {
+    if (!twr->active) printf("MUL TWR: result=FAILED reason=antenna_config\r\n");
+    mulTwrCancel(twr, dev, "antenna_config", true);
+    mulRxRearm(dev);
+    return true;
+  }
   int64_t phase = mulTimestampDifference(hardwareNow(dev), origin);
   if (twr->active && (phase < 0 || phase >= (int64_t)(MUL_TWR_END_MS*MUL_TWR_DTU_PER_MS) ||
       sequence != twr->id || (role == mulAlrFollower && epoch != twr->epoch))) {
@@ -235,7 +259,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     if (twr->stage == mulTwrResult) {
       twr->active = false;
       mulRxRearm(dev);
-      logSuccess(twr, role);
+      logSuccess(twr, role, dev);
     } else {
       twr->stage++;
       mulRxRearm(dev);
@@ -328,7 +352,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
       twr->syncDirty = true;
       twr->active = false;
       mulRxRearm(dev);
-      logSuccess(twr, role);
+      logSuccess(twr, role, dev);
     }
   }
   return true;

@@ -1,6 +1,25 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "mul_rx.h"
 
+void mulAntennaConfigure(dwDevice_t *dev)
+{
+  // libdw1000 caches ONE value and commits it to BOTH registers. MUL needs
+  // independent directions. Cache TX for legacy driver helpers; write RX
+  // explicitly, and never full-commit in MUL. Validation detects such overwrites.
+  dev->antennaDelay.full = MUL_ANTENNA_TX_DTU;
+  const uint8_t tx[] = {MUL_ANTENNA_TX_DTU & 0xff, MUL_ANTENNA_TX_DTU >> 8};
+  const uint8_t rx[] = {MUL_ANTENNA_RX_DTU & 0xff, MUL_ANTENNA_RX_DTU >> 8};
+  dwSpiWrite(dev, TX_ANTD, NO_SUB, tx, sizeof(tx));
+  dwSpiWrite(dev, LDE_IF, LDE_RXANTD_SUB, rx, sizeof(rx));
+}
+
+bool mulAntennaValid(dwDevice_t *dev)
+{
+  return dwSpiRead16(dev, TX_ANTD, NO_SUB) == MUL_ANTENNA_TX_DTU &&
+         dwSpiRead16(dev, LDE_IF, LDE_RXANTD_SUB) == MUL_ANTENNA_RX_DTU &&
+         dev->antennaDelay.full == MUL_ANTENNA_TX_DTU;
+}
+
 void mulRxRearm(dwDevice_t *dev)
 {
   dwNewReceive(dev);

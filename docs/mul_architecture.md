@@ -352,7 +352,7 @@ IRQs. Priority-cancellation logs are deferred until broadcast radio setup finish
 Timeouts, invalid packets, RX/TX errors, timestamp mismatch or late setup abort
 without same-frame retry and restore RX. Each TX uses aligned DX_TIME, live TX_ANTD,
 readback, error flags and actual TX_STAMP verification. RX reads RX_STAMP, already
-hardware antenna-delay referenced, before re-arming; no legacy hardcoded antenna
+hardware compensated using the configured antenna delays, before re-arming; no legacy hardcoded antenna
 offset or optional received-power bias table is added. RX setup writes only RX/IRQ
 controls, avoiding full driver commits that overwrite live antenna calibration.
 
@@ -367,11 +367,72 @@ ID remain bound to that exchange. The unchanged one-second age limit makes SYNC
 AVAILABLE briefly after a valid exchange and UNAVAILABLE between five-second
 attempts. Expiry timers run even without RX, without cancelling armed broadcasts.
 
-Reciprocity, nearly constant propagation/rates during the exchange, and existing
-antenna-delay settings are assumptions, not calibration evidence. Multipath,
+Reciprocity, nearly constant propagation/rates during the exchange, and correct
+per-device antenna-delay estimates are assumptions, not calibration evidence. Multipath,
 NLOS, motion and rate/antenna bias remain unbounded. Delay measurement and motion
 bounds stay UNKNOWN, as does total corrected physical error. A plausible ToF and
 AVAILABLE correction do not establish centimetre accuracy or exact synchronization.
+
+## Antenna reference and initial calibration
+
+Stage 3B.2b.3 found a real omission: `uwbInit()` explicitly cached zero antenna
+delay and its full commit wrote zero into both TX_ANTD and LDE_RXANTD. The
+original Bitcraze TWR modes add half their `ANTENNA_OFFSET=154.6 m` equivalent
+to TX and subtract half from RX in software. MUL omitted that software adjustment
+while assuming the hardware registers supplied it. Consequently six-marker TWR
+included analog path delay; equal scheduled/actual TX stamps only proved scheduling.
+The previous architecture's antenna-reference wording overstated physical calibration.
+The tests had assumed already-corrected RX and antenna emission timestamps.
+
+The [DW1000 manual](https://fcc.report/FCC-ID/2AAXVTNTMOD1/2787937.pdf),
+register descriptions for DX_TIME, TX_TIME, TX_ANTD and LDE_RXANTD distinguish
+raw aligned DX_TIME (low nine bits ignored), TX_STAMP = TX_RAWST + TX_ANTD, and RX_STAMP with LDE_RXANTD
+already subtracted. `dwGetRawReceiveTimestamp()` reads RX_STAMP, not RX_RAWST;
+“raw” here excludes only the driver's optional received-power bias table.
+No preamble scheduling offset, extra timestamp correction or DS equation change
+is needed. Markers remain 40-bit modular values with separate clock domains.
+
+Only mode 5 now calls `mulAntennaConfigure()` after the final radio full commit.
+`inc/mul_rx.h` centralizes the initial estimate: round(154.6 * 63897600000 /
+299792458) = **32951 DTU aggregate**, approximately 515.684 ns. This reuses the
+same-board/channel historical [Bitcraze TWR estimate](https://github.com/bitcraze/lps-node-firmware/blob/master/src/uwb_twr_anchor.c),
+not an empirically fitted subtraction of the reported range. TDoA3's same constant
+is a minimum-ToF gate, not a calibrated correction to copy blindly.
+[APS014](https://esdocs.com/doc/468243/application-note--aps014), table 4, apportions
+aggregate delay 44% TX / 56% RX for wireless synchronization: rounded TX_ANTD
+**14498 DTU**, remainder LDE_RXANTD **18453 DTU**. This is consistent in scale
+with the Qorvo DecaRanging initial estimate 515.371 ns (about 32930 DTU), but
+neither value establishes calibration for these individual boards or other PHYs.
+
+The unchanged driver caches one delay and full-commits it to both directions.
+MUL caches TX only, writes both registers explicitly, and uses RX/IRQ-only setup;
+`dwNewConfiguration()` does not read antenna delays, and RX/TX `dwSetDefaults()`
+does not change them. Before each ranging TX and event, live values and TX cache
+must match the policy. Missing, zero, changed or full-commit-overwritten settings
+abort with `reason=antenna_config`, invalidate the delay and restore RX. Reboot
+restores initialization; no silent mid-exchange repair is attempted. Original
+modes 0–4 retain zero registers and their existing compensation; mode 6 remains
+passive with its prior RX configuration. PHY and EEPROM are unchanged.
+
+After RESULT each ALR logs actual local registers/source, six markers (`P` in
+P1..P6 order, ten hex digits each), four local intervals (`I` in Ra,Da,Rb,Db order,
+decimal DTU) and final distance. The compact D/OK/SYNC completion burst fits the
+512-byte USB queue when otherwise empty; USB output remains best-effort. There is no separate raw ToF in live exchanges:
+hardware already compensated the markers, so reconstructing an “uncorrected”
+value would be misleading. Logs occur after exchange scheduling has finished,
+near 730 ms, before the next 980 ms broadcast preparation. Outside-exchange RX
+failures/timeouts are identified and re-armed; active TWR faults still abort.
+
+Independent analog-delay tests reproduce 33300 DTU with zero registers and
+349 DTU with matching compensation for the same synthetic 1.637 m path.
+At ideal 1 m and 5 m paths expect about 213 and 1066 DTU; with zero registers
+and this modeled aggregate, about 33164 and 34017 DTU. These are model predictions,
+not new physical measurements. Board variation, signal power/range bias, NLOS,
+temperature and the TX/RX split still require physical characterization. TWR
+validity is protocol consistency; distance accuracy and corrected synchronization
+uncertainty remain distinct, with physical bounds UNKNOWN. The pair's aggregate
+can be checked using known separations; per-device and per-direction calibration
+requires a calibrated reference or APS014 multi-device procedure.
 
 ## Planned measurement processing
 

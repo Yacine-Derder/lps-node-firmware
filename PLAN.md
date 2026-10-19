@@ -27,7 +27,7 @@ Source code remains authoritative for what is actually implemented.
 |---|---|---|
 | Stage 0 — Custom MUL operating modes | Complete | Modes 5/6, USB selection, EEPROM persistence |
 | Stage 1 — ALR-to-RLR UWB communication | Complete | Periodic broadcast, passive reception, source/sequence diagnostics |
-| Stage 2 — Hardware-delayed TX and accurate TX/RX timestamps | Hardware validated (user-reported) | Embedded antenna-referenced TX time and local raw RX time |
+| Stage 2 — Hardware-delayed TX and accurate TX/RX timestamps | Hardware validated (user-reported) | Embedded hardware TX stamp and local RX stamp; physical antenna calibration pending |
 | Stage 3A.1 — Multi-ALR protocol and reference acquisition | Hardware validated (user-reported) | Reference reception, loss/reacquisition, and observed wraparound |
 | Stage 3A.2 — Hardware-timed TDMA | Hardware validated (user-reported) | Both ALRs TX, passive RLR RX, approximately 500.04 ms separation, TX timestamp equality |
 | Stage 3B.1 — Relative clock skew | Hardware validated (user-reported) | Stable negative skew, loss reset/reconvergence, preserved TX equality and RLR reception |
@@ -40,9 +40,15 @@ it is not a claim of hardware testing by Codex for this milestone.
 The prior timestamp-discrepancy investigation does not establish a root cause;
 retain that distinction when interpreting validation and diagnostics.
 
-## Hardware checkpoint — Stage 3B.2b.2: Live inter-ALR TWR and delay integration
+## Hardware checkpoint — Stage 3B.2b.3: Antenna-delay bias correction
 
-Status: **Implemented/software tested; awaiting physical validation.**
+Status: **Implemented/software tested; awaiting physical validation of the fix.**
+The user validated Stage 3B.2b.2 exchange cadence, matching results, TX delta=0,
+RLR reception and SYNC state behavior, but reported approximately 33300 DTU /
+156.2 m at close range. Ranging accuracy therefore failed acceptance.
+Stage 3B.2b.3 fixes the proven zero-register compensation omission, initializes
+MUL ALR hardware antenna delays and detects configuration overwrites. Exact
+provenance and remaining calibration limits are in the architecture document.
 Objective: opportunistic asymmetric double-sided ranging initiated by `0x84`,
 with a confirmed reference-unit one-way estimate supplied to the follower's
 existing corrected mapping. Arrival MAP remains UNCALIBRATED; corrected SYNC
@@ -68,6 +74,17 @@ Physical acceptance: both ALRs/RLR retain approximately 1 Hz broadcasts/receptio
 500 ms RLR-clock slot separation, and exact broadcast TX timestamp equality.
 TWR should succeed near every five seconds without slot loss or lockups; measured
 distances must be assessed at known separations, with calibration uncertainty explicit.
+At 1 m LOS collect at least 20 matched exchange IDs on 0x84/0x85 while 0x86 logs
+both broadcasts, then repeat at 5 m if available. Expect local ANT diagnostics
+`tx_antd=14498 rx_antd=18453 source=BITCRAZE_LPS_INITIAL`, six matching
+markers, equal ToF on both ALRs and no `antenna_config` errors. Ideal ToF is about
+213 DTU (1 m) and 1066 DTU (5 m). Provisional functional acceptance: at least 19/20
+exchanges succeed, broadcast sequences have no new gaps, every TX delta is zero,
+and mean range error is <=2 m at each separation, with the 5 m minus 1 m means
+within 4 +/-1 m. This checks removal of the gross bias, not precision calibration.
+A stricter subsequent calibration target is mean error <=0.10 m at both distances,
+using at least 100 measurements per distance and reporting spread; passing it
+does not bound synchronization error or prove calibration across PHY/temperature.
 SYNC should become AVAILABLE after confirmed ranging and UNAVAILABLE after the
 unchanged one-second delay lifetime or reference loss, then recover after restart.
 Stop here for hardware results; do not proceed to Stage 3C.

@@ -19,7 +19,7 @@ typedef struct {
   uint8_t tx[MUL_TWR_FRAME_LENGTH+2], rx[MUL_TWR_FRAME_LENGTH];
   unsigned int txLength, rxLength, sends, rearms, aborts;
   uint64_t now, raw, actual, arrival;
-  uint16_t antenna, status, injectStatus;
+  uint16_t antenna, rxAntenna, physicalTx, physicalRx, status, injectStatus;
   int64_t stampError, dxError;
   uint64_t setupLag;
   bool armed, receiving;
@@ -69,6 +69,7 @@ void dwSpiRead(dwDevice_t *dev, uint8_t reg, uint32_t sub, void *data, size_t si
 }
 uint16_t dwSpiRead16(dwDevice_t *dev, uint8_t reg, uint32_t sub) {
   if (reg == TX_ANTD) { TEST_ASSERT_EQUAL_UINT32(NO_SUB,sub); return radio(dev)->antenna; }
+  if (reg == LDE_IF) { TEST_ASSERT_EQUAL_UINT32(LDE_RXANTD_SUB,sub); return radio(dev)->rxAntenna; }
   TEST_ASSERT_EQUAL_UINT8(SYS_STATUS,reg); TEST_ASSERT_EQUAL_UINT32(3,sub); return radio(dev)->status;
 }
 void dwSpiWrite(dwDevice_t *dev, uint8_t reg, uint32_t sub, const void *data, size_t size) {
@@ -101,7 +102,7 @@ static void advance(int64_t at) {
   for (int i=0;i<2;i++) radios[i].now=clockAt(i,at);
 }
 static int64_t sendTime(int node) {
-  return physical+llroundl(mulTimestampDifference(radios[node].actual,radios[node].now)/rate(node));
+  return physical+llroundl((mulTimestampDifference(radios[node].raw,radios[node].now)+radios[node].physicalTx)/rate(node));
 }
 static mulTwr_t *ctx(int node) { return useAlr[node] ? &ranging : &contexts[node]; }
 static mulClock_t *followerModel(void) { return useAlr[1] ? &followerClock : &model; }
@@ -130,7 +131,11 @@ static void scenario(int32_t ppb, int64_t tof) {
 }
 void setUp(void) {
   memset(radios,0,sizeof(radios)); memset(contexts,0,sizeof(contexts)); memset(useAlr,0,sizeof(useAlr));
-  radios[0].antenna=0x4321; radios[1].antenna=0xffff;
+  for (int i=0;i<2;i++) {
+    radios[i].antenna=radios[i].physicalTx=MUL_ANTENNA_TX_DTU;
+    radios[i].rxAntenna=radios[i].physicalRx=MUL_ANTENNA_RX_DTU;
+    radios[i].device.antennaDelay.full=MUL_ANTENNA_TX_DTU;
+  }
   offsets[0]=MUL_TIMESTAMP_MASK-660*MS; offsets[1]=UINT64_C(0x723456789a);
   skew=0; flight=0; physical=framePhysical=0; ticks=5000;
   exchangeSequence=5; mulClockReset(&model);
@@ -149,15 +154,16 @@ static void transfer(int from) {
   int64_t when=sendTime(from);
   advance(when+(int64_t)MS); s->armed=false; dispatch(from,eventPacketSent);
   advance(when+flight+2*(int64_t)MS);
-  memcpy(r->rx,payload,length); r->rxLength=length; r->arrival=clockAt(to,when+flight); r->receiving=false;
+  memcpy(r->rx,payload,length); r->rxLength=length; r->arrival=mulTimestampMask(clockAt(to,when+flight)+r->physicalRx-r->rxAntenna); r->receiving=false;
   dispatch(to,eventPacketReceived);
 }
 static void completeExchange(void) { transfer(0); transfer(1); transfer(0); transfer(1); transfer(0); }
 
 void test_mulTwrCompleteSixTimestampExchangeWithIndependentSignedClockRates(void) {
   const int32_t skews[]={0,5000,-10000,150000,-150000};
-  const uint32_t metres[]={1,5,10,30};
-  for (unsigned int a=0;a<5;a++) for (unsigned int b=0;b<4;b++) {
+  const uint32_t metres[]={0,1,5,10,30};
+  for (unsigned int a=0;a<5;a++) for (unsigned int b=0;b<5;b++) {
+    if (metres[b] == 0 && skews[a] != 0) continue; // Quantized negative sub-DTU ToF must reject.
     setUp(); int64_t tof=(metres[b]*SEC+149896229)/299792458;
     scenario(skews[a],tof);
     TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
@@ -474,4 +480,82 @@ void test_mulTwrReferenceLossWhileResponseArmedCancelsAndRequiresNewEpoch(void) 
   TEST_ASSERT_FALSE(referenceAcquired); TEST_ASSERT_FALSE(ranging.active);
   TEST_ASSERT_FALSE(radios[1].armed); TEST_ASSERT_TRUE(radios[1].receiving);
   TEST_ASSERT_FALSE(ranging.delayValid); TEST_ASSERT_TRUE(epoch != followerClock.epoch);
+}
+
+// Analog path is independent of register compensation. TX_STAMP = clock at
+// antenna emission - physical TX delay + TX_ANTD; RX_STAMP has the opposite sign.
+static void analogMarkers(uint64_t t[6], int64_t tof, const uint16_t tx[2],
+                          const uint16_t rx[2], uint16_t configuredTx, uint16_t configuredRx) {
+  int64_t p1=650*MS, p3=p1+tof+20*MS, p5=p3+tof+20*MS;
+  t[0]=mulTimestampMask(clockAt(0,p1)-tx[0]+configuredTx);
+  t[1]=mulTimestampMask(clockAt(1,p1+tof)+rx[1]-configuredRx);
+  t[2]=mulTimestampMask(clockAt(1,p3)-tx[1]+configuredTx);
+  t[3]=mulTimestampMask(clockAt(0,p3+tof)+rx[0]-configuredRx);
+  t[4]=mulTimestampMask(clockAt(0,p5)-tx[0]+configuredTx);
+  t[5]=mulTimestampMask(clockAt(1,p5+tof)+rx[1]-configuredRx);
+}
+
+void test_mulTwrAnalogDelayRegressionReproduces33300WithoutCalibration(void) {
+  const uint16_t tx[]={14498,14498}, rx[]={18453,18453};
+  uint64_t markers[6]; uint32_t tof;
+  analogMarkers(markers,349,tx,rx,0,0);
+  TEST_ASSERT_TRUE(mulTwrCalculate(markers,&tof));
+  TEST_ASSERT_EQUAL_UINT32(33300,tof); // 156.236 m, despite 1.637 m physical path.
+  analogMarkers(markers,349,tx,rx,MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU);
+  TEST_ASSERT_TRUE(mulTwrCalculate(markers,&tof));
+  TEST_ASSERT_EQUAL_UINT32(349,tof); // No ToF subtraction: only register semantics changed.
+}
+
+void test_mulTwrAnalogSymmetricAndAsymmetricAllocationsSkewAndWrap(void) {
+  const uint16_t tx[][2]={{16476,16476},{14498,14498},{14000,16000}};
+  const uint16_t rx[][2]={{16476,16476},{18453,18453},{18951,16951}};
+  const int32_t rates[]={0,-150000,150000};
+  const uint32_t metres[]={0,1,5,10,30};
+  for (unsigned int a=0;a<3;a++) for (unsigned int b=0;b<3;b++)
+    for (unsigned int c=0;c<5;c++) {
+      if (c == 0 && b != 0) continue;
+      skew=rates[b]; int64_t expected=(metres[c]*SEC+149896229)/299792458;
+      uint64_t markers[6]; uint32_t tof;
+      analogMarkers(markers,expected,tx[a],rx[a],
+        a == 0 ? 16476 : MUL_ANTENNA_TX_DTU, a == 0 ? 16476 : MUL_ANTENNA_RX_DTU);
+      TEST_ASSERT_TRUE(mulTwrCalculate(markers,&tof));
+      TEST_ASSERT_UINT32_WITHIN(1,expected,tof);
+    }
+}
+
+void test_mulTwrChangedCalibrationDuringExchangeInvalidatesAndRecovers(void) {
+  for (unsigned int i=0;i<3;i++) {
+    setUp(); scenario(0,1000);
+    TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+    transfer(0);
+    ctx(1)->delayValid=true;
+    if (i==0) radios[1].rxAntenna=0;
+    if (i==1) radios[1].antenna++;
+    if (i==2) radios[1].device.antennaDelay.full=0;
+    dispatch(1,eventPacketSent);
+    TEST_ASSERT_FALSE(ctx(1)->active); TEST_ASSERT_FALSE(ctx(1)->delayValid);
+    TEST_ASSERT_FALSE(radios[1].armed); TEST_ASSERT_TRUE(radios[1].receiving);
+    radios[1].antenna=MUL_ANTENNA_TX_DTU; radios[1].rxAntenna=MUL_ANTENNA_RX_DTU;
+    radios[1].device.antennaDelay.full=MUL_ANTENNA_TX_DTU;
+    TEST_ASSERT_TRUE(mulAntennaValid(&radios[1].device));
+    mulTwrCancel(ctx(0),&radios[0].device,NULL,true);
+    mulTwrInit(ctx(0)); mulTwrInit(ctx(1)); scenario(0,1000);
+    TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+    completeExchange(); TEST_ASSERT_TRUE(ctx(1)->delayValid);
+    TEST_ASSERT_UINT32_WITHIN(1,1000,ctx(1)->tof);
+  }
+}
+
+void test_mulTwrFullExchangeWithUnequalPhysicalTxRxAllocation(void) {
+  const int32_t rates[]={-150000,0,150000};
+  for (unsigned int i=0;i<3;i++) {
+    setUp(); scenario(rates[i],1066);
+    // Each device has the same aggregate as the estimate but a distinct split.
+    // TWR can validate aggregate delay; this cannot validate individual directions.
+    radios[0].physicalTx=16475; radios[0].physicalRx=16476;
+    radios[1].physicalTx=14000; radios[1].physicalRx=18951;
+    TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+    completeExchange(); TEST_ASSERT_TRUE(ctx(1)->delayValid);
+    TEST_ASSERT_UINT32_WITHIN(1,1066,ctx(1)->tof);
+  }
 }
