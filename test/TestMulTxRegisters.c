@@ -330,8 +330,8 @@ void test_mulPowerReusesBitcrazeInterpolationSignAndKeepsRawAtWrap(void) {
     TEST_ASSERT_EQUAL_UINT64(0,result.raw);
     TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(reference.full),result.corrected);
     TEST_ASSERT_EQUAL_INT64(mulTimestampDifference(reference.full,0),result.power.deltaDtu);
-    if (powers[i] <= -83 || (prf == 2 && powers[i] <= -80)) TEST_ASSERT_TRUE(result.power.deltaDtu<0);
-    if (powers[i] >= -75) TEST_ASSERT_TRUE(result.power.deltaDtu>0);
+    if (powers[i] <= -83 || (prf == 2 && powers[i] <= -80)) { TEST_ASSERT_TRUE(result.power.deltaDtu<0); }
+    if (powers[i] >= -75) { TEST_ASSERT_TRUE(result.power.deltaDtu>0); }
   }
   powerAt(-80,TX_PULSE_FREQ_64MHZ);
   float base=-(dwGetReceivePower(&radio)+61)*0.5f;

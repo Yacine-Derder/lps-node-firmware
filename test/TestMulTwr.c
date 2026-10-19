@@ -345,6 +345,9 @@ void test_mulTwrLiveFollowerIntegrationBroadcastPriorityAvailabilityAndLoss(void
   radios[1].rxLength=MUL_TWR_FRAME_LENGTH;
   dispatch(1,eventPacketReceived);
   TEST_ASSERT_EQUAL_UINT(sends,radios[1].sends); TEST_ASSERT_EQUAL_UINT64(raw,radios[1].raw);
+  radios[1].rxLength=68; // Legacy TWR IRQ is still lower priority than TDMA.
+  dispatch(1,eventPacketReceived);
+  TEST_ASSERT_EQUAL_UINT(sends,radios[1].sends); TEST_ASSERT_EQUAL_UINT64(raw,radios[1].raw);
   TEST_ASSERT_TRUE(txPending); TEST_ASSERT_TRUE(radios[1].armed);
   TEST_ASSERT_FALSE(ranging.active);
   advance(4*SEC+MS); dispatch(1,eventTimeout);
@@ -632,4 +635,16 @@ void test_mulTwrAlteredEchoPowerMetadataCancelsWithoutPublication(void) {
   radios[1].tx[69+5+3]=mulPowerMissing;
   radios[1].tx[69+5]=radios[1].tx[69+5+1]=radios[1].tx[69+5+4]=0;
   transfer(1); TEST_ASSERT_FALSE(ctx(0)->active); TEST_ASSERT_FALSE(ctx(1)->delayValid);
+}
+
+void test_mulTwrOptionalCorrectionCannotInvalidateValidRawNearZeroRange(void) {
+  uint64_t t[]={0,1,20*MS+1,20*MS+2,40*MS+2,40*MS+3};
+  mulPower_t power[3];
+  for (unsigned int i=0;i<3;i++) {
+    power[i]=(mulPower_t){.status=mulPowerApplied,.table=2,.powerCentiDbm=-8000,.deltaDtu=-5};
+    t[2*i+1]=mulTimestampMask(t[2*i+1]-5);
+  }
+  uint32_t raw,corrected;
+  TEST_ASSERT_TRUE(mulTwrResults(t,power,&raw,&corrected));
+  TEST_ASSERT_EQUAL_UINT32(1,raw); TEST_ASSERT_EQUAL_UINT32(UINT32_MAX,corrected);
 }

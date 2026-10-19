@@ -42,6 +42,8 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `inc/mul_alr.h`, `src/mul_alr.c` | Reference delayed TX and reference-following follower slots |
 | `inc/mul_rlr.h`, `src/mul_rlr.c` | Passive RX and bounded per-source observation state |
 | `inc/mul_rx.h`, `src/mul_rx.c` | Shared DW1000 RX setup, bounded reads, and re-arming |
+| `inc/mul_power.h`, `src/mul_power.c` | Optional Bitcraze RX power correction with raw preservation |
+| `inc/mul_observation.h`, `src/mul_observation.c` | Bounded RLR observations and ordered association |
 | `inc/mul_clock.h`, `src/mul_clock.c` | Clock rate, arrival mapping, and delay-aware correction |
 | `inc/mul_twr.h`, `src/mul_twr.c` | Directed TWR protocol, bounded radio exchange and live delay input |
 | `vendor/libdw1000`, `src/dwOps.c` | Existing radio driver and board SPI operations |
@@ -157,7 +159,8 @@ source (e.g. a reboot), without changing other sources. Counters persist and wra
 as uint32 values; late arrivals do not undo counted gaps. No epoch field exists,
 so a delayed different packet after staleness is indistinguishable from a restart.
 Duplicate/old packets are counted quietly; the next fresh log reports the counters.
-There is no independently calibrated offset or TDoA observation formation.
+There is no independently calibrated offset or geometric TDoA measurement.
+Stage 3C retains and associates these observations as described below.
 See [the focused reuse audit](mul_stage3_reuse_audit.md) for implementation decisions.
 
 ## Diagnostic relative clock rate
@@ -317,13 +320,18 @@ and unequal replies without feeding the broadcast skew filter into ranging.
 | REPORT | follower → reference | Echo all six; RESPONSE TX stamp already verified |
 | RESULT | reference → follower | Confirm all six and accepted reference-unit ToF |
 
-All messages use a separate 68-byte MUL frame (excluding FCS). The 21-byte
+All messages use a separate versioned 84-byte MUL frame (excluding FCS). The 21-byte
 extended-address header is directed, without ACK; bytes 21–23 are MUL, byte 24
 is type 0x10..0x14, bytes 25–28 are the reference broadcast sequence/exchange ID,
 29–58 hold six five-byte markers, 59–63 the message TX timestamp, 64–67 RESULT
-ToF as uint32 reference DTU (zero otherwise). Unused future markers are zero.
+ToF as uint32 reference DTU (zero otherwise). Byte 68 is extension version 1;
+69–83 hold three five-byte P2/P4/P6 records: signed int16 centi-dBm, signed int8
+correction DTU, uint8 status, uint8 table. Fields are explicit little endian; no
+C padding goes on wire. Unused future markers/records are zero. Both ALRs must
+upgrade: old 68-byte TWR packets are explicitly rejected, not misinterpreted.
+Legacy and current TWR RX IRQs still cannot displace an armed follower broadcast.
 The POLL marker is echoed as a nonce; full identities, type/stage, ID, prefix
-timestamps, lengths and reserved values are checked. Broadcasts remain 34 bytes;
+timestamps, correction metadata, lengths and reserved values are checked. Broadcasts remain 34 bytes;
 the passive RLR rejects every TWR frame and continues independent source tracking.
 
 Define reference intervals `Ra=diff40(P4,P1)`, `Da=diff40(P5,P4)` and follower
@@ -352,8 +360,9 @@ IRQs. Priority-cancellation logs are deferred until broadcast radio setup finish
 Timeouts, invalid packets, RX/TX errors, timestamp mismatch or late setup abort
 without same-frame retry and restore RX. Each TX uses aligned DX_TIME, live TX_ANTD,
 readback, error flags and actual TX_STAMP verification. RX reads RX_STAMP, already
-hardware compensated using the configured antenna delays, before re-arming; no legacy hardcoded antenna
-offset or optional received-power bias table is added. RX setup writes only RX/IRQ
+hardware compensated using configured antenna delays, before re-arming. No
+legacy hardcoded antenna offset is added; optional power correction follows the
+receiver ownership policy below. Scheduling guards/replies still use raw RX_STAMP. RX setup writes only RX/IRQ
 controls, avoiding full driver commits that overwrite live antenna calibration.
 
 The follower publishes delay only after matching RESULT, not after its REPORT:
@@ -414,14 +423,14 @@ restores initialization; no silent mid-exchange repair is attempted. Original
 modes 0–4 retain zero registers and their existing compensation; mode 6 remains
 passive with its prior RX configuration. PHY and EEPROM are unchanged.
 
-After RESULT each ALR logs actual local registers/source, six markers (`P` in
-P1..P6 order, ten hex digits each), four local intervals (`I` in Ra,Da,Rb,Db order,
-decimal DTU) and final distance. The compact D/OK/SYNC completion burst fits the
-512-byte USB queue when otherwise empty; USB output remains best-effort. There is no separate raw ToF in live exchanges:
-hardware already compensated the markers, so reconstructing an “uncorrected”
-value would be misleading. Logs occur after exchange scheduling has finished,
-near 730 ms, before the next 980 ms broadcast preparation. Outside-exchange RX
-failures/timeouts are identified and re-armed; active TWR faults still abort.
+After RESULT each ALR logs actual local registers (`ant=TX/RX`, `cal=LPS`),
+six transported markers (`P` in P1..P6 order, ten hex digits), four local intervals
+(`I` in Ra,Da,Rb,Db order), and correction metadata (`Q`, described below). ToF,
+selected distance and raw distance are explicit. The maximum compact D/OK/SYNC
+burst is <=512 bytes when the USB queue is otherwise empty; output is best-effort
+and nonblocking. Logging starts after exchange scheduling finishes near 730 ms,
+before 980 ms broadcast preparation. Outside-exchange RX failures/timeouts are
+identified/re-armed; active TWR faults still abort.
 
 Independent analog-delay tests reproduce 33300 DTU with zero registers and
 349 DTU with matching compensation for the same synthetic 1.637 m path.
@@ -433,6 +442,96 @@ validity is protocol consistency; distance accuracy and corrected synchronizatio
 uncertainty remain distinct, with physical bounds UNKNOWN. The pair's aggregate
 can be checked using known separations; per-device and per-direction calibration
 requires a calibrated reference or APS014 multi-device procedure.
+
+## Received-power correction
+
+`mulPowerCapture()` reuses the pinned Bitcraze `dwGetReceivePower()` and mutating
+`dwCorrectTimestamp()` from `vendor/libdw1000/src/libdw1000.c`. No tables are
+copied or fitted. It preserves raw RX_STAMP, applies correction to a copy, masks
+40-bit wrap and returns signed `delta = corrected - raw` in local DTU. Both raw
+and corrected timestamps already include configured hardware RX antenna delay;
+there is no second antenna correction. The driver converts interpolated millimetre
+bias to truncated signed DTU, then subtracts it from RX_STAMP. For example its
+500 MHz / 64 MHz PRF table near -80 dBm gives about +28 mm bias and -5 DTU RX
+correction. This is empirical compensation, not a physical accuracy bound.
+
+Supported channels are 1/2/3/5 (500 MHz), PRF 16 or 64 MHz. Tables are
+`BIAS_500_16` (table 1) and `BIAS_500_64` (table 2). Current channel 2 / PRF 64
+uses table 2; configured bitrate/preamble are unchanged. Valid input is finite
+-95..-61 dBm inclusive. The vendor's endpoint-bin holds (-61..-63 and -93..-95)
+are retained exactly, with linear interpolation in interior bins; no extrapolation
+outside the table. Channels 4/7 (900 MHz) are explicitly unsupported because the
+unchanged driver shifts negative signed biases left. Invalid PRF/channel also
+falls back. The original modes and vendor implementation remain untouched.
+
+`Q` records are centi-dBm / signed correction DTU / status / table, in P2,P4,P6
+order. Status 0 MISSING, 1 APPLIED, 2 INVALID, 3 OUT_OF_RANGE, 4 UNSUPPORTED;
+table 0 means none, power -32768 means unavailable. Capture occurs before radio
+re-arm while diagnostics are frozen, so the driver's second power read refers to
+the same reception. See [APS011 section 3](https://manuals.plus/m/2ca85a466f2a54e526ff6375cbc67b18852e790e001f500e28d63af17bd58d20)
+for received-power bias and design/calibration dependence. Multipath, orientation,
+NLOS, power-estimate error and board variation remain unresolved. Current table 2
+bias magnitudes are only about 0.11 m; they must not be assumed to explain the
+entire user-reported 5.51–7.24 m range at approximately 5 m.
+
+The follower corrects P2/P6; the reference corrects P4. TX P1/P3/P5 are unchanged.
+Only the receiving owner captures power/corrects; later messages echo markers and
+metadata with prefix checks, never applying correction again. Each record carries
+the exact integer delta, allowing both peers to reconstruct raw RX markers by
+subtracting it. The unchanged DS equation is evaluated on reconstructed raw
+markers and, only if all three statuses are APPLIED, on corrected markers.
+Unavailable correction or invalid corrected arithmetic (e.g. negative quantized
+near-zero ToF) preserves valid RAW ranging. A partial corrected set is never
+reported as fully corrected. RESULT confirms the selected reference-unit ToF.
+Logs expose `raw_tof`, `corrected_tof` (or UNAVAILABLE), `raw_mm`, selected
+`distance_m` and `power=APPLIED/UNAVAILABLE`. The existing delay producer uses the
+selected estimate, with unchanged epoch/age rules and UNKNOWN physical bounds.
+Broadcast clock estimation and TDMA continue using raw observations.
+
+## Passive RLR observations and association
+
+Two fixed `mulObservation_t` slots reuse existing per-source counters. Each stores
+source TX/raw local RX, corrected RX, full source/receiver clock identities, power
+metadata, accepted uptime, validity and a receiver-local generation. Full identity
+validation precedes storage. Generations advance on first acquisition or a changed
+stale sequence; duplicates/old packets cannot refresh timestamps, metadata or age.
+Freshness is <3 seconds. No remote boot epoch is broadcast: `remoteEpochKnown`
+remains false, and local generations do not invent remote restart certainty.
+Same-sequence restarts and delayed packets after staleness remain ambiguous.
+
+A single `mulAssociation_t` candidate is armed only by a consecutive reference
+sequence with 900..1100 ms progress in its source TX clock, RLR raw RX clock and
+coarse uptime. A follower must independently show the same consecutive cadence,
+arrive after that reference by 450..550 ms in the RLR clock and within 700 coarse
+ms, with compatible local generations and identical receiver clock identities.
+Sequence numbers are independent: equality is never an association rule. First
+observations warm up; gaps or changed generations require fresh cadence. Accepted
+followers consume candidates once, even when rejected; newer references replace
+older candidates. A bounded timeout expires missing followers without transmitting.
+All hardware differences are signed modular 40-bit; coarse age rejects whole-wrap
+aliases. The window follows this prototype's established TDMA order, not a unique
+wire-level superframe identity or a general association algorithm.
+
+`mulPair_t` returns both complete observations, raw local arrival difference and
+corrected difference only if BOTH RX corrections are APPLIED. Original TX markers
+remain in their own clock domains and are never subtracted from each other.
+PAIR diagnostics are bounded to one per eligible reference and show sequences,
+raw/corrected local DTU differences (hex), and raw arrival slot separation in us.
+RLR RX diagnostics remain, with raw/corrected timestamps and Q metadata.
+
+`clockRelationAvailable` and `geometricTdoaAvailable` are false; physical bound is
+UINT64_MAX/UNKNOWN. The follower's inter-ALR affine mapping is local and absent
+from broadcasts, so provenance is “no clock model on wire.” The roughly 500 ms
+arrival interval includes transmission spacing and geometry; it is not geometric
+TDoA. No independent arrival-aligned RLR mappings are fitted to erase propagation.
+A calibrated downlink TDoA requires a shared transmission association plus a fresh,
+identifiable inter-ALR clock conversion with epoch, age and uncertainty information,
+adequate antenna/power calibration, and treatment of motion/path effects.
+
+Storage remains fixed, no heap is added. The current image reserves the existing
+1600-byte UWB task stack and 2048-byte main/ISR stack; only about 60 bytes of RAM
+remain outside existing reservations. Future state growth needs a deliberate memory
+review. Software tests do not establish on-device stack high-water or RF accuracy.
 
 ## Planned measurement processing
 

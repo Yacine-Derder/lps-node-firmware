@@ -85,7 +85,8 @@ Physical accuracy and synchronization uncertainty remain unbounded.
 
 ### Stage 3C — TDoA-ready multi-ALR observation pipeline
 
-Status: **In progress.** Objective: associate observations by source and transmission,
+Status: **Implemented/software tested; awaiting hardware validation.**
+Objective: associate observations by source and transmission,
 retaining clock domain, correction model, validity, and uncertainty.
 Acceptance: tests reject missing/stale/inconsistent associations; hardware
 observations from multiple ALRs can be paired without mixing clock domains.
@@ -113,19 +114,45 @@ compare accuracy, uncertainty consistency, robustness, and relevant baselines.
 
 Update milestone status in place as evidence changes; Git preserves earlier states.
 
+## Stage 3C hardware validation checkpoint
+
+Use the same Stage 3C build on both ALRs (TWR is now versioned 84 bytes) and RLR
+0x86; retain the existing modes, addresses and PHY. No hardware was flashed by
+Codex. Stage 4 remains pending; do not infer accuracy from successful ranging.
+
+1. At measured 1 m LOS, fixed orientation, collect at least 20 matched TWR IDs
+   plus continuous RLR output. Repeat at 5 m, then change orientation separately.
+   Record raw_mm, selected distance_m, raw_tof, corrected_tof, Q status/table and
+   signal power. Table 2 is expected for the present channel 2 / PRF 64 PHY;
+   Q status 1 means applied. Missing/out-of-range power must preserve raw ranging
+   and explicitly report corrected_tof=UNAVAILABLE. Do not expect correction alone
+   to remove metres of bias. Ideal ToF is about 213 DTU / 1066 DTU at 1 m / 5 m.
+2. Require >=19/20 completed exchanges with matching selected ToF at both ALRs,
+   five-second cadence, every TX delta=0, and no new broadcast gaps or lockups.
+   Compare raw and corrected mean error/spread; report either improvement or
+   degradation. Precision calibration target remains mean error <=0.10 m over
+   >=100 samples per distance AFTER calibration, not an acceptance claim here.
+3. After two consecutive healthy frames, expect at most one ASSOCIATED PAIR per
+   reference, independent source sequences, slot_us normally about 500000
+   (accept 450000..550000), and clock_relation=UNAVAILABLE tdoa=UNAVAILABLE.
+   Corrected local DTU difference appears only with both RLR corrections available.
+   RX and PAIR records must retain raw values and uncertainty=UNKNOWN.
+4. Stop/restart the reference and deliberately miss a broadcast: no stale pair,
+   no RLR TX, no follower free-running; new pairs require fresh cadence/generation.
+   Verify clock/SYNC loss, expiry and reacquisition remain as before. Observe
+   timestamp wrap for at least 40 seconds. Save matching ALR/RLR logs for review.
+
 ## Codex continuation checkpoint
 
-Stage 3C checkpoints 1–4 implemented. Previous pushed checkpoint: `1887dcd`.
-CP4 is the commit containing this section: bounded reference/follower association
-requires consecutive 1 Hz source progress in TX/RX/coarse clocks, reference-first
-order, 450–550 ms raw arrival separation, <=700 ms age, matching receiver domains
-and local generations. One candidate is consumed once; gaps/restarts require fresh
-cadence. Raw/corrected local differences are available, but inter-ALR clock relation
-and final geometric TDoA remain UNAVAILABLE because no clock model is broadcast.
-Validation: 151 host tests and clean firmware build pass. RLR integration remains
-passive and captures power before re-arm. No known failing tests. CP2 TWR uses a
-versioned 84-byte format; both ALRs must upgrade. Broadcasts remain 34 bytes.
-Limits: remote epochs UNKNOWN; power/antenna calibration and physical uncertainty
-unbounded; 900 MHz unsupported; vendor endpoint holds retained.
-Next exact task: checkpoint 5, full regression and all MUL ASan/UBSan, final clean
-build, update architecture/roadmap and exact physical validation instructions.
+Stage 3C checkpoints 1–5 implemented; hardware validation is next. Previous pushed
+checkpoint: `6f0577e`; final checkpoint is the commit containing this section.
+Reusable Bitcraze power correction, receiver-owned TWR metadata/raw fallback,
+bounded RLR observations and conservative ordered association are implemented.
+No inter-ALR model is transmitted: only local arrival differences are identifiable;
+final geometric TDoA is explicitly UNAVAILABLE. Physical uncertainty remains UNKNOWN.
+Validation: 152 host tests, 139 MUL ASan/UBSan tests, clean firmware build and
+whitespace/scope review pass. No known failing or unrun required software tests.
+Static stack-frame checks: RLR event 400 bytes, TWR event 296 bytes; on-device
+stack high-water and RF accuracy remain unmeasured. No Stage 4 work.
+Next exact task: collect the hardware logs above and assess power correction and
+association behavior; do not assume the unresolved distance bias is eliminated.

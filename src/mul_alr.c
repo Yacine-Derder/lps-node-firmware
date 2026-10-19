@@ -274,7 +274,8 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   }
 
   if (txPending) {
-    if (event == eventPacketReceived && dwGetDataLength(dev) == MUL_TWR_FRAME_LENGTH) {
+    if (event == eventPacketReceived &&
+        (dwGetDataLength(dev) == MUL_TWR_FRAME_LENGTH || dwGetDataLength(dev) == 68)) {
       return followerWait(dev); // A stale ranging IRQ must not displace an armed TDMA slot.
     }
     if (event == eventTimeout &&

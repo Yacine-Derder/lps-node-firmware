@@ -108,11 +108,11 @@ void test_mulAssociationUsesOrderCadenceIndependentSequencesAndReceiverClockOnly
 void test_mulAssociationRejectsWrongSlotStaleGapsOldAndOrder(void) {
   for (unsigned int which=0;which<6;which++) {
     setUp(); train();
-    if (which==0) TEST_ASSERT_FALSE(associate(1,701,1400*MS,0,1500));
-    if (which==1) TEST_ASSERT_FALSE(associate(1,701,1600*MS,0,1700));
-    if (which==2) TEST_ASSERT_FALSE(associate(1,702,1500*MS,0,1600)); // Gap.
-    if (which==3) TEST_ASSERT_FALSE(associate(1,699,1500*MS,0,1600)); // Old.
-    if (which==4) TEST_ASSERT_FALSE(associate(1,701,1500*MS,0,1900)); // Coarse age >700.
+    if (which==0) { TEST_ASSERT_FALSE(associate(1,701,1400*MS,0,1500)); }
+    if (which==1) { TEST_ASSERT_FALSE(associate(1,701,1600*MS,0,1700)); }
+    if (which==2) { TEST_ASSERT_FALSE(associate(1,702,1500*MS,0,1600)); } // Gap.
+    if (which==3) { TEST_ASSERT_FALSE(associate(1,699,1500*MS,0,1600)); } // Old.
+    if (which==4) { TEST_ASSERT_FALSE(associate(1,701,1500*MS,0,1900)); } // Coarse age >700.
     if (which==5) {
       association.pending=false; TEST_ASSERT_FALSE(associate(1,701,1500*MS,0,1600));
     }
