@@ -28,8 +28,8 @@ The code defines implemented behavior; planned extensions below are not firmware
 - The long-term system is infrastructure-free and decentralized.
 - A reference ALR is an initial development simplification, not a final centralized
   architecture commitment or an absolute clock reference.
-- Stage 3A.1's reference/follower arrangement is defined in PLAN.md.
-  Its receive-only follower must not autonomously transmit.
+- The two-slot reference/follower arrangement is defined in PLAN.md.
+  Follower TX requires a fresh reference observation; it does not free-run.
 
 ## Current firmware boundaries
 
@@ -39,7 +39,7 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `inc/uwb.h`, `src/uwb.c` | Algorithm interface, registry, PHY setup, IRQ/task dispatch |
 | `src/cfg.c`, `src/eeprom.c` | Existing persistent configuration |
 | `inc/mul_common.h`, `src/mul_common.c` | Wire encoding/validation and modular timestamp utilities |
-| `inc/mul_alr.h`, `src/mul_alr.c` | Reference delayed TX or receive-only follower acquisition |
+| `inc/mul_alr.h`, `src/mul_alr.c` | Reference delayed TX and reference-following follower slots |
 | `inc/mul_rlr.h`, `src/mul_rlr.c` | Passive RX and bounded per-source observation state |
 | `inc/mul_rx.h`, `src/mul_rx.c` | Shared DW1000 RX setup, bounded reads, and re-arming |
 | `vendor/libdw1000`, `src/dwOps.c` | Existing radio driver and board SPI operations |
@@ -53,14 +53,13 @@ Mode IDs remain: 0 TWR Anchor, 1 TWR Tag, 2 Sniffer, 3 TDoA Anchor V2,
 The serial `m` menu lists/selects modes; stored changes take effect after reset.
 Node addresses and modes use the existing EEPROM layout with no MUL-specific fields.
 Mode 5 selects roles via `mulAlrRoleForAddress()`, comparing all eight address bytes.
-`84:00:00:00:00:00:cf:bc` is reference TX; `85:00:00:00:00:00:cf:bc` is receive-only.
+`84:00:00:00:00:00:cf:bc` is reference TX; `85:00:00:00:00:00:cf:bc` is follower TX.
 Unsupported mode-5 identities remain idle. There are no new EEPROM/menu fields.
 
 ## Current packet protocol
 
 The test broadcast is 34 bytes excluding the two-byte hardware-generated FCS.
 Multibyte fields are explicitly encoded little endian; C struct padding is not on wire.
-Source definitions: `inc/mul_common.h` and `src/mul_common.c`.
 
 | Byte offsets | Width | Current meaning |
 |---|---|---|
@@ -105,30 +104,46 @@ The RLR captures `dwGetRawReceiveTimestamp()` before re-arming RX and logs both
 embedded ALR TX time and local raw RX time. It does not transmit or estimate range.
 Malformed frames, RX timeouts, and RX failures also re-arm reception.
 
-Delayed TX and antenna-referenced timestamps are hardware validated according to
-the user's current project status. Software tests alone do not establish this.
-The earlier reported constant packet/TX discrepancy has no established root cause
-in the repository; successful validation must not be described as a proven diagnosis.
+Stage 2 timing is hardware validated (user-reported); software tests alone do not
+establish physical accuracy or a diagnosis for earlier timestamp discrepancies.
 Configured antenna-delay compensation is not proof of physical antenna calibration.
 
 A transmitted ALR timestamp cannot be directly subtracted from another robot's
 RX timestamp to obtain propagation time or distance. Relative offset, skew, and
 propagation delay are distinct effects; one-way observations alone cannot identify
 exact clock offset independently of propagation delay.
-Initial TDMA synchronization will use a reference ALR and follower ALRs.
+Coarse TDMA alignment uses a reference ALR and one follower ALR.
 Clock correction, uncertainty, loss/reacquisition robustness, and decentralized
 operation are future work, not capabilities implied by the current timestamp pair.
 
-## Reference acquisition and bounded source observations
+## Reference-following slots and bounded source observations
 
-Stage 3A.1 is software tested, awaiting the three-node hardware checkpoint.
-The follower initializes in RX and only accepts the full reference identity.
-Its first valid reference packet acquires; three seconds without forward sequence
-progress loses acquisition. RTOS ticks provide this coarse watchdog, including
-RTOS counter wrap; no RX/TX clock difference is used for liveness or scheduling.
-All relevant events re-arm RX. Unsupported/malformed, duplicate, and old traffic
-cannot postpone loss. A stale stream may restart from a different sequence;
-replays of the last accepted sequence alone cannot reacquire.
+The follower starts in RX and accepts only the full reference identity. A first
+valid packet acquires; three seconds without forward sequence progress loses acquisition.
+RTOS ticks provide only this wrap-safe coarse watchdog.
+A stale stream may restart from a different sequence; replaying the last sequence
+alone cannot reacquire. Duplicate, old, unknown, or malformed packets never arm TX.
+
+Each fresh reference sequence permits one attempt in the follower's local clock:
+`antenna target = local reference RX + 500 ms`; `raw DX_TIME = align_up(target -
+live TX_ANTD, 512 ticks) modulo 2^40`. The encoded time is verified DX_TIME plus
+TX_ANTD, so intended antenna-referenced separation is 500 ms to within 511 ticks.
+The reference's embedded TX time is stored/logged, never used as a local TX target.
+Follower packet sequences are independent of reference sequences and survive reacquisition.
+
+RX turns directly into delayed TX through `startDelayedTx()`, shared with the reference.
+No RX is enabled while the delayed TX waits in idle. Completion captures TX_STAMP,
+re-arms RX, and logs role, scheduled, packet, actual, and signed packet delta.
+RX errors/unexpected radio events cancel a pending slot. An absolute local-hardware
+watchdog aborts if completion is missing 100 ms after the target; early wakeups
+leave TX armed. Late setup (under 5 ms lead), register mismatch, or delayed-start
+errors skip the attempt and return to RX. No slot is moved forward or retried.
+Declared reference loss aborts pending TX; no missing superframe is extrapolated.
+
+This is coarse TDMA, not clock synchronization: 500 ms uses the follower's nominal
+clock rate, includes propagation/clock-rate effects, and leaves large slot guards.
+The follower cannot receive during its roughly 500 ms delayed-TX wait.
+RLR slot-separation tests compare its two local RX timestamps, not remote TX clocks.
 
 RLR state is fixed to two supported full identities. Each slot counts valid received
 packets, skipped sequence positions, latest-sequence duplicates, and out-of-order
@@ -139,7 +154,7 @@ source (e.g. a reboot), without changing other sources. Counters persist and wra
 as uint32 values; late arrivals do not undo counted gaps. No epoch field exists,
 so a delayed different packet after staleness is indistinguishable from a restart.
 Duplicate/old packets are counted quietly; the next fresh log reports the counters.
-There is no follower TX, clock correction, or TDoA observation formation.
+There is no offset/skew estimation, TWR, or TDoA observation formation.
 See [the focused reuse audit](mul_stage3_reuse_audit.md) for implementation decisions.
 
 ## Planned measurement processing

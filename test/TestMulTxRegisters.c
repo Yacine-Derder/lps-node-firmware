@@ -123,7 +123,7 @@ void test_mulPacketThroughRealDriverIncludesAntennaDelayAcrossWrap(void) {
   checkTimestamp(MUL_TIMESTAMP_MASK & ~UINT64_C(511), 0x4321);
 }
 
-void test_mulFollowerRealDriverReceivesAndRearmsWithoutStartingTx(void) {
+void test_mulFollowerRealDriverTurnsRxIntoDelayedTxAndBack(void) {
   nodeConfig.address[0] = 0x85;
   mulAlrAlgorithm.init(&nodeConfig, &radio);
   TEST_ASSERT_EQUAL_UINT(RX_MODE, radio.deviceMode);
@@ -131,13 +131,28 @@ void test_mulFollowerRealDriverReceivesAndRearmsWithoutStartingTx(void) {
   const uint8_t reference[8] = {0x84,0,0,0,0,0,0xcf,0xbc};
   mulEncodeTestPacket(registers[RX_BUFFER], reference, 42, UINT64_C(0x0123456789));
   registers[RX_FINFO][0] = MUL_TEST_FRAME_LENGTH + 2; // Hardware length includes FCS.
-  mulEncodeTimestamp(registers[RX_TIME], UINT64_C(0xfedcba9876));
+  const uint64_t rx = UINT64_C(0xfedcba9876);
+  mulEncodeTimestamp(registers[RX_TIME], rx);
+  systemTime = mulTimestampMask(rx + 2 * UINT64_C(63897600));
   registers[SYS_STATUS][1] = 1 << (RXFCG_BIT - 8);
   dwHandleInterrupt(&radio);
   TEST_ASSERT_EQUAL_UINT(1, receiveCount);
-  TEST_ASSERT_EQUAL_UINT(RX_MODE, radio.deviceMode);
-  TEST_ASSERT_FALSE(started);
+  TEST_ASSERT_EQUAL_UINT(IDLE_MODE, radio.deviceMode); // Driver caches IDLE while delayed TX waits.
+  TEST_ASSERT_TRUE(started);
+  mulTestPacket_t packet;
+  TEST_ASSERT_TRUE(mulDecodeTestPacket(transmitted, sizeof(transmitted), &packet));
+  TEST_ASSERT_EQUAL_UINT8(0x85, packet.source[0]);
+  TEST_ASSERT_EQUAL_UINT32(0, packet.sequence);
+  int64_t slot = mulTimestampDifference(packet.txTimestamp, rx);
+  TEST_ASSERT_TRUE(slot >= INT64_C(31948800000) && slot < INT64_C(31948800512));
+  TEST_ASSERT_EQUAL_UINT64(mulDecodeTimestamp(registers[TX_TIME]), packet.txTimestamp);
   TEST_ASSERT_EQUAL_UINT(0, completionCount);
+  systemTime = mulTimestampMask(packet.txTimestamp + UINT64_C(63897600));
+  registers[SYS_STATUS][0] = 1 << TXFRS_BIT;
+  dwHandleInterrupt(&radio);
+  TEST_ASSERT_EQUAL_UINT(1, completionCount);
+  TEST_ASSERT_EQUAL_UINT(RX_MODE, radio.deviceMode);
+  started = false;
   // A valid interrupt with an oversized frame must also return to RX, never TX.
   registers[RX_FINFO][0] = 0xff;
   registers[RX_FINFO][1] = 3;

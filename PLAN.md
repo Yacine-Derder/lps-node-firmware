@@ -28,43 +28,42 @@ Source code remains authoritative for what is actually implemented.
 | Stage 0 — Custom MUL operating modes | Complete | Modes 5/6, USB selection, EEPROM persistence |
 | Stage 1 — ALR-to-RLR UWB communication | Complete | Periodic broadcast, passive reception, source/sequence diagnostics |
 | Stage 2 — Hardware-delayed TX and accurate TX/RX timestamps | Hardware validated (user-reported) | Embedded antenna-referenced TX time and local raw RX time |
+| Stage 3A.1 — Multi-ALR protocol and reference acquisition | Hardware validated (user-reported) | Reference reception, loss/reacquisition, and observed wraparound |
 
-Stages 0–2 are implemented and software tested.
-Stage 2's hardware-validation status follows the user's current project report;
-it is not a claim of hardware testing by Codex during documentation setup.
+Stages 0–2 and 3A.1 are implemented and software tested.
+Hardware-validation status follows the user's current physical-test reports;
+it is not a claim of hardware testing by Codex for this milestone.
 The prior timestamp-discrepancy investigation does not establish a root cause;
 retain that distinction when interpreting validation and diagnostics.
 
-## Hardware checkpoint — Stage 3A.1: Multi-ALR protocol and reference acquisition
+## Hardware checkpoint — Stage 3A.2: Hardware-timed TDMA follower scheduling
 
 Status: **Implemented/software tested; awaiting hardware validation.**
-Objective: distinguish reference/follower roles and acquire reference broadcasts,
-while preparing the RLR to retain observations separately for multiple sources.
+Objective: transmit once from each fresh reference observation, using the follower's
+local hardware RX timestamp plus approximately 500 ms as the second slot.
 
-Expected physical configuration, all using Bitcraze DW1000 LPS nodes:
+Current configuration, all using Bitcraze DW1000 LPS nodes:
 
-| Node | Address | Stage 3A.1 role |
+| Node | Address | Current role |
 |---|---|---|
-| ALR 1 | `0x84` | Reference transmitter |
-| ALR 2 | `0x85` | Receive-only follower |
-| RLR | `0x86` | Passive receiver |
+| ALR 1 | `0x84` | Reference transmitter, approximately 1 Hz |
+| ALR 2 | `0x85` | Reference-following transmitter, approximately 500 ms later |
+| RLR | `0x86` | Passive receiver of both sources |
 
-Acceptance: reference acquisition and loss/reacquisition are observable; source
-identity is preserved and RLR source state is isolated in software tests.
-On hardware, `0x85` and `0x86` receive `0x84` without autonomous follower TX.
-Stop at this three-node hardware checkpoint before Stage 3A.2.
-The implementation now selects these mode-5 roles by full configured address.
-Unsupported ALR identities remain idle. Software tests cover synthetic multi-source
-RLR observations; physical three-node acceptance remains outstanding.
+Software acceptance covers RX/TX/RX transitions, one attempt per reference sequence,
+late/missing-reference suppression, delayed-start errors, timeouts, wraparound,
+independent source tracking, and scheduled/encoded/actual TX timestamp equality.
+Full-address role selection remains unchanged; unsupported ALR identities stay idle.
+
+Physical acceptance: both sources are received near 1 Hz, their slot separation
+is approximately 500 ms measured solely in the RLR's RX clock, both ALRs report
+matching TX timestamps, and loss/reacquisition suppresses/resumes follower TX.
+An already armed slot may finish after the reference is powered off; there must be
+no extrapolated transmissions for missing superframes and none after declared loss.
+Stage 3A.1's USB interruption was intentional, not a firmware fault.
+Stop at this hardware checkpoint; do not begin Stage 3B without physical results.
 
 ## Pending milestones
-
-### Stage 3A.2 — Hardware-timed TDMA follower scheduling
-
-Status: **Not started.** Objective: schedule follower TX from reference observations
-using each follower's local radio clock and hardware delayed transmission.
-Acceptance: tests cover deadline misses, wraparound, and reference loss; hardware
-captures show intended reference/follower ordering without overlapping slots.
 
 ### Stage 3B — Relative clock offset/skew estimation
 

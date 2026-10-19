@@ -15,6 +15,8 @@
 #define MUL_TX_MIN_LEAD_DTU (5 * MUL_DTU_PER_MS)
 #define MUL_TX_COMPLETION_MS 100
 #define MUL_TX_ALIGNMENT UINT64_C(512)
+#define MUL_FOLLOWER_SLOT_MS 500
+#define MUL_FOLLOWER_SLOT_DTU (MUL_FOLLOWER_SLOT_MS * MUL_DTU_PER_MS)
 
 // SYS_STATUS bits 27 (HPDWARN) and 34 (TXPUTE), read at byte offset 3.
 // Match Decawave dwt_starttx()'s delayed-start check. libdw1000 returns void.
@@ -27,6 +29,7 @@ static uint32_t nextSequence;
 static uint32_t pendingSequence;
 static uint64_t nextRawTx;
 static uint64_t pendingTimestamp;
+static uint64_t pendingRawTx;
 static bool txPending;
 static mulAlrRole_t alrRole = mulAlrUnsupported;
 static mulSourceState_t followerReference;
@@ -34,56 +37,6 @@ static bool referenceAcquired;
 static TickType_t lastReferenceTick;
 
 #define MUL_REFERENCE_LOSS_MS MUL_SOURCE_TIMEOUT_MS
-
-static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
-{
-  // RTOS ticks are only a liveness watchdog, not a UWB time or a clock model.
-  TickType_t now = xTaskGetTickCount();
-  bool lostNow = false;
-  if (referenceAcquired &&
-      (TickType_t)(now - lastReferenceTick) >= pdMS_TO_TICKS(MUL_REFERENCE_LOSS_MS)) {
-    referenceAcquired = false;
-    lostNow = true;
-  }
-
-  mulTestPacket_t packet;
-  uint64_t arrival = 0;
-  bool valid = event == eventPacketReceived && mulRxRead(dev, &packet, &arrival);
-  mulRxRearm(dev); // All events, even malformed packets and unexpected TX events.
-  if (lostNow) {
-    printf("MUL ALR: REF_LOST src=0x84 state=SEARCHING\r\n");
-  }
-  if (valid && mulAlrRoleForAddress(packet.source) == mulAlrReference) {
-    // After loss a different sequence may begin a new epoch (e.g. reference
-    // reboot). Replaying the last sequence alone must not reacquire or refresh RX.
-    if (!referenceAcquired && followerReference.hasSequence &&
-        packet.sequence != followerReference.sequence) {
-      followerReference.hasSequence = false;
-    }
-    mulSequenceResult_t result = mulObservePacket(&followerReference, &packet, arrival);
-    if (result != mulSequenceDuplicate && result != mulSequenceOld) {
-      bool acquiredNow = !referenceAcquired;
-      referenceAcquired = true;
-      lastReferenceTick = now;
-      if (acquiredNow) {
-        printf("MUL ALR: REF_ACQUIRED src=0x84 state=ACQUIRED\r\n");
-      }
-      printf("MUL ALR: REF_RX src=0x84 seq=%" PRIu32
-             " tx=0x%02X%08" PRIX32 " rx=0x%02X%08" PRIX32
-             " state=ACQUIRED gaps=%" PRIu32 " dup=%" PRIu32 " old=%" PRIu32 "\r\n",
-             packet.sequence, (unsigned int)(packet.txTimestamp >> 32),
-             (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
-             followerReference.gaps, followerReference.duplicates, followerReference.outOfOrder);
-    }
-  }
-  if (!referenceAcquired) {
-    return MUL_REFERENCE_LOSS_MS;
-  }
-  // Recompute the remaining deadline on every event. Unrelated packets and
-  // duplicate/old sequences must not postpone loss detection indefinitely.
-  TickType_t elapsed = (TickType_t)(now - lastReferenceTick);
-  return MUL_REFERENCE_LOSS_MS - elapsed * portTICK_PERIOD_MS;
-}
 
 static void logCompletedTx(uint64_t actual)
 {
@@ -104,9 +57,10 @@ static void logCompletedTx(uint64_t actual)
   if (difference < 0) {
     *--end = '-';
   }
-  printf("MUL ALR: TX role=REF src=0x%02X seq=%" PRIu32 " scheduled=0x%02X%08" PRIX32
+  printf("MUL ALR: TX role=%s src=0x%02X seq=%" PRIu32 " scheduled=0x%02X%08" PRIX32
          " packet=0x%02X%08" PRIX32
          " actual=0x%02X%08" PRIX32 " delta=%s\r\n",
+         alrRole == mulAlrReference ? "REF" : "FOLLOWER",
          (unsigned int)source[0], pendingSequence,
          (unsigned int)(pendingTimestamp >> 32), (uint32_t)pendingTimestamp,
          (unsigned int)(packetTimestamp >> 32), (uint32_t)packetTimestamp,
@@ -161,6 +115,51 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
                                MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1));
 }
 
+// Shared, tested Stage 2 TX setup. The caller supplies a raw local-clock target
+// and a live TX_ANTD reading; no remote timestamp is used for hardware scheduling.
+static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDelay)
+{
+  pendingSequence = nextSequence++;
+  dwNewTransmit(dev);
+  dwSetDefaults(dev);
+  clearTxErrors(dev);
+  dwWaitForResponse(dev, false);
+  dwSetTxRxTime(dev, rawTx); // Raw RMARKER time: low 9 bits already zero.
+
+  // Verify what the radio was actually programmed to use before encoding it.
+  // DX_TIME denotes the raw RMARKER, not the start of the preamble. The driver
+  // already clears its low 9 bits; no preamble or software latency is added.
+  dwTime_t programmed = {.full = 0};
+  dwSpiRead(dev, DX_TIME, NO_SUB, programmed.raw, LEN_DX_TIME);
+  if (programmed.full != rawTx.full) {
+    dwIdle(dev);
+    printf("MUL ALR: DX_TIME mismatch seq=%" PRIu32 "\r\n", pendingSequence);
+    return false;
+  }
+  pendingTimestamp = mulTimestampMask(programmed.full + txAntennaDelay);
+  mulEncodeTestPacket(txFrame, source, pendingSequence, pendingTimestamp);
+  dwSetData(dev, txFrame, MUL_TEST_FRAME_LENGTH);
+
+  // Check again after SPI setup, before arming. Leave room for preamble/power-up.
+  if (mulTimestampDifference(rawTx.full, readHardwareTime(dev)) <
+      (int64_t)MUL_TX_MIN_LEAD_DTU) {
+    dwIdle(dev);
+    printf("MUL ALR: Skipped late TX seq=%" PRIu32 "\r\n", pendingSequence);
+    return false;
+  }
+  pendingRawTx = rawTx.full;
+  txPending = true;
+  dwStartTransmit(dev);
+  if (dwSpiRead16(dev, SYS_STATUS, 3) & MUL_TX_ERROR_STATUS) {
+    dwIdle(dev);
+    clearTxErrors(dev);
+    txPending = false;
+    printf("MUL ALR: Delayed TX failed seq=%" PRIu32 "\r\n", pendingSequence);
+    return false;
+  }
+  return true;
+}
+
 static uint32_t scheduleTx(dwDevice_t *dev)
 {
   uint64_t now = readHardwareTime(dev);
@@ -182,47 +181,144 @@ static uint32_t scheduleTx(dwDevice_t *dev)
 
   dwTime_t rawTx = {.full = nextRawTx};
   nextRawTx = mulTimestampMask(nextRawTx + MUL_TX_PERIOD_DTU);
-  pendingSequence = nextSequence++;
-  dwNewTransmit(dev);
-  dwSetDefaults(dev);
+  uint16_t antennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
+  if (startDelayedTx(dev, rawTx, antennaDelay)) {
+    return MUL_TX_COMPLETION_MS;
+  }
+  return waitForNextTx(dev);
+}
+
+// Follower states: searching (!referenceAcquired), listening (acquired, no TX),
+// or one delayed TX pending. Completion/failure returns to listening, never to a
+// free-running schedule. Every arm consumes one fresh reference sequence.
+static void abortFollowerTx(dwDevice_t *dev)
+{
+  dwIdle(dev);
   clearTxErrors(dev);
-  dwWaitForResponse(dev, false);
-  dwSetTxRxTime(dev, rawTx); // Raw RMARKER time: low 9 bits already zero.
+  txPending = false;
+}
 
-  // Verify what the radio was actually programmed to use before encoding it.
-  // DX_TIME denotes the raw RMARKER, not the start of the preamble. The driver
-  // already clears its low 9 bits; no preamble or software latency is added.
-  dwTime_t programmed = {.full = 0};
-  dwSpiRead(dev, DX_TIME, NO_SUB, programmed.raw, LEN_DX_TIME);
-  if (programmed.full != rawTx.full) {
-    dwIdle(dev);
-    printf("MUL ALR: DX_TIME mismatch seq=%" PRIu32 "\r\n", pendingSequence);
-    return waitForNextTx(dev);
+static uint32_t followerWait(dwDevice_t *dev)
+{
+  uint32_t wait = MUL_REFERENCE_LOSS_MS;
+  if (referenceAcquired) {
+    TickType_t elapsed = (TickType_t)(xTaskGetTickCount() - lastReferenceTick);
+    uint32_t elapsedMs = elapsed * portTICK_PERIOD_MS;
+    wait = elapsedMs >= MUL_REFERENCE_LOSS_MS ? 1 : MUL_REFERENCE_LOSS_MS - elapsedMs;
   }
-  // Read the live TX_ANTD for this packet, rather than a startup snapshot.
-  uint16_t txAntennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
-  pendingTimestamp = mulTimestampMask(programmed.full + txAntennaDelay);
-  mulEncodeTestPacket(txFrame, source, pendingSequence, pendingTimestamp);
-  dwSetData(dev, txFrame, MUL_TEST_FRAME_LENGTH);
+  if (txPending) {
+    // The watchdog is absolute in the local hardware clock, so unrelated events
+    // cannot restart or extend it. A millisecond wakeup never defines the TX time.
+    int64_t remaining = mulTimestampDifference(
+      mulTimestampMask(pendingRawTx + MUL_TX_COMPLETION_MS * MUL_DTU_PER_MS),
+      readHardwareTime(dev));
+    uint32_t txWait = remaining <= 0 ? 1 :
+      (uint32_t)(((uint64_t)remaining + MUL_DTU_PER_MS - 1) / MUL_DTU_PER_MS);
+    if (txWait < wait) {
+      wait = txWait;
+    }
+  }
+  return wait;
+}
 
-  // Check again after SPI setup, before arming. Leave room for preamble/power-up.
-  if (mulTimestampDifference(rawTx.full, readHardwareTime(dev)) <
-      (int64_t)MUL_TX_MIN_LEAD_DTU) {
-    dwIdle(dev);
-    printf("MUL ALR: Skipped late TX seq=%" PRIu32 "\r\n", pendingSequence);
-    return waitForNextTx(dev);
+static bool scheduleFollowerTx(dwDevice_t *dev, uint64_t localRx)
+{
+  uint16_t antennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
+  // Aim for antenna-referenced TX at RX + 500 ms, in this follower's clock.
+  // Subtract TX_ANTD before aligning the raw DX_TIME upwards to 512 ticks.
+  uint64_t rawTarget = mulTimestampMask(localRx + MUL_FOLLOWER_SLOT_DTU - antennaDelay);
+  dwTime_t rawTx = {.full = mulTimestampMask(
+    (rawTarget + MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1))};
+  int64_t lead = mulTimestampDifference(rawTx.full, readHardwareTime(dev));
+  if (lead < (int64_t)MUL_TX_MIN_LEAD_DTU ||
+      lead > (int64_t)(MUL_FOLLOWER_SLOT_DTU + MUL_TX_ALIGNMENT)) {
+    // Never move a missed slot forward, retry its sequence, or extrapolate a frame.
+    printf("MUL ALR: SLOT skipped ref_seq=%" PRIu32 " reason=late_or_stale\r\n",
+           followerReference.sequence);
+    return false;
   }
-  txPending = true;
-  dwStartTransmit(dev);
-  if (dwSpiRead16(dev, SYS_STATUS, 3) & MUL_TX_ERROR_STATUS) {
-    dwIdle(dev);
-    clearTxErrors(dev);
-    txPending = false;
-    printf("MUL ALR: Delayed TX failed seq=%" PRIu32 "\r\n", pendingSequence);
-    return waitForNextTx(dev);
+  return startDelayedTx(dev, rawTx, antennaDelay);
+}
+
+static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
+{
+  // RTOS ticks are only the Stage 3A.1 liveness watchdog, not a UWB clock model.
+  TickType_t now = xTaskGetTickCount();
+  bool lostNow = referenceAcquired &&
+    (TickType_t)(now - lastReferenceTick) >= pdMS_TO_TICKS(MUL_REFERENCE_LOSS_MS);
+  if (lostNow) {
+    referenceAcquired = false;
+    if (txPending) {
+      abortFollowerTx(dev);
+    }
   }
-  // Completion must arrive within this bounded window, even if start failed silently.
-  return MUL_TX_COMPLETION_MS;
+
+  if (txPending) {
+    if (event == eventTimeout &&
+        mulTimestampDifference(readHardwareTime(dev),
+          mulTimestampMask(pendingRawTx + MUL_TX_COMPLETION_MS * MUL_DTU_PER_MS)) < 0) {
+      return followerWait(dev); // Early wake: leave the delayed transmission armed.
+    }
+    if (event == eventPacketSent) {
+      dwTime_t actual = {.full = 0};
+      dwGetTransmitTimestamp(dev, &actual);
+      actual.full = mulTimestampMask(actual.full);
+      txPending = false;
+      mulRxRearm(dev);
+      logCompletedTx(actual.full);
+    } else {
+      // RX cannot legitimately deliver another frame while this delayed TX waits
+      // in idle. An unexpected RX event/error cancels it; do not re-arm it.
+      abortFollowerTx(dev);
+      mulRxRearm(dev);
+      printf("MUL ALR: SLOT aborted ref_seq=%" PRIu32 " reason=%s\r\n",
+             followerReference.sequence, event == eventTimeout ? "tx_timeout" : "radio_event");
+    }
+    return followerWait(dev);
+  }
+
+  mulTestPacket_t packet;
+  uint64_t arrival = 0;
+  bool valid = event == eventPacketReceived && mulRxRead(dev, &packet, &arrival);
+  bool fresh = false;
+  bool acquiredNow = false;
+  bool armed = false;
+  if (valid && mulAlrRoleForAddress(packet.source) == mulAlrReference) {
+    // Preserve Stage 3A.1's restart policy after loss, without accepting replays
+    // of the last sequence. Epoch identification is deliberately not added here.
+    if (!referenceAcquired && followerReference.hasSequence &&
+        packet.sequence != followerReference.sequence) {
+      followerReference.hasSequence = false;
+    }
+    mulSequenceResult_t result = mulObservePacket(&followerReference, &packet, arrival);
+    if (result != mulSequenceDuplicate && result != mulSequenceOld) {
+      fresh = true;
+      acquiredNow = !referenceAcquired;
+      referenceAcquired = true;
+      lastReferenceTick = now;
+      armed = scheduleFollowerTx(dev, arrival);
+    }
+  }
+  // Turn directly from the completed RX into delayed TX. Enabling RX briefly
+  // before dwNewTransmit() could leave a new RX IRQ racing the pending slot.
+  if (!armed) {
+    mulRxRearm(dev);
+  }
+  if (lostNow) {
+    printf("MUL ALR: REF_LOST src=0x84 state=SEARCHING\r\n");
+  }
+  if (fresh) {
+    if (acquiredNow) {
+      printf("MUL ALR: REF_ACQUIRED src=0x84 state=ACQUIRED\r\n");
+    }
+    printf("MUL ALR: REF_RX src=0x84 seq=%" PRIu32
+           " tx=0x%02X%08" PRIX32 " rx=0x%02X%08" PRIX32
+           " state=%s slot_ms=500\r\n",
+           packet.sequence, (unsigned int)(packet.txTimestamp >> 32),
+           (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
+           armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED");
+  }
+  return followerWait(dev);
 }
 
 static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)

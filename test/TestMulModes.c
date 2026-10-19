@@ -392,54 +392,77 @@ static void initFollower(void) {
   TEST_ASSERT_FALSE(referenceAcquired);
 }
 
+static const uint8_t referenceAddress[8] = {0x84,0,0,0,0,0,0xcf,0xbc};
+
+static uint32_t receiveReference(uint32_t sequence, uint64_t tx, uint64_t rx) {
+  // A real callback takes time, but the slot must stay anchored to RX_TIME.
+  hardwareNow = mulTimestampMask(rx + DTU_PER_MS);
+  return deliver(referenceAddress, sequence, tx, rx, true);
+}
+
+static void finishFollowerSlot(void) {
+  TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_FALSE(receiving);
+  completeTx(0);
+  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_TRUE(receiving);
+}
+
 void test_mulFollowerAcquiresTracksSequenceAndPreservesBothClockDomains(void) {
   initFollower();
-  const uint8_t reference[8] = {0x84,0,0,0,0,0,0xcf,0xbc};
-  TEST_ASSERT_EQUAL_UINT32(3000, deliver(reference, 10, MUL_TIMESTAMP_MASK, 2, true));
+  uint32_t wait = receiveReference(10, MUL_TIMESTAMP_MASK, 2);
+  TEST_ASSERT_TRUE(wait >= 598 && wait <= 600);
   TEST_ASSERT_TRUE(referenceAcquired);
   TEST_ASSERT_EQUAL_UINT64(MUL_TIMESTAMP_MASK, followerReference.txTimestamp);
   TEST_ASSERT_EQUAL_UINT64(2, followerReference.rxTimestamp);
+  finishFollowerSlot();
   testTick = 1000;
-  deliver(reference, 13, 5, 9, true);
+  uint64_t rx = 1000 * DTU_PER_MS + 9;
+  receiveReference(13, 5, rx);
+  finishFollowerSlot();
   TEST_ASSERT_EQUAL_UINT32(2, followerReference.gaps);
-  testTick = 1100;
-  TEST_ASSERT_EQUAL_UINT32(2900, deliver(reference, 13, 99, 100, true));
-  testTick = 1200;
-  TEST_ASSERT_EQUAL_UINT32(2800, deliver(reference, 12, 99, 100, true));
+  testTick = 1600;
+  TEST_ASSERT_EQUAL_UINT32(2400, deliver(referenceAddress, 13, 99, 100, true));
+  testTick = 1700;
+  TEST_ASSERT_EQUAL_UINT32(2300, deliver(referenceAddress, 12, 99, 100, true));
   TEST_ASSERT_EQUAL_UINT32(1, followerReference.duplicates);
   TEST_ASSERT_EQUAL_UINT32(1, followerReference.outOfOrder);
   TEST_ASSERT_EQUAL_UINT32(13, followerReference.sequence);
   TEST_ASSERT_EQUAL_UINT64(5, followerReference.txTimestamp);
-  TEST_ASSERT_EQUAL_UINT64(9, followerReference.rxTimestamp);
-  TEST_ASSERT_EQUAL_UINT(0, txCount);
+  TEST_ASSERT_EQUAL_UINT64(rx, followerReference.rxTimestamp);
+  TEST_ASSERT_EQUAL_UINT(2, txCount);
 }
 
 void test_mulFollowerLosesReferenceDespiteTrafficAndReacquiresAfterRestart(void) {
   initFollower();
-  const uint8_t reference[8] = {0x84,0,0,0,0,0,0xcf,0xbc};
-  deliver(reference, 42, 7, 10, true);
+  receiveReference(42, 7, 10);
+  finishFollowerSlot();
   testTick = 2999;
-  TEST_ASSERT_EQUAL_UINT32(1, deliver(reference, 42, 7, 10, true));
+  TEST_ASSERT_EQUAL_UINT32(1, deliver(referenceAddress, 42, 7, 10, true));
   TEST_ASSERT_TRUE(referenceAcquired);
   testTick = 3000;
-  deliver(reference, 42, 7, 10, true);
-  TEST_ASSERT_FALSE(referenceAcquired); // A replay cannot reacquire.
+  deliver(referenceAddress, 42, 7, 10, true);
+  TEST_ASSERT_FALSE(referenceAcquired);
+  TEST_ASSERT_EQUAL_UINT(1, txCount); // Replaying a reference cannot create a slot.
   testTick = 4000;
-  deliver(reference, 0, 1, 20, true); // Reference reboot after loss.
+  receiveReference(0, 1, 4000 * DTU_PER_MS);
   TEST_ASSERT_TRUE(referenceAcquired);
   TEST_ASSERT_EQUAL_UINT32(0, followerReference.sequence);
-  TEST_ASSERT_EQUAL_UINT32(0, followerReference.gaps); // No enormous false gap.
-  TEST_ASSERT_TRUE(receiving);
-  TEST_ASSERT_EQUAL_UINT(0, txCount);
+  TEST_ASSERT_EQUAL_UINT32(0, followerReference.gaps);
+  finishFollowerSlot();
+  TEST_ASSERT_EQUAL_UINT(2, txCount);
+  TEST_ASSERT_EQUAL_UINT32(1, pendingSequence); // Follower sequence does not reset.
 }
 
 void test_mulFollowerLossDeadlineSurvivesRtosWrapAndSilence(void) {
   initFollower();
-  const uint8_t reference[8] = {0x84,0,0,0,0,0,0xcf,0xbc};
-  testTick = UINT32_MAX - 1000;
-  deliver(reference, 0, MUL_TIMESTAMP_MASK - 1, MUL_TIMESTAMP_MASK, true);
-  testTick += 1000;
-  deliver(reference, 1, 1, 2, true);
+  TickType_t firstTick = UINT32_MAX - 1000;
+  testTick = firstTick;
+  receiveReference(0, MUL_TIMESTAMP_MASK - 1, MUL_TIMESTAMP_MASK);
+  finishFollowerSlot();
+  testTick = firstTick + 1000;
+  receiveReference(1, 1, mulTimestampMask(MUL_TIMESTAMP_MASK + 1000 * DTU_PER_MS));
+  finishFollowerSlot();
   TEST_ASSERT_TRUE(referenceAcquired);
   testTick += 2999;
   TEST_ASSERT_EQUAL_UINT32(1, mulAlrAlgorithm.onEvent(&dev, eventTimeout));
@@ -447,11 +470,12 @@ void test_mulFollowerLossDeadlineSurvivesRtosWrapAndSilence(void) {
   TEST_ASSERT_EQUAL_UINT32(3000, mulAlrAlgorithm.onEvent(&dev, eventTimeout));
   TEST_ASSERT_FALSE(referenceAcquired);
   testTick++;
-  deliver(reference, 2, 9, 12, true);
+  receiveReference(2, 9, 5000 * DTU_PER_MS);
   TEST_ASSERT_TRUE(referenceAcquired);
   TEST_ASSERT_EQUAL_UINT64(9, followerReference.txTimestamp);
-  TEST_ASSERT_EQUAL_UINT64(12, followerReference.rxTimestamp);
-  TEST_ASSERT_EQUAL_UINT(0, txCount);
+  TEST_ASSERT_EQUAL_UINT64(5000 * DTU_PER_MS, followerReference.rxTimestamp);
+  finishFollowerSlot();
+  TEST_ASSERT_EQUAL_UINT(3, txCount);
 }
 
 void test_mulFollowerRearmsAndNeverTransmitsForEveryEventAndWrongSource(void) {
@@ -546,8 +570,8 @@ void test_mulRlrRebasesOnlyTheStaleSourceAfterReferenceRestart(void) {
 
 void test_mulMalformedAndUnknownPacketsCannotRefreshAcquiredReference(void) {
   initFollower();
-  const uint8_t reference[8] = {0x84,0,0,0,0,0,0xcf,0xbc};
-  deliver(reference, 10, 100, 200, true);
+  receiveReference(10, 100, 200);
+  finishFollowerSlot();
   testTick = 2000;
   rxFrame[24] = 99;
   TEST_ASSERT_EQUAL_UINT32(1000, mulAlrAlgorithm.onEvent(&dev, eventPacketReceived));
@@ -561,6 +585,246 @@ void test_mulMalformedAndUnknownPacketsCannotRefreshAcquiredReference(void) {
   TEST_ASSERT_EQUAL_UINT32(1, followerReference.received);
   TEST_ASSERT_EQUAL_UINT64(100, followerReference.txTimestamp);
   TEST_ASSERT_EQUAL_UINT64(200, followerReference.rxTimestamp);
+  TEST_ASSERT_EQUAL_UINT(1, txCount);
+  TEST_ASSERT_TRUE(receiving);
+}
+
+void test_mulFollowerSlotUsesLocalRxClockAndOwnTimestampAcrossWrap(void) {
+  initFollower();
+  antennaDelay = 0xffff;
+  uint64_t rx = MUL_TIMESTAMP_MASK - 250 * DTU_PER_MS + 123;
+  unsigned int rearmCount = rxCount;
+  receiveReference(12345, UINT64_C(0x123456789a), rx);
+  TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_TRUE(delayedArmed);
+  TEST_ASSERT_FALSE(receiving);
+  TEST_ASSERT_EQUAL_UINT(rearmCount, rxCount); // Direct RX -> TX; no intermediate RX race.
+  TEST_ASSERT_EQUAL_UINT64(0, delayedRaw & 511);
+  mulTestPacket_t packet;
+  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &packet));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(config.address, packet.source, 8);
+  TEST_ASSERT_EQUAL_UINT32(0, packet.sequence); // Not the reference's sequence.
+  TEST_ASSERT_TRUE(packet.txTimestamp != UINT64_C(0x123456789a));
+  TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(delayedRaw + antennaDelay), packet.txTimestamp);
+  int64_t slot = mulTimestampDifference(packet.txTimestamp, rx);
+  TEST_ASSERT_TRUE(slot >= INT64_C(31948800000) && slot < INT64_C(31948800512));
+  finishFollowerSlot();
+  TEST_ASSERT_EQUAL_UINT64(packet.txTimestamp, actualTx);
+  TEST_ASSERT_EQUAL_UINT(1, actualReads);
+}
+
+void test_mulFollowerNeverRetriesConsumedOrMissingReferenceSuperframes(void) {
+  initFollower();
+  receiveReference(42, 1, 0);
+  finishFollowerSlot();
+  deliver(referenceAddress, 42, 1, 1000, true);
+  deliver(referenceAddress, 41, 1, 2000, true);
+  TEST_ASSERT_EQUAL_UINT(1, txCount);
+  TEST_ASSERT_FALSE(txPending);
+  testTick = 1500;
+  mulAlrAlgorithm.onEvent(&dev, eventTimeout);
+  TEST_ASSERT_EQUAL_UINT(1, txCount); // Acquired is not permission to free-run.
+  TEST_ASSERT_TRUE(receiving);
+  testTick = 2000;
+  receiveReference(44, 2, 2000 * DTU_PER_MS); // Reference 43 was missed: no catch-up TX.
+  finishFollowerSlot();
+  TEST_ASSERT_EQUAL_UINT(2, txCount);
+  TEST_ASSERT_EQUAL_UINT32(1, followerReference.gaps);
+  TEST_ASSERT_EQUAL_UINT32(1, followerReference.duplicates);
+  TEST_ASSERT_EQUAL_UINT32(1, followerReference.outOfOrder);
+  TEST_ASSERT_EQUAL_UINT32(1, pendingSequence);
+}
+
+void test_mulFollowerWatchdogKeepsEarlyWakeArmedThenRecoversWithoutRetry(void) {
+  initFollower();
+  uint32_t wait = receiveReference(50, 1, 0);
+  unsigned int rearms = rxCount;
+  uint32_t early = elapseAndTimeout(100);
+  TEST_ASSERT_TRUE(early < wait);
+  TEST_ASSERT_TRUE(txPending && delayedArmed);
+  TEST_ASSERT_EQUAL_UINT(rearms, rxCount);
+  elapseAndTimeout(early); // Absolute raw target + 100 ms has now elapsed.
+  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_TRUE(receiving);
+  TEST_ASSERT_EQUAL_UINT(0, actualReads);
+  TEST_ASSERT_EQUAL_UINT(1, txCount);
+  deliver(referenceAddress, 50, 1, hardwareNow, true);
+  testTick = 2000;
+  mulAlrAlgorithm.onEvent(&dev, eventTimeout);
+  TEST_ASSERT_EQUAL_UINT(1, txCount);
+  receiveReference(51, 1, 2000 * DTU_PER_MS);
+  finishFollowerSlot();
+  TEST_ASSERT_EQUAL_UINT(2, txCount);
+  TEST_ASSERT_EQUAL_UINT(1, actualReads);
+}
+
+void test_mulFollowerSkipsLateReceptionAndLateSpiSetupWithoutMovingSlot(void) {
+  initFollower();
+  hardwareNow = 496 * DTU_PER_MS; // Only 4 ms remain until the reference's slot.
+  deliver(referenceAddress, 0, 9, 0, true);
+  TEST_ASSERT_TRUE(receiving);
+  TEST_ASSERT_FALSE(txPending);
   TEST_ASSERT_EQUAL_UINT(0, txCount);
+  deliver(referenceAddress, 0, 9, hardwareNow, true); // Duplicate cannot reschedule.
+  TEST_ASSERT_EQUAL_UINT(0, txCount);
+  setupDelay = 500 * DTU_PER_MS;
+  receiveReference(1, 9, 1000 * DTU_PER_MS);
+  TEST_ASSERT_TRUE(receiving);
+  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_EQUAL_UINT(0, txCount); // Post-setup guard rejected expired target.
+  setupDelay = 0;
+  receiveReference(2, 9, 2000 * DTU_PER_MS);
+  finishFollowerSlot();
+  TEST_ASSERT_EQUAL_UINT(1, txCount);
+  TEST_ASSERT_EQUAL_UINT(1, actualReads);
+}
+
+void test_mulFollowerRecoversFromBothDelayedStartErrorsWithoutRetry(void) {
+  initFollower();
+  const uint16_t errors[] = {0x0008, 0x0400};
+  for (unsigned int i = 0; i < 2; i++) {
+    txError = errors[i];
+    receiveReference(2*i, 99, (2*i) * 1000 * DTU_PER_MS);
+    TEST_ASSERT_FALSE(txPending);
+    TEST_ASSERT_TRUE(receiving);
+    TEST_ASSERT_EQUAL_UINT(2*i+1, txCount);
+    mulAlrAlgorithm.onEvent(&dev, eventPacketSent); // Stale completion is not success.
+    TEST_ASSERT_EQUAL_UINT(i, actualReads);
+    deliver(referenceAddress, 2*i, 99, hardwareNow, true);
+    TEST_ASSERT_EQUAL_UINT(2*i+1, txCount);
+    txError = 0;
+    receiveReference(2*i+1, 99, (2*i+1) * 1000 * DTU_PER_MS);
+    finishFollowerSlot();
+    TEST_ASSERT_EQUAL_UINT(i+1, actualReads);
+  }
+}
+
+void test_mulFollowerRejectsDxReadbackDisagreementAndFutureRxTimes(void) {
+  initFollower();
+  programmedTimeError = 512;
+  receiveReference(0, 9, 0);
+  TEST_ASSERT_EQUAL_UINT(0, txCount);
+  TEST_ASSERT_TRUE(receiving);
+  programmedTimeError = 0;
+  hardwareNow = 1000 * DTU_PER_MS;
+  deliver(referenceAddress, 1, 9, 2000 * DTU_PER_MS, true); // Impossible future RX.
+  TEST_ASSERT_EQUAL_UINT(0, txCount);
+  TEST_ASSERT_TRUE(receiving);
+  receiveReference(2, 9, 3000 * DTU_PER_MS);
+  finishFollowerSlot();
+  TEST_ASSERT_EQUAL_UINT(1, txCount);
+}
+
+void test_mulFollowerRadioEventsCancelPendingSlotAndResumeRx(void) {
+  initFollower();
+  const uwbEvent_t events[] = {eventPacketReceived, eventReceiveTimeout, eventReceiveFailed};
+  for (unsigned int i = 0; i < 3; i++) {
+    receiveReference(2*i, 8, (2*i) * 1000 * DTU_PER_MS);
+    unsigned int reads = readCount;
+    rxFrame[24] = 99; // Malformed/spurious RX event cannot overwrite pending context.
+    mulAlrAlgorithm.onEvent(&dev, events[i]);
+    TEST_ASSERT_FALSE(txPending);
+    TEST_ASSERT_TRUE(receiving);
+    TEST_ASSERT_EQUAL_UINT(reads, readCount);
+    TEST_ASSERT_EQUAL_UINT(i, actualReads);
+    deliver(referenceAddress, 2*i, 8, hardwareNow, true);
+    TEST_ASSERT_EQUAL_UINT(2*i+1, txCount);
+    receiveReference(2*i+1, 8, (2*i+1) * 1000 * DTU_PER_MS);
+    finishFollowerSlot();
+    TEST_ASSERT_EQUAL_UINT(i+1, actualReads);
+  }
+}
+
+void test_mulFollowerLossAbortsPendingTxAndRequiresFreshReacquisition(void) {
+  initFollower();
+  receiveReference(88, 1, 0);
+  testTick = 3000; // Force liveness expiry while a hardware TX is still pending.
+  mulAlrAlgorithm.onEvent(&dev, eventTimeout);
+  TEST_ASSERT_FALSE(referenceAcquired);
+  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_FALSE(delayedArmed);
+  TEST_ASSERT_TRUE(receiving);
+  TEST_ASSERT_EQUAL_UINT(0, actualReads);
+  mulAlrAlgorithm.onEvent(&dev, eventPacketSent);
+  testTick = 9000;
+  mulAlrAlgorithm.onEvent(&dev, eventTimeout);
+  deliver(referenceAddress, 88, 1, hardwareNow, true);
+  TEST_ASSERT_EQUAL_UINT(1, txCount);
+  TEST_ASSERT_FALSE(referenceAcquired);
+  receiveReference(0, 1, 9000 * DTU_PER_MS);
+  finishFollowerSlot();
+  TEST_ASSERT_TRUE(referenceAcquired);
+  TEST_ASSERT_EQUAL_UINT(2, txCount);
+  TEST_ASSERT_EQUAL_UINT(1, actualReads);
+}
+
+void test_mulFollowerAndReferenceSequenceCountersWrapIndependently(void) {
+  initFollower();
+  nextSequence = UINT32_MAX;
+  receiveReference(UINT32_MAX, MUL_TIMESTAMP_MASK, MUL_TIMESTAMP_MASK - DTU_PER_MS);
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, pendingSequence);
+  finishFollowerSlot();
+  testTick = 1000;
+  receiveReference(0, 0, 1000 * DTU_PER_MS);
+  TEST_ASSERT_EQUAL_UINT32(0, pendingSequence);
+  finishFollowerSlot();
+  deliver(referenceAddress, 0, 0, hardwareNow, true);
+  deliver(referenceAddress, UINT32_MAX, 0, hardwareNow, true);
+  TEST_ASSERT_EQUAL_UINT(2, txCount);
+  TEST_ASSERT_EQUAL_UINT32(0, followerReference.gaps);
+}
+
+void test_mulFollowerRepeatsHardwareSlotsAcrossManyClockWraps(void) {
+  initFollower();
+  for (uint32_t frame = 0; frame < 1000; frame++) {
+    testTick = frame * 1000;
+    uint64_t rx = mulTimestampMask(MUL_TIMESTAMP_MASK - 100*DTU_PER_MS + frame*PERIOD_DTU + 123);
+    receiveReference(100000 + frame, mulTimestampMask(frame * PERIOD_DTU), rx);
+    mulTestPacket_t packet;
+    TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &packet));
+    TEST_ASSERT_EQUAL_UINT32(frame, packet.sequence);
+    TEST_ASSERT_EQUAL_UINT8(0x85, packet.source[0]);
+    int64_t offset = mulTimestampDifference(packet.txTimestamp, rx);
+    TEST_ASSERT_TRUE(offset >= INT64_C(31948800000) && offset < INT64_C(31948800512));
+    finishFollowerSlot();
+    TEST_ASSERT_EQUAL_UINT64(packet.txTimestamp, actualTx);
+  }
+  TEST_ASSERT_EQUAL_UINT(1000, txCount);
+  TEST_ASSERT_EQUAL_UINT(1000, actualReads);
+}
+
+void test_mulRlrReceivesInterleavedReferenceAndActualFollowerPackets(void) {
+  initFollower();
+  receiveReference(100, UINT64_C(0x123456789a), MUL_TIMESTAMP_MASK - 200*DTU_PER_MS);
+  mulTestPacket_t follower;
+  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &follower));
+  finishFollowerSlot();
+  mulRlrAlgorithm.init(&config, &dev);
+  uint64_t refRx = MUL_TIMESTAMP_MASK - 100*DTU_PER_MS;
+  uint64_t followerRx = mulTimestampMask(refRx + 500*DTU_PER_MS);
+  deliver(referenceAddress, 100, UINT64_C(0x123456789a), refRx, false);
+  deliver(follower.source, follower.sequence, follower.txTimestamp, followerRx, false);
+  TEST_ASSERT_EQUAL_UINT32(100, rlrSources[0].sequence);
+  TEST_ASSERT_EQUAL_UINT32(0, rlrSources[1].sequence);
+  TEST_ASSERT_EQUAL_UINT64(UINT64_C(0x123456789a), rlrSources[0].txTimestamp);
+  TEST_ASSERT_EQUAL_UINT64(actualTx, rlrSources[1].txTimestamp);
+  TEST_ASSERT_EQUAL_INT64(INT64_C(31948800000),
+    mulTimestampDifference(rlrSources[1].rxTimestamp, rlrSources[0].rxTimestamp));
+  TEST_ASSERT_TRUE(receiving);
+  TEST_ASSERT_EQUAL_UINT(1, txCount); // Only follower code transmitted, RLR never did.
+}
+
+void test_mulFollowerCanTransmitAtCounterZeroWithZeroAntennaDelay(void) {
+  initFollower();
+  antennaDelay = 0;
+  uint64_t rx = MUL_TIMESTAMP_MASK - UINT64_C(31948800000) + 1;
+  receiveReference(0, UINT64_C(0x9876543210), rx);
+  TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_EQUAL_UINT64(0, delayedRaw);
+  mulTestPacket_t packet;
+  TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame, MUL_TEST_FRAME_LENGTH, &packet));
+  TEST_ASSERT_EQUAL_UINT64(0, packet.txTimestamp);
+  finishFollowerSlot();
+  TEST_ASSERT_EQUAL_UINT64(0, actualTx);
   TEST_ASSERT_TRUE(receiving);
 }
