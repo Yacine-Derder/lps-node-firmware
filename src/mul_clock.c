@@ -109,3 +109,80 @@ mulClockResult_t mulClockObserve(mulClock_t *clock, const mulTestPacket_t *packe
   baseline(clock, packet, localRx, observedMs);
   return mulClockSample;
 }
+
+mulClockMapStatus_t mulClockMapStatus(const mulClock_t *clock, uint32_t nowMs)
+{
+  if (clock == NULL || !clock->hasBaseline || clock->status == mulClockSearching ||
+      clock->skewPpb < -MUL_CLOCK_MAX_PPB || clock->skewPpb > MUL_CLOCK_MAX_PPB) {
+    return mulClockMapInvalid;
+  }
+  if ((uint32_t)(nowMs - clock->observedMs) > MUL_CLOCK_MAP_HORIZON_MS) {
+    return mulClockMapStale;
+  }
+  return clock->status == mulClockValid ? mulClockMapValid : mulClockMapWarmup;
+}
+
+static int64_t roundedDivide(int64_t numerator, int64_t denominator)
+{
+  // Inputs are bounded before multiplication/division; denominator is positive.
+  return (numerator + (numerator < 0 ? -denominator/2 : denominator/2)) / denominator;
+}
+
+static bool mapCoordinate(const mulClock_t *clock, uint64_t input, uint32_t nowMs,
+                          bool inverse, mulClockMapping_t *mapping)
+{
+  if (mapping == NULL || mulClockMapStatus(clock, nowMs) != mulClockMapValid) {
+    return false;
+  }
+  int64_t delta = mulTimestampDifference(input, inverse ? clock->localRx : clock->referenceTx);
+  // Bound before multiplying. Inverse local displacement can be slightly larger
+  // than reference horizon for a fast follower, so admit this guarded envelope.
+  int64_t horizon = MUL_CLOCK_MAP_HORIZON_DTU;
+  int64_t envelope = inverse ? horizon + horizon * MUL_CLOCK_MAX_PPB / INT64_C(1000000000) + 1 : horizon;
+  if (delta < -envelope || delta > envelope) {
+    return false; // Includes exactly-half-period ambiguity and negative long gaps.
+  }
+  int64_t correction = roundedDivide(delta * clock->skewPpb,
+    INT64_C(1000000000) + (inverse ? clock->skewPpb : 0));
+  // Inverse: d_ref = d_local - d_local*s/(1+s), avoiding d_local*1e9 overflow.
+  int64_t referenceDelta = inverse ? delta - correction : delta;
+  if (referenceDelta < -horizon || referenceDelta > horizon) {
+    return false;
+  }
+  uint64_t distance = (uint64_t)(referenceDelta < 0 ? -referenceDelta : referenceDelta);
+  uint32_t spread = 0;
+  for (unsigned int i = 0; i < clock->count; i++) {
+    int64_t deviation = (int64_t)clock->history[i] - clock->skewPpb;
+    uint32_t magnitude = (uint32_t)(deviation < 0 ? -deviation : deviation);
+    if (magnitude > spread) {
+      spread = magnitude;
+    }
+  }
+  mulClockMapping_t result = {
+    .timestamp = mulTimestampMask((inverse ? clock->referenceTx : clock->localRx) +
+                                 (inverse ? referenceDelta : delta + correction)),
+    .destination = inverse ? mulAlrReference : mulAlrFollower,
+    .ageMs = nowMs - clock->observedMs,
+    .extrapolationDtu = distance,
+    .unknownComponents = mulClockUnknownAll,
+    .observedRateSpreadPpb = spread,
+    // Conservative <=1 ppb representation allowance + one conversion tick.
+    // True rate/measurement/propagation errors remain UNKNOWN, not this number.
+    .numericalBoundDtu = 1 + (distance + UINT64_C(999999999)) / UINT64_C(1000000000),
+    .syncCalibrated = false,
+  };
+  *mapping = result;
+  return true;
+}
+
+bool mulClockMapRefToFollower(const mulClock_t *clock, uint64_t referenceTx,
+                             uint32_t nowMs, mulClockMapping_t *mapping)
+{
+  return mapCoordinate(clock, referenceTx, nowMs, false, mapping);
+}
+
+bool mulClockMapFollowerToRef(const mulClock_t *clock, uint64_t localArrival,
+                             uint32_t nowMs, mulClockMapping_t *mapping)
+{
+  return mapCoordinate(clock, localArrival, nowMs, true, mapping);
+}

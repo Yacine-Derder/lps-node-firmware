@@ -850,6 +850,10 @@ void test_mulFollowerClockConvergesWithoutChangingTdmaAndResetsOnLoss(void) {
   TEST_ASSERT_EQUAL_INT(mulClockValid, followerClock.status);
   TEST_ASSERT_EQUAL_INT32(5000, followerClock.skewPpb);
   TEST_ASSERT_EQUAL_UINT32(6, followerClock.samples);
+  mulClockMapping_t mapping;
+  TEST_ASSERT_TRUE(mulClockMapRefToFollower(&followerClock, followerClock.referenceTx, testTick, &mapping));
+  TEST_ASSERT_EQUAL_UINT64(followerClock.localRx, mapping.timestamp);
+  TEST_ASSERT_FALSE(mapping.syncCalibrated);
   mulClock_t before = followerClock;
   deliver(referenceAddress, 48, 0, hardwareNow, true);
   deliver(referenceAddress, 47, 0, hardwareNow, true);
@@ -861,10 +865,13 @@ void test_mulFollowerClockConvergesWithoutChangingTdmaAndResetsOnLoss(void) {
   mulAlrAlgorithm.onEvent(&dev, eventTimeout);
   TEST_ASSERT_EQUAL_INT(mulClockSearching, followerClock.status);
   TEST_ASSERT_EQUAL_UINT32(0, followerClock.samples);
+  TEST_ASSERT_EQUAL_INT(mulClockMapInvalid, mulClockMapStatus(&followerClock, testTick));
   for (uint32_t frame = 0; frame < 6; frame++) {
     testTick = 10000 + frame*1000;
     uint64_t local = mulTimestampMask(localStart + (10+frame)*PERIOD_DTU - frame*(PERIOD_DTU/100000));
     receiveReference(frame, frame*PERIOD_DTU, local); // Reference restarted at seq/TX zero.
+    TEST_ASSERT_EQUAL_INT(frame < 5 ? mulClockMapWarmup : mulClockMapValid,
+      mulClockMapStatus(&followerClock, testTick));
     finishFollowerSlot();
   }
   TEST_ASSERT_EQUAL_INT(mulClockValid, followerClock.status);
@@ -882,6 +889,7 @@ void test_mulFollowerClockDiscontinuityDoesNotChangeRadioPolicy(void) {
   TEST_ASSERT_EQUAL_INT(mulClockWarmup, followerClock.status);
   TEST_ASSERT_EQUAL_UINT32(0, followerClock.samples);
   TEST_ASSERT_TRUE(txPending); // Estimator rejection cannot suppress a valid TDMA RX.
+  TEST_ASSERT_EQUAL_INT(mulClockMapWarmup, mulClockMapStatus(&followerClock, testTick));
   finishFollowerSlot();
   for (uint32_t frame = 1; frame <= 5; frame++) {
     testTick = (1+frame)*1000;

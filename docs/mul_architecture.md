@@ -42,7 +42,7 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `inc/mul_alr.h`, `src/mul_alr.c` | Reference delayed TX and reference-following follower slots |
 | `inc/mul_rlr.h`, `src/mul_rlr.c` | Passive RX and bounded per-source observation state |
 | `inc/mul_rx.h`, `src/mul_rx.c` | Shared DW1000 RX setup, bounded reads, and re-arming |
-| `inc/mul_clock.h`, `src/mul_clock.c` | Bounded diagnostic follower/reference clock-rate estimation |
+| `inc/mul_clock.h`, `src/mul_clock.c` | Diagnostic clock rate and anchored arrival-aligned mapping |
 | `vendor/libdw1000`, `src/dwOps.c` | Existing radio driver and board SPI operations |
 
 Both MUL roles implement `uwbAlgorithm_t.init` and `onEvent` callbacks.
@@ -114,8 +114,7 @@ RX timestamp to obtain propagation time or distance. Relative offset, skew, and
 propagation delay are distinct effects; one-way observations alone cannot identify
 exact clock offset independently of propagation delay.
 Coarse TDMA alignment uses a reference ALR and one follower ALR.
-Clock correction, uncertainty, and decentralized
-operation are future work, not capabilities implied by the current timestamp pair.
+Propagation-corrected clock conversion and decentralized operation are future work.
 
 ## Reference-following slots and bounded source observations
 
@@ -162,9 +161,8 @@ See [the focused reuse audit](mul_stage3_reuse_audit.md) for implementation deci
 
 For consecutive accepted reference observations, `ratio = delta_local_RX /
 delta_reference_TX`, using signed 40-bit modular differences in each clock domain.
-The local affine approximation is `rx_local(t) ≈ ratio * tx_reference(t) + offset`
-over short intervals with approximately constant propagation delay, using unwrapped
-clock coordinates. This does not identify absolute offset or synchronize time.
+The local affine approximation uses unwrapped clock coordinates over short intervals
+with approximately constant propagation delay; its intercept combines delay and offset.
 Positive `skew_ppm = (ratio - 1) * 1e6` means the follower clock runs faster.
 Motion/path-delay changes can also affect the measured slope.
 
@@ -192,7 +190,55 @@ sequences are ignored until existing liveness declares loss and permits rebasing
 The follower updates/logs CLOCK after arming TX or rearming RX, at most once per
 fresh reference plus loss transitions, in the UWB task. Only skew is printed,
 with sign and three ppm decimals. TX/RX timestamps, TDMA targets, and RLR behavior
-are unchanged; no estimator output is used for scheduling or clock conversion.
+are unchanged; no estimator or mapping output is used for scheduling.
+
+## Arrival-aligned affine mapping
+
+Let `a = 1 + skewPpb/1e9`. One-way broadcasts observe `r_f ≈ a*t_ref + c`, where
+`c = b + a*tau`, `b` is true clock offset and `tau` is one-way delay in reference
+units. Neither `b` nor `tau` is separately identifiable. A VALID arrival-aligned
+mapping is always UNCALIBRATED for true synchronization; no large raw intercept
+is computed or reported.
+
+The existing estimator's latest accepted pair is the origin `(tx0, rx0)`:
+`forward(t) = rx0 + a*diff40(t, tx0)`; inverse is
+`inverse(r) = tx0 + diff40(r, rx0)/a`, with outputs reduced modulo 2^40.
+`mulClockMapRefToFollower()` maps the full allowed reference identity to the full
+follower identity; `mulClockMapFollowerToRef()` maps arrival-aligned coordinates
+back. The inverse inherits the same delay ambiguity and must not be applied to
+arbitrary follower TX times as if they were simultaneous-clock coordinates.
+
+No mapping state duplicates the skew estimator: accepted observations re-anchor;
+duplicate/old/invalid packets cannot refresh it. Skew invalidation, discontinuity,
+loss, or reset immediately invalidates the mapping until convergence returns.
+Queries require valid slope and estimator, origin age <=2000 coarse ms, and signed
+reference displacement within +/-2 nominal hardware seconds. Inverse checks the
+equivalent reference displacement. Both age and coordinate horizon apply separately;
+past queries are supported. Long/half-period displacements are rejected. Callers
+must know the intended counter epoch: a 40-bit timestamp alone cannot expose an
+extra full wrap. There is no shared absolute timeline.
+
+Integer conversion scales only bounded displacements. The inverse computes
+`d_local - round(d_local*skewPpb/(1e9+skewPpb))` to avoid multiplying the entire
+interval by 1e9. Rounded output preserves one-DTU resolution; round trips differ
+by at most one tick. The origin is an actual observation, not a fitted/calibrated
+intercept, so re-anchoring also follows RX measurement and path-delay changes.
+
+Mapping results distinguish these uncertainties with explicit UNKNOWN flags:
+physical rate error, reference TX measurement, follower RX measurement, origin,
+absolute propagation delay, propagation changes, extrapolation, and total error.
+No finite physical bound is established, even at the origin with zero sample spread.
+`observedRateSpreadPpb` is sample max deviation, not a confidence/error bound.
+Separately, `numericalBoundDtu = 1 + ceil(abs(d_ref)/1e9)` conservatively covers
+conversion rounding plus the 1-ppb slope representation allowance, in destination
+ticks. It grows with extrapolation but excludes unknown physical errors. Timestamp
+encoding resolution is one DTU; scheduling alignment is not measurement accuracy.
+Age and displacement are reported separately; no unjustified noise variance is used.
+
+MAP logs follow clock updates after radio setup, with slope, state, age/horizon,
+`sync=UNCALIBRATED`, and `bound_ns=UNKNOWN`; loss logs INVALID. Future TDoA work
+must retain source domains, validity, delay ambiguity, and uncertainty, and obtain
+independent delay information before treating this mapping as true clock conversion.
 
 ## Planned measurement processing
 

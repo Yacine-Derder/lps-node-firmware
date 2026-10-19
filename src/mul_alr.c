@@ -311,6 +311,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   if (lostNow) {
     printf("MUL ALR: REF_LOST src=0x84 state=SEARCHING\r\n");
     printf("MUL ALR: CLOCK src=0x84 samples=0 state=SEARCHING\r\n");
+    printf("MUL ALR: MAP src=0x84 state=INVALID sync=UNCALIBRATED bound_ns=UNKNOWN\r\n");
   }
   if (fresh) {
     // Radio is already armed/re-armed. Estimation and logging cannot shift the
@@ -334,6 +335,17 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
            followerClock.status == mulClockValid ? "VALID" : "WARMUP",
            clockResult == mulClockDiscontinuity ? "RESET" :
            clockResult == mulClockSample ? "ACCEPTED" : "BASELINE");
+    mulClockMapping_t mapping;
+    uint32_t nowMs = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+    bool mapValid = mulClockMapRefToFollower(&followerClock, packet.txTimestamp, nowMs, &mapping);
+    mulClockMapStatus_t mapState = mulClockMapStatus(&followerClock, nowMs);
+    printf("MUL ALR: MAP src=0x84 seq=%" PRIu32 " slope_ppm=%s%" PRIu32 ".%03" PRIu32
+           " state=%s sync=UNCALIBRATED age_ms=%" PRIu32
+           " horizon_ms=%u bound_ns=UNKNOWN\r\n", packet.sequence,
+           ppb < 0 ? "-" : "+", magnitude / 1000, magnitude % 1000,
+           mapValid ? "VALID" : mapState == mulClockMapStale ? "STALE" :
+           mapState == mulClockMapWarmup ? "WARMUP" : "INVALID",
+           nowMs - followerClock.observedMs, MUL_CLOCK_MAP_HORIZON_MS);
   }
   return followerWait(dev);
 }
