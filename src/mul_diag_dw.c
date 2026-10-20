@@ -48,9 +48,17 @@ static uint32_t event(dwDevice_t *dev,uwbEvent_t event) {
       }
       rearm(dev);
       if (valid) {
-        mulCoreObserveSequence(&state.rx,message.sequence);
-        printf("MULG RX src=86 seq=%" PRIu32 " valid=1 rx=%02X%08" PRIX32 " prev_valid=%u prev_seq=%" PRIu32 " prev_tx=%02X%08" PRIX32 " gaps=%" PRIu32 " bits=40 unit=DTU\r\n",
-          message.sequence,(unsigned)(stamp.full>>32),(uint32_t)stamp.full,message.markerValid,message.markerSequence,
+        /* v1 has no boot ID. After >=5s without a decoded expected peer,
+         * begin an explicitly logged ordering epoch, preserving totals. This
+         * does not prove a reboot or count loss across the idle boundary. */
+        if (state.rx.baseline && (uint32_t)(now-state.lastRxMs)>=5000U) {
+          printf("MULG EPOCH reason=idle previous=%" PRIu32 " next=%" PRIu32 " idle_ms=%" PRIu32 "\r\n",state.rx.last,message.sequence,now-state.lastRxMs);
+          mulCoreSequenceBeginEpoch(&state.rx);
+        }
+        state.lastRxMs=now;
+        mulCoreOrder_t order=mulCoreObserveSequence(&state.rx,message.sequence);
+        printf("MULG RX src=86 seq=%" PRIu32 " valid=1 order=%u rx=%02X%08" PRIX32 " prev_valid=%u prev_seq=%" PRIu32 " prev_tx=%02X%08" PRIX32 " gaps=%" PRIu32 " bits=40 unit=DTU\r\n",
+          message.sequence,(unsigned)order,(unsigned)(stamp.full>>32),(uint32_t)stamp.full,message.markerValid,message.markerSequence,
           (unsigned)(message.txMarker>>32),(uint32_t)message.txMarker,state.rx.gaps);
       } else state.invalid++;
     } else if (event==eventReceiveTimeout) { state.timeouts++; rearm(dev); }

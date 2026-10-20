@@ -80,6 +80,16 @@ void test_mulDiagRealDriverRoleWatchdogBoundedReadsAndRecovery(void) {
   regs[SYS_STATUS][1]=1u<<(RXFCE_BIT-8); dwHandleInterrupt(&dev);
   TEST_ASSERT_EQUAL_UINT32(1,state.errors); TEST_ASSERT_EQUAL_UINT(RX_MODE,dev.deviceMode);
 #endif
+#if MUL_DIAG_ROLE==2
+  packet.sequence=3000; mulCoreEncodeDiag(regs[RX_BUFFER],44,&packet); regs[RX_FINFO][0]=46;
+  mulDiagAlgorithm.onEvent(&dev,eventPacketReceived);
+  packet.sequence=0; mulCoreEncodeDiag(regs[RX_BUFFER],44,&packet);
+  mulDiagAlgorithm.onEvent(&dev,eventPacketReceived);
+  TEST_ASSERT_EQUAL_UINT32(1,state.rx.old); TEST_ASSERT_EQUAL_UINT32(3000,state.rx.last);
+  tick=5000; packet.sequence=1; mulCoreEncodeDiag(regs[RX_BUFFER],44,&packet);
+  mulDiagAlgorithm.onEvent(&dev,eventPacketReceived);
+  TEST_ASSERT_EQUAL_UINT32(1,state.rx.old); TEST_ASSERT_EQUAL_UINT32(1,state.rx.last);
+#endif
   state.lastTxMs=UINT32_MAX-500; tick=600;
   mulDiagAlgorithm.onEvent(&dev,eventTimeout); // Coarse timer wrap is bounded.
 }

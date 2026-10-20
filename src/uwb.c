@@ -35,6 +35,7 @@
 #include "dwOps.h"
 #include "phy_interop_dw.h"
 #include "mul_diag_dw.h"
+#include "mul_ads_dw.h"
 
 #include <FreeRTOS.h>
 #include <semphr.h>
@@ -182,7 +183,13 @@ void uwbInit()
 
   dwSetPreambleCode(dwm, PREAMBLE_CODE_64MHZ_9);
 
-#if MUL_DIAG_ROLE
+#if MUL_TWR_ROLE
+  algorithm = &mulAdsAlgorithm;
+  phyInteropConfigure(dwm);
+  // Explicit experimental antenna reference; legacy/diagnostic profiles untouched.
+  dwTime_t adsDelay={.full=MUL_ADS_DW_ANT_DTU};
+  dwSetAntenaDelay(dwm,adsDelay);
+#elif MUL_DIAG_ROLE
   algorithm = &mulDiagAlgorithm;
   phyInteropConfigure(dwm);
 #elif PHY_INTEROP_ROLE
@@ -193,7 +200,7 @@ void uwbInit()
   dwCommitConfiguration(dwm);
   // Original modes retain their software antenna compensation and zero registers.
   // Configure only ALRs, after the last full commit, without changing PHY/EEPROM.
-  if (config.mode == 5 && !PHY_INTEROP_ROLE && !MUL_DIAG_ROLE) {
+  if (config.mode == 5 && !PHY_INTEROP_ROLE && !MUL_DIAG_ROLE && !MUL_TWR_ROLE) {
     mulAntennaConfigure(dwm);
   }
 

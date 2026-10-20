@@ -923,3 +923,17 @@ allocation or mixed-radio ranging/TDoA implementation is introduced.
 [API, wire contract, validation/resources, UART risks and user experiments](mul_core.md)
 define the current software-ready, hardware-pending checkpoint. Stage3F's packet
 proof does not validate this new format, timestamp semantics or combined timing.
+
+
+## Cross-platform UWB-only ranging foundation
+
+A separate opt-in ADS protocol uses the portable core, leaving Stage3E math and
+packets unchanged. POLL/RESPONSE/FINAL are followed by a timestamp REPORT so all
+six inputs are measured at hardware completion/reception, without predicting
+FINAL TX. Initiator computes standard mixed-clock ADS ToF; physical antenna
+reference equivalence is uncalibrated. Explicit fresh sessions and transactions
+bound stale-message acceptance. Single-pair task-level adapters own immediate
+TX/automatic RX and abort/retry, while STM32 requires UWB-only motor/ESP isolation.
+Wire/state/arithmetic contracts are in portable/mul_core/README.md; current
+experiment/build/limitations are in [the ADS guide](mul_ads_twr.md). This does
+not implement localization, multi-robot scheduling or online calibration.

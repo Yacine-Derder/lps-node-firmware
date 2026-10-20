@@ -440,3 +440,12 @@ Normal Wi-Fi coexistence may remain a documented secondary limitation if the
 user accepts that scope; it cannot be declared fixed from software tests.
 Return complete logs, exact repository HEADs/build flags/core pin, endpoints,
 geometry/power/stream period and any intentional resets/disconnections.
+
+## Subsequent UWB-only audit and ADS foundation
+
+The newer UWB-only logs reproduce the retained-baseline OLD behavior; this does
+not imply stale RF packets or zero loss. Explicit ordering/idle-epoch diagnostics
+and the separate ADS protocol are documented in
+[the UWB-only ranging guide](mul_ads_twr.md). Stage3G reverse-direction sustained
+hardware validation remains pending. Use that guide for the new experiments;
+the earlier A/B/C evidence and procedures above remain historical context.

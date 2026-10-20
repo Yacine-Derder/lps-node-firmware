@@ -290,3 +290,28 @@ then matched UwbOffSafe baseline; optional controlled NormalBaseline/CoexistRX
 comparison. Establish safety/STOP and UART impact before closing Stage3G.
 No hardware flashed; no Stage3H. Physical timing/ranging accuracy and the exact
 cause of UART overrun remain unresolved.
+
+## Stage3G follow-up / Stage3H ADS-TWR foundation
+
+**Software implemented/tested; physical ranging and accuracy unverified.**
+The UWB-only forward capture reaches TX done537 and RX valid525/old519. All515
+comparable previous-TX markers match. OLD is reproducible retained ordering
+baseline after low sender restart sequences, not demonstrated stale RF traffic;
+gaps0 cannot measure loss across that epoch. Explicit order and logged5s idle
+epoch handling preserve cumulative semantics; rapid v1 restarts remain ambiguous.
+The misnamed G-UWB-off-baseline.log contains DW TX, not an STM32 baseline.
+
+Portable versioned ADS core and DW1000/DWM3000 adapters implement one stationary
+pair with either initiator role. POLL/RESPONSE/FINAL plus measured timestamp
+REPORT provide six actual40-bit markers; no guessed delayed TX stamp. New fresh
+session/transaction, bounded state/deadlines, whole-exchange retries and strict
+UWB-only safety isolation. Nominal antenna defaults are explicit/read back and
+uncalibrated. Existing Stage3E/3F/3G formats, EEPROM and normal modes remain.
+Canonical portable checkpoint ccd78acfb56ac9ea42c31b88d5db458380c67564 is pinned
+in STM32. ESP/dsPIC/central project are untouched this iteration.
+
+Next: [stationary ranging handoff](docs/mul_ads_twr.md), controlled measured
+separations and recovery tests; separately repeat clean forward and sustained
+reverse Stage3G communication with a genuine receiver-off baseline/counter
+endpoints. Stage3G hardware closure and Stage3H ranging accuracy are not claimed.
+No localization, multi-robot scheduling, TDoA extension or online calibration.

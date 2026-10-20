@@ -7,7 +7,7 @@
 /* Runtime ownership/timers are adapter details; core has no hardware state. */
 typedef struct {
   mulCoreSequence_t rx;
-  uint32_t sequence,attempts,done,invalid,errors,timeouts,lastTxMs,lastReportMs;
+  uint32_t sequence,attempts,done,invalid,errors,timeouts,lastTxMs,lastReportMs,lastRxMs;
   uint8_t frame[MUL_CORE_DIAG_LENGTH+2];
   bool pending,markerValid;
   uint64_t lastTxMarker;

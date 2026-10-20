@@ -9,3 +9,8 @@
 # jykell files generated
 docs/.jekyll-metadata
 docs/.jekyll-cache
+
+# Local captures and Python caches (preserve raw experimental evidence).
+*.log
+__pycache__/
+*.py[cod]

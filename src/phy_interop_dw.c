@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "phy_interop_dw.h"
-#if PHY_INTEROP_ROLE || MUL_DIAG_ROLE
+#if PHY_INTEROP_ROLE || MUL_DIAG_ROLE || MUL_TWR_ROLE
 #include "mul_role_state.h"
 #include "task.h"
 #include <inttypes.h>
