@@ -13,4 +13,14 @@
 #endif
 #define MUL_FOLLOWER_SLOT_DTU (MUL_FOLLOWER_SLOT_MS * UINT64_C(63897600))
 
+// Preserve the baseline +/-10% gate; allow 2 ms at the shortest slot.
+#define MUL_SLOT_TOLERANCE_MS ((MUL_FOLLOWER_SLOT_MS / 10) < 2 ? 2 : (MUL_FOLLOWER_SLOT_MS / 10))
+#define MUL_SLOT_MIN_MS (MUL_FOLLOWER_SLOT_MS - MUL_SLOT_TOLERANCE_MS)
+#define MUL_SLOT_MAX_MS (MUL_FOLLOWER_SLOT_MS + MUL_SLOT_TOLERANCE_MS)
+// Reference presence allowed extra completion/dispatch margin before TWR.
+#define MUL_SLOT_PRESENCE_MAX_MS (MUL_FOLLOWER_SLOT_MS + 2 * MUL_SLOT_TOLERANCE_MS)
+#define MUL_PAIR_MAX_AGE_MS (MUL_FOLLOWER_SLOT_MS + 200)
+#define MUL_SLOT_MIN_DTU (MUL_SLOT_MIN_MS * INT64_C(63897600))
+#define MUL_SLOT_MAX_DTU (MUL_SLOT_MAX_MS * INT64_C(63897600))
+
 #endif

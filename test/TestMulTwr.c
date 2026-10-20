@@ -348,7 +348,7 @@ void test_mulTwrLiveFollowerIntegrationBroadcastPriorityAvailabilityAndLoss(void
   TEST_ASSERT_TRUE(mulBroadcastDecode(radios[1].tx,radios[1].txLength,&extended,&relation));
   TEST_ASSERT_TRUE(relation.available); TEST_ASSERT_EQUAL_UINT32(6,relation.referenceSequence);
   TEST_ASSERT_EQUAL_UINT64(radios[1].actual,extended.txTimestamp);
-  TEST_ASSERT_TRUE(relation.delayAgeMs>=850 && relation.remainingMs<=150);
+  TEST_ASSERT_TRUE(relation.delayAgeMs>=350+MUL_FOLLOWER_SLOT_MS && relation.remainingMs<=650-MUL_FOLLOWER_SLOT_MS);
   uint64_t raw=radios[1].raw; unsigned int sends=radios[1].sends;
   // A spurious ranging RX while the mandatory TX is armed must never schedule another TX.
   radios[1].rxLength=MUL_TWR_FRAME_LENGTH;
@@ -373,8 +373,8 @@ void test_mulTwrReferenceModeGatesOnFollowerAndPreservesNextBroadcast(void) {
     dispatch(0,eventTimeout); TEST_ASSERT_TRUE(txPending);
     int64_t when=sendTime(0); advance(when+MS); radios[0].armed=false; dispatch(0,eventPacketSent);
     framePhysical=when; TEST_ASSERT_EQUAL_UINT32(i,pendingSequence);
-    advance(when+500*MS+flight);
-    injectBroadcast(0,1,100+i,clockAt(1,when+500*MS),clockAt(0,when+500*MS+flight));
+    advance(when+MUL_FOLLOWER_SLOT_DTU+flight);
+    injectBroadcast(0,1,100+i,clockAt(1,when+MUL_FOLLOWER_SLOT_DTU),clockAt(0,when+MUL_FOLLOWER_SLOT_DTU+flight));
   }
   origins[0]=pendingTimestamp; origins[1]=clockAt(1,framePhysical+flight); modelAcquire();
   mulRxInit(&radios[1].device);
@@ -471,7 +471,7 @@ void test_mulTwrLiveFollowerDelayExpiresBetweenFiveSecondAttempts(void) {
   completeExchange(); TEST_ASSERT_TRUE(ranging.syncAvailable);
   advance(SEC+flight+MS); injectBroadcast(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));
   advance(sendTime(1)+MS); radios[1].armed=false; uint32_t wait=dispatch(1,eventPacketSent);
-  TEST_ASSERT_TRUE(wait < 200); // Delay expiry, not the next reference-loss watchdog.
+  TEST_ASSERT_TRUE(wait < 700-MUL_FOLLOWER_SLOT_MS); // Delay expiry, not the next reference-loss watchdog.
   advance(physical+(int64_t)wait*MS); dispatch(1,eventTimeout);
   TEST_ASSERT_FALSE(ranging.syncAvailable); TEST_ASSERT_TRUE(referenceAcquired);
   TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_FALSE(txPending); TEST_ASSERT_TRUE(radios[1].receiving);

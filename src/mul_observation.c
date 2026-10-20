@@ -92,7 +92,7 @@ bool mulAssociate(mulAssociation_t *a, mulObservation_t observations[2],
       mulAlrRoleForAddress(fol->sourceClock) != mulAlrFollower ||
       memcmp(ref->receiverClock,fol->receiverClock,8)) return false;
   int64_t difference=mulTimestampDifference(fol->source.rxTimestamp,ref->source.rxTimestamp);
-  if (difference < INT64_C(450)*63897600 || difference > INT64_C(550)*63897600) return false;
+  if (difference < MUL_SLOT_MIN_DTU || difference > MUL_SLOT_MAX_DTU) return false;
   *pair=(mulPair_t){.reference=*ref,.follower=*fol,.rawArrivalDifferenceDtu=difference,
     .physicalBoundDtu=UINT64_MAX};
   if (ref->power.status == mulPowerApplied && fol->power.status == mulPowerApplied) {

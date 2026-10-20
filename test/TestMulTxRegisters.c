@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "unity.h"
+#include "mul_timing.h"
 #include "mul_alr.h"
 #include "mul_rx.h"
 #include "task.h"
@@ -163,7 +164,7 @@ void test_mulFollowerRealDriverTurnsRxIntoDelayedTxAndBack(void) {
   TEST_ASSERT_EQUAL_UINT8(0x85, packet.source[0]);
   TEST_ASSERT_EQUAL_UINT32(0, packet.sequence);
   int64_t slot = mulTimestampDifference(packet.txTimestamp, rx);
-  TEST_ASSERT_TRUE(slot >= INT64_C(31948800000) && slot < INT64_C(31948800512));
+  TEST_ASSERT_TRUE(slot >= (int64_t)MUL_FOLLOWER_SLOT_DTU && slot < (int64_t)(MUL_FOLLOWER_SLOT_DTU+512));
   TEST_ASSERT_EQUAL_UINT64(mulDecodeTimestamp(registers[TX_TIME]), packet.txTimestamp);
   TEST_ASSERT_EQUAL_UINT(0, completionCount);
   systemTime = mulTimestampMask(packet.txTimestamp + UINT64_C(63897600));
@@ -399,7 +400,7 @@ void test_mulRelationRealDriverPublishesFreshTxBoundOriginsThenExpiresAcrossWrap
       TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(rx-tof),r.followerOrigin);
       uint64_t converted; TEST_ASSERT_TRUE(mulRelationInverse(&r,p.txTimestamp,1,&converted));
     } else { TEST_ASSERT_FALSE(r.available); }
-    systemTime=mulTimestampMask(p.txTimestamp+ms); fakeTicks=i*1000+501;
+    systemTime=mulTimestampMask(p.txTimestamp+ms); fakeTicks=i*1000+MUL_FOLLOWER_SLOT_MS+1;
     registers[SYS_STATUS][0]=1 << TXFRS_BIT; dwHandleInterrupt(&radio);
     TEST_ASSERT_EQUAL_UINT(RX_MODE,radio.deviceMode);
   }

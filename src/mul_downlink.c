@@ -17,7 +17,7 @@ bool mulDownlinkRelation(const mulRelation_t *r,mulPair_t *pair,
   uint64_t converted;
   if (!mulRelationInverse(r,pair->follower.source.txTimestamp,age+captureAgeMs,&converted)) return false;
   int64_t dt=mulTimestampDifference(converted,pair->reference.source.txTimestamp);
-  if (dt<INT64_C(450)*63897600 || dt>INT64_C(550)*63897600) return false;
+  if (dt<MUL_SLOT_MIN_DTU || dt>MUL_SLOT_MAX_DTU) return false;
   *txSeparation=dt; pair->clockRelationAvailable=true;
   return true;
 }
@@ -45,7 +45,7 @@ mulDownlink_t mulDownlinkCompute(const mulRelation_t *r,mulPair_t *pair,
       rate->skewPpb < -MUL_CLOCK_MAX_PPB || rate->skewPpb > MUL_CLOCK_MAX_PPB) return result;
   int64_t raw=mulTimestampDifference(pair->follower.source.rxTimestamp,pair->reference.source.rxTimestamp);
   result.status=mulDownlinkInconsistent;
-  if (raw!=pair->rawArrivalDifferenceDtu || raw<INT64_C(450)*63897600 || raw>INT64_C(550)*63897600) return result;
+  if (raw!=pair->rawArrivalDifferenceDtu || raw<MUL_SLOT_MIN_DTU || raw>MUL_SLOT_MAX_DTU) return result;
   result.ratePpb=rate->skewPpb;
   result.rawRxSeparationRef=intervalToReference(raw,rate->skewPpb);
   result.rawTdoaRef=result.rawRxSeparationRef-result.txSeparationRef;

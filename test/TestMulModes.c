@@ -433,7 +433,7 @@ static void finishFollowerSlot(void) {
 void test_mulFollowerAcquiresTracksSequenceAndPreservesBothClockDomains(void) {
   initFollower();
   uint32_t wait = receiveReference(10, MUL_TIMESTAMP_MASK, 2);
-  TEST_ASSERT_TRUE(wait >= 598 && wait <= 600);
+  TEST_ASSERT_TRUE(wait >= MUL_FOLLOWER_SLOT_MS+98 && wait <= MUL_FOLLOWER_SLOT_MS+100);
   TEST_ASSERT_TRUE(referenceAcquired);
   TEST_ASSERT_EQUAL_UINT64(MUL_TIMESTAMP_MASK, followerReference.txTimestamp);
   TEST_ASSERT_EQUAL_UINT64(2, followerReference.rxTimestamp);
@@ -629,7 +629,7 @@ void test_mulFollowerSlotUsesLocalRxClockAndOwnTimestampAcrossWrap(void) {
   TEST_ASSERT_TRUE(packet.txTimestamp != UINT64_C(0x123456789a));
   TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(delayedRaw + antennaDelay), packet.txTimestamp);
   int64_t slot = mulTimestampDifference(packet.txTimestamp, rx);
-  TEST_ASSERT_TRUE(slot >= INT64_C(31948800000) && slot < INT64_C(31948800512));
+  TEST_ASSERT_TRUE(slot >= (int64_t)MUL_FOLLOWER_SLOT_DTU && slot < (int64_t)(MUL_FOLLOWER_SLOT_DTU+512));
   finishFollowerSlot();
   TEST_ASSERT_EQUAL_UINT64(packet.txTimestamp, actualTx);
   TEST_ASSERT_EQUAL_UINT(1, actualReads);
@@ -682,14 +682,14 @@ void test_mulFollowerWatchdogKeepsEarlyWakeArmedThenRecoversWithoutRetry(void) {
 
 void test_mulFollowerSkipsLateReceptionAndLateSpiSetupWithoutMovingSlot(void) {
   initFollower();
-  hardwareNow = 496 * DTU_PER_MS; // Only 4 ms remain until the reference's slot.
+  hardwareNow = (MUL_FOLLOWER_SLOT_MS-4) * DTU_PER_MS; // Only 4 ms remain until the reference's slot.
   deliver(referenceAddress, 0, 9, 0, true);
   TEST_ASSERT_TRUE(receiving);
   TEST_ASSERT_FALSE(txPending);
   TEST_ASSERT_EQUAL_UINT(0, txCount);
   deliver(referenceAddress, 0, 9, hardwareNow, true); // Duplicate cannot reschedule.
   TEST_ASSERT_EQUAL_UINT(0, txCount);
-  setupDelay = 500 * DTU_PER_MS;
+  setupDelay = MUL_FOLLOWER_SLOT_DTU;
   receiveReference(1, 9, 1000 * DTU_PER_MS);
   TEST_ASSERT_TRUE(receiving);
   TEST_ASSERT_FALSE(txPending);
@@ -807,7 +807,7 @@ void test_mulFollowerRepeatsHardwareSlotsAcrossManyClockWraps(void) {
     TEST_ASSERT_EQUAL_UINT32(frame, packet.sequence);
     TEST_ASSERT_EQUAL_UINT8(0x85, packet.source[0]);
     int64_t offset = mulTimestampDifference(packet.txTimestamp, rx);
-    TEST_ASSERT_TRUE(offset >= INT64_C(31948800000) && offset < INT64_C(31948800512));
+    TEST_ASSERT_TRUE(offset >= (int64_t)MUL_FOLLOWER_SLOT_DTU && offset < (int64_t)(MUL_FOLLOWER_SLOT_DTU+512));
     finishFollowerSlot();
     TEST_ASSERT_EQUAL_UINT64(packet.txTimestamp, actualTx);
   }
@@ -823,14 +823,14 @@ void test_mulRlrReceivesInterleavedReferenceAndActualFollowerPackets(void) {
   finishFollowerSlot();
   mulRlrAlgorithm.init(&config, &dev);
   uint64_t refRx = MUL_TIMESTAMP_MASK - 100*DTU_PER_MS;
-  uint64_t followerRx = mulTimestampMask(refRx + 500*DTU_PER_MS);
+  uint64_t followerRx = mulTimestampMask(refRx + MUL_FOLLOWER_SLOT_DTU);
   deliver(referenceAddress, 100, UINT64_C(0x123456789a), refRx, false);
   deliver(follower.source, follower.sequence, follower.txTimestamp, followerRx, false);
   TEST_ASSERT_EQUAL_UINT32(100, rlrObservations[0].source.sequence);
   TEST_ASSERT_EQUAL_UINT32(0, rlrObservations[1].source.sequence);
   TEST_ASSERT_EQUAL_UINT64(UINT64_C(0x123456789a), rlrObservations[0].source.txTimestamp);
   TEST_ASSERT_EQUAL_UINT64(actualTx, rlrObservations[1].source.txTimestamp);
-  TEST_ASSERT_EQUAL_INT64(INT64_C(31948800000),
+  TEST_ASSERT_EQUAL_INT64((int64_t)MUL_FOLLOWER_SLOT_DTU,
     mulTimestampDifference(rlrObservations[1].source.rxTimestamp, rlrObservations[0].source.rxTimestamp));
   TEST_ASSERT_TRUE(receiving);
   TEST_ASSERT_EQUAL_UINT(1, txCount); // Only follower code transmitted, RLR never did.
@@ -839,7 +839,7 @@ void test_mulRlrReceivesInterleavedReferenceAndActualFollowerPackets(void) {
 void test_mulFollowerCanTransmitAtCounterZeroWithZeroAntennaDelay(void) {
   initFollower();
   antennaDelay = 0;
-  uint64_t rx = MUL_TIMESTAMP_MASK - UINT64_C(31948800000) + 1;
+  uint64_t rx = MUL_TIMESTAMP_MASK - MUL_FOLLOWER_SLOT_DTU + 1;
   receiveReference(0, UINT64_C(0x9876543210), rx);
   TEST_ASSERT_TRUE(txPending);
   TEST_ASSERT_EQUAL_UINT64(0, delayedRaw);
@@ -863,7 +863,7 @@ void test_mulFollowerClockConvergesWithoutChangingTdmaAndResetsOnLoss(void) {
     mulTestPacket_t outgoing;
     TEST_ASSERT_TRUE(decodeCaptured(&outgoing));
     int64_t slot = mulTimestampDifference(outgoing.txTimestamp, local);
-    TEST_ASSERT_TRUE(slot >= INT64_C(31948800000) && slot < INT64_C(31948800512));
+    TEST_ASSERT_TRUE(slot >= (int64_t)MUL_FOLLOWER_SLOT_DTU && slot < (int64_t)(MUL_FOLLOWER_SLOT_DTU+512));
     TEST_ASSERT_EQUAL_UINT32(frame, outgoing.sequence);
     finishFollowerSlot();
     TEST_ASSERT_EQUAL_UINT64(outgoing.txTimestamp, actualTx);
@@ -930,13 +930,13 @@ void test_mulRlrAssociatesPassivelyCapturesPowerBeforeRearmAndExpiresMissingFoll
   mulRlrAlgorithm.init(&config,&dev);
   simulatedPower=-80; simulatedCorrection=-5;
   testTick=100; deliver(referenceAddress,20,100,0,false);
-  testTick=600; deliver(followerAddress,900,200,500*DTU_PER_MS,false);
+  testTick=100+MUL_FOLLOWER_SLOT_MS; deliver(followerAddress,900,200,MUL_FOLLOWER_SLOT_DTU,false);
   testTick=1100;
-  TEST_ASSERT_EQUAL_UINT32(701,deliver(referenceAddress,21,100+PERIOD_DTU,PERIOD_DTU,false));
+  TEST_ASSERT_EQUAL_UINT32(MUL_PAIR_MAX_AGE_MS+1,deliver(referenceAddress,21,100+PERIOD_DTU,PERIOD_DTU,false));
   TEST_ASSERT_TRUE(rlrAssociation.pending);
   TEST_ASSERT_EQUAL_INT(mulPowerApplied,rlrObservations[0].power.status);
   TEST_ASSERT_EQUAL_UINT64(PERIOD_DTU-5,rlrObservations[0].correctedRx);
-  testTick=1600; deliver(followerAddress,901,200+PERIOD_DTU,1500*DTU_PER_MS,false);
+  testTick=1100+MUL_FOLLOWER_SLOT_MS; deliver(followerAddress,901,200+PERIOD_DTU,(PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU),false);
   TEST_ASSERT_FALSE(rlrAssociation.pending); TEST_ASSERT_TRUE(receiving);
   TEST_ASSERT_EQUAL_UINT(0,txCount);
   testTick=2100; deliver(referenceAddress,22,100+2*PERIOD_DTU,2*PERIOD_DTU,false);
@@ -956,18 +956,18 @@ void test_mulRlrRetainsCurrentRelationAndEpochTransitionsCannotReuseOldPair(void
   config.address[0]=0x86; mulRlrAlgorithm.init(&config,&dev);
   mulRelation_t r={.epoch=10,.referenceSequence=20};
   testTick=100; deliver(referenceAddress,20,0,0,false);
-  testTick=600; deliverRelation(900,500*DTU_PER_MS,500*DTU_PER_MS,&r);
+  testTick=100+MUL_FOLLOWER_SLOT_MS; deliverRelation(900,MUL_FOLLOWER_SLOT_DTU,MUL_FOLLOWER_SLOT_DTU,&r);
   TEST_ASSERT_TRUE(rlrObservations[1].remoteEpochKnown);
   TEST_ASSERT_EQUAL_UINT64(10,mulRoleScratch.rlr.relation.epoch);
   testTick=1100; deliver(referenceAddress,21,PERIOD_DTU,PERIOD_DTU,false);
   r=(mulRelation_t){.epoch=10,.referenceSequence=21,.twrSequence=20,.available=true,
-    .referenceOrigin=PERIOD_DTU,.followerOrigin=PERIOD_DTU,.originAgeMs=500,.delayAgeMs=850,.remainingMs=150};
-  testTick=1600; deliverRelation(901,1500*DTU_PER_MS,1500*DTU_PER_MS,&r);
+    .referenceOrigin=PERIOD_DTU,.followerOrigin=PERIOD_DTU,.originAgeMs=MUL_FOLLOWER_SLOT_MS,.delayAgeMs=350+MUL_FOLLOWER_SLOT_MS,.remainingMs=650-MUL_FOLLOWER_SLOT_MS};
+  testTick=1100+MUL_FOLLOWER_SLOT_MS; deliverRelation(901,(PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU),(PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU),&r);
   TEST_ASSERT_TRUE(mulRoleScratch.rlr.relation.available);
   TEST_ASSERT_EQUAL_UINT32(1,rlrObservations[1].generation); TEST_ASSERT_FALSE(rlrAssociation.pending);
   testTick=2100; deliver(referenceAddress,22,2*PERIOD_DTU,2*PERIOD_DTU,false);
   r=(mulRelation_t){.epoch=11,.referenceSequence=22}; // New acquisition, no fresh TWR.
-  testTick=2600; deliverRelation(902,2500*DTU_PER_MS,2500*DTU_PER_MS,&r);
+  testTick=2100+MUL_FOLLOWER_SLOT_MS; deliverRelation(902,(2*PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU),(2*PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU),&r);
   TEST_ASSERT_EQUAL_UINT32(2,rlrObservations[1].generation);
   TEST_ASSERT_FALSE(mulRoleScratch.rlr.relation.available); TEST_ASSERT_FALSE(rlrAssociation.pending);
   TEST_ASSERT_EQUAL_UINT(0,txCount); TEST_ASSERT_TRUE(receiving);
@@ -980,9 +980,9 @@ void test_mulRlrStationaryRateUsesReferenceCadenceAndFreshCurrentMetadata(void) 
     deliver(referenceAddress,20+i,i*PERIOD_DTU,i*PERIOD_DTU,false);
     mulRelation_t r={.epoch=10,.referenceSequence=20+i};
     if (i==6) r=(mulRelation_t){.epoch=10,.referenceSequence=26,.twrSequence=25,.available=true,
-      .referenceOrigin=i*PERIOD_DTU,.followerOrigin=i*PERIOD_DTU,.originAgeMs=500,.delayAgeMs=850,.remainingMs=150};
-    testTick=600+i*1000;
-    deliverRelation(900+i,i*PERIOD_DTU+500*DTU_PER_MS,i*PERIOD_DTU+500*DTU_PER_MS,&r);
+      .referenceOrigin=i*PERIOD_DTU,.followerOrigin=i*PERIOD_DTU,.originAgeMs=MUL_FOLLOWER_SLOT_MS,.delayAgeMs=350+MUL_FOLLOWER_SLOT_MS,.remainingMs=650-MUL_FOLLOWER_SLOT_MS};
+    testTick=100+MUL_FOLLOWER_SLOT_MS+i*1000;
+    deliverRelation(900+i,i*PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU,i*PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU,&r);
   }
   TEST_ASSERT_EQUAL_INT(mulClockValid,mulRoleScratch.rlr.rate.status);
   TEST_ASSERT_EQUAL_INT32(0,mulRoleScratch.rlr.rate.skewPpb);
@@ -991,6 +991,6 @@ void test_mulRlrStationaryRateUsesReferenceCadenceAndFreshCurrentMetadata(void) 
   // Same wire epoch transition used by acquisition changes invalidates rate.
   testTick=7100; deliver(referenceAddress,27,7*PERIOD_DTU,7*PERIOD_DTU,false);
   mulRelation_t changed={.epoch=11,.referenceSequence=27};
-  testTick=7600; deliverRelation(907,7500*DTU_PER_MS,7500*DTU_PER_MS,&changed);
+  testTick=7100+MUL_FOLLOWER_SLOT_MS; deliverRelation(907,(7*PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU),(7*PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU),&changed);
   TEST_ASSERT_TRUE(mulRoleScratch.rlr.rate.status!=mulClockValid);
 }

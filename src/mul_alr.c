@@ -431,7 +431,7 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
         uint64_t arrival;
         if (mulRxRead(dev, &packet, &arrival) && mulAlrRoleForAddress(packet.source) == mulAlrFollower) {
           int64_t phase = mulTimestampDifference(arrival, pendingTimestamp);
-          if (phase >= (int64_t)(450*MUL_DTU_PER_MS) && phase <= (int64_t)(600*MUL_DTU_PER_MS))
+          if (phase >= (int64_t)(MUL_SLOT_MIN_DTU) && phase <= (int64_t)(MUL_SLOT_PRESENCE_MAX_MS*MUL_DTU_PER_MS))
             followerSeen = true;
         }
         mulRxRearm(dev);

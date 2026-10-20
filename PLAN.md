@@ -160,7 +160,7 @@ for mobile robots. No centimetre accuracy or finite confidence bound is claimed.
 
 ## Stage 3D.1 — Controlled transmission-spacing experiment
 
-Status: CP2 shared configuration implemented; receiver gates follow in CP3. Starting point
+Status: CP3 scheduling/association implemented; diagnostics and synthetic oracle next. Starting point
 `3191b39`. User-reported midpoint geometry (1 m each side) produced -369 DTU /
 -1731 mm, STATIC/-2534 ppb, age 503 ms, power=1; TWR 1.88–1.95 m versus 2 m,
 follower skew +1.415 ppm, TX delta=0 and no gaps in the excerpt. An earlier
@@ -211,8 +211,14 @@ late ALR setup skips rather than moving TX or compromising timestamps. Validate
 
 ## Codex continuation checkpoint
 
-Stage 3D.1 CP1 pushed: `dd52423`. CP2 is the commit containing this section.
-Shared header accepts only 500/50/10; default host suite passes. Short-slot
-receiver acceptance is deliberately completed in CP3, before experimental use.
-Next: CP3 gates, CP4 diagnostic tests,
-CP5 full validation and hardware instructions. No physical hardware flashed.
+Stage 3D.1 CP1 pushed `dd52423`, CP2 pushed `9a4f43c`; CP3 is the commit
+containing this section. All 166 host tests pass for default 500 and stationary
+50/10 ms builds, including real-driver TX and live TWR exchanges. Slot windows
+are 450..550 /45..55 /8..12 ms; reference presence gates end at 600/60/14 ms.
+Candidate/rate maximum ages are 700/250/210 ms. One-Hz cadence, full identities,
+generations, single consumption and clock metadata binding are preserved.
+TWR needs no move: 650..730 ms remains separate from every supported slot;
+expiry stays 1000 ms, with earlier follower TX naturally leaving more validity.
+Next: CP4 compact configuration diagnostics, independent physical numerical
+oracle and focused boundary/priority regressions; CP5 sanitizers/builds/memory,
+architecture and hardware procedure. No physical hardware flashed.

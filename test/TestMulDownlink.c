@@ -18,16 +18,16 @@ void setUp(void) {
   pair.reference.valid=pair.follower.valid=true;
   pair.reference.source.sequence=6; pair.follower.source.sequence=900;
   pair.reference.source.txTimestamp=MUL_TIMESTAMP_MASK-200*MS;
-  pair.follower.source.txTimestamp=500*MS;
-  pair.reference.acceptedMs=1000; pair.follower.acceptedMs=1500;
+  pair.follower.source.txTimestamp=MUL_FOLLOWER_SLOT_DTU;
+  pair.reference.acceptedMs=1000; pair.follower.acceptedMs=1000+MUL_FOLLOWER_SLOT_MS;
   relation=(mulRelation_t){.available=true,.epoch=10,.referenceSequence=6,.twrSequence=5,
-    .referenceOrigin=pair.reference.source.txTimestamp,.originAgeMs=500,.delayAgeMs=850,.remainingMs=150};
+    .referenceOrigin=pair.reference.source.txTimestamp,.originAgeMs=MUL_FOLLOWER_SLOT_MS,.delayAgeMs=350+MUL_FOLLOWER_SLOT_MS,.remainingMs=150};
 }
 void tearDown(void) {}
 void test_mulDownlinkBindsCurrentPairWithoutCrossDomainSubtraction(void) {
   int64_t dt;
-  TEST_ASSERT_TRUE(mulDownlinkRelation(&relation,&pair,1500,1,&dt));
-  TEST_ASSERT_EQUAL_INT64(500*MS,dt); TEST_ASSERT_TRUE(pair.clockRelationAvailable);
+  TEST_ASSERT_TRUE(mulDownlinkRelation(&relation,&pair,1000+MUL_FOLLOWER_SLOT_MS,1,&dt));
+  TEST_ASSERT_EQUAL_INT64(MUL_FOLLOWER_SLOT_DTU,dt); TEST_ASSERT_TRUE(pair.clockRelationAvailable);
   TEST_ASSERT_FALSE(pair.geometricTdoaAvailable);
 }
 void test_mulDownlinkRejectsStaleMissingWrongReferenceDomainsAndHardwareAge(void) {
@@ -39,12 +39,12 @@ void test_mulDownlinkRejectsStaleMissingWrongReferenceDomainsAndHardwareAge(void
     if (i==3) pair.reference.receiverClock[1]++;
     if (i==4) relation.remainingMs=1;
     if (i==5) pair.follower.sourceClock[7]++;
-    TEST_ASSERT_FALSE(mulDownlinkRelation(&relation,&pair,1500,2,&dt));
+    TEST_ASSERT_FALSE(mulDownlinkRelation(&relation,&pair,1000+MUL_FOLLOWER_SLOT_MS,2,&dt));
     TEST_ASSERT_EQUAL_INT64(123,dt); TEST_ASSERT_FALSE(pair.clockRelationAvailable);
   }
   setUp(); int64_t dt;
-  TEST_ASSERT_FALSE(mulDownlinkRelation(&relation,&pair,1500,UINT32_MAX,&dt));
-  TEST_ASSERT_FALSE(mulDownlinkRelation(&relation,&pair,1651,0,&dt));
+  TEST_ASSERT_FALSE(mulDownlinkRelation(&relation,&pair,1000+MUL_FOLLOWER_SLOT_MS,UINT32_MAX,&dt));
+  TEST_ASSERT_FALSE(mulDownlinkRelation(&relation,&pair,1000+MUL_FOLLOWER_SLOT_MS+151,0,&dt));
 }
 
 static mulClock_t rlrRate;
@@ -56,7 +56,7 @@ static int64_t scaled(int64_t v,int32_t ppb) {
 }
 static void physicalCase(int32_t followerPpb,int32_t receiverPpb,int64_t rangeDifference) {
   setUp();
-  int64_t slot=500*MS, interAlr=4263, refToRlr=4000, folToRlr=4000+rangeDifference;
+  int64_t slot=MUL_FOLLOWER_SLOT_DTU, interAlr=4263, refToRlr=4000, folToRlr=4000+rangeDifference;
   uint64_t refTx=pair.reference.source.txTimestamp;
   uint64_t offset=MUL_TIMESTAMP_MASK-200*MS;
   // Arrival aligned origin would be offset + a*interAlr; remove propagation.
@@ -80,7 +80,7 @@ void test_mulDownlinkIndependentRatesSignedGeometryZeroAndNonzeroPropagationAtWr
   const int32_t rates[]={-150000,0,150000}; const int64_t differences[]={-1000,0,1000};
   for (unsigned int a=0;a<3;a++) for (unsigned int b=0;b<3;b++) for (unsigned int c=0;c<3;c++) {
     physicalCase(rates[a],rates[b],differences[c]);
-    mulDownlink_t d=mulDownlinkCompute(&relation,&pair,&rlrRate,1500,1,true);
+    mulDownlink_t d=mulDownlinkCompute(&relation,&pair,&rlrRate,1000+MUL_FOLLOWER_SLOT_MS,1,true);
     TEST_ASSERT_EQUAL_INT(mulDownlinkAvailable,d.status);
     TEST_ASSERT_TRUE(pair.geometricTdoaAvailable); TEST_ASSERT_EQUAL_UINT64(UINT64_MAX,d.physicalBoundDtu);
     TEST_ASSERT_INT64_WITHIN(2,differences[c],d.correctedTdoaRef);
@@ -97,7 +97,7 @@ void test_mulDownlinkNeverAssumesEqualRatesOrUsesUnboundOrStaleModels(void) {
     if (i==3) rlrRate.sequence++;
     if (i==4) rlrRate.observedMs=0;
     if (i==5) relation.delayAgeMs=1001;
-    mulDownlink_t d=mulDownlinkCompute(&relation,&pair,&rlrRate,1500,1,i!=6);
+    mulDownlink_t d=mulDownlinkCompute(&relation,&pair,&rlrRate,1000+MUL_FOLLOWER_SLOT_MS,1,i!=6);
     TEST_ASSERT_TRUE(d.status!=mulDownlinkAvailable); TEST_ASSERT_FALSE(pair.geometricTdoaAvailable);
   }
 }
@@ -105,12 +105,12 @@ void test_mulDownlinkRetainsRawAndCorrectedAndMissingPowerIsExplicit(void) {
   physicalCase(5000,-10000,-1000);
   pair.follower.source.rxTimestamp=mulTimestampMask(pair.follower.source.rxTimestamp+10);
   pair.rawArrivalDifferenceDtu+=10;
-  mulDownlink_t d=mulDownlinkCompute(&relation,&pair,&rlrRate,1500,1,true);
+  mulDownlink_t d=mulDownlinkCompute(&relation,&pair,&rlrRate,1000+MUL_FOLLOWER_SLOT_MS,1,true);
   TEST_ASSERT_EQUAL_INT(mulDownlinkAvailable,d.status);
   TEST_ASSERT_INT64_WITHIN(2,-1000,d.correctedTdoaRef);
   TEST_ASSERT_INT64_WITHIN(2,-990,d.rawTdoaRef);
   pair.correctedAvailable=false;
-  d=mulDownlinkCompute(&relation,&pair,&rlrRate,1500,1,true);
+  d=mulDownlinkCompute(&relation,&pair,&rlrRate,1000+MUL_FOLLOWER_SLOT_MS,1,true);
   TEST_ASSERT_EQUAL_INT(mulDownlinkAvailable,d.status); TEST_ASSERT_FALSE(d.correctedAvailable);
   TEST_ASSERT_INT64_WITHIN(2,-990,d.rawTdoaRef);
 }
@@ -125,7 +125,7 @@ void test_mulDownlinkCadenceRateConvergesButMotionCannotBeIndependentlyIdentifie
   TEST_ASSERT_EQUAL_INT(mulClockValid,estimate.status); TEST_ASSERT_EQUAL_INT32(5000,estimate.skewPpb);
   // Therefore a stationary declaration is mandatory; default policy rejects it.
   physicalCase(0,5000,0);
-  TEST_ASSERT_EQUAL_INT(mulDownlinkNoRate,mulDownlinkCompute(&relation,&pair,&rlrRate,1500,1,false).status);
+  TEST_ASSERT_EQUAL_INT(mulDownlinkNoRate,mulDownlinkCompute(&relation,&pair,&rlrRate,1000+MUL_FOLLOWER_SLOT_MS,1,false).status);
   // An observed abrupt path jump invalidates the reused cadence estimator.
   packet.sequence=6; packet.txTimestamp=6000*MS;
   mulClockObserve(&estimate,&packet,packet.txTimestamp+100*MS,6000,true);

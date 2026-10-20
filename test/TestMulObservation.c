@@ -86,35 +86,35 @@ static void train(void) {
   memset(&association,0,sizeof(association)); memset(&pair,0,sizeof(pair));
   baseRx=MUL_TIMESTAMP_MASK-1200*MS;
   TEST_ASSERT_FALSE(associate(0,UINT32_MAX,0,-5,100));
-  TEST_ASSERT_FALSE(associate(1,700,500*MS,3,600));
+  TEST_ASSERT_FALSE(associate(1,700,MUL_FOLLOWER_SLOT_DTU,3,100+MUL_FOLLOWER_SLOT_MS));
   TEST_ASSERT_FALSE(associate(0,0,1000*MS,-6,1100));
   TEST_ASSERT_TRUE(association.pending);
 }
 
 void test_mulAssociationUsesOrderCadenceIndependentSequencesAndReceiverClockOnly(void) {
-  train(); TEST_ASSERT_TRUE(associate(1,701,1500*MS,8,1600));
+  train(); TEST_ASSERT_TRUE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS)*MS,8,1100+MUL_FOLLOWER_SLOT_MS));
   TEST_ASSERT_EQUAL_UINT32(0,pair.reference.source.sequence);
   TEST_ASSERT_EQUAL_UINT32(701,pair.follower.source.sequence);
-  TEST_ASSERT_EQUAL_INT64(500*MS,pair.rawArrivalDifferenceDtu);
-  TEST_ASSERT_EQUAL_INT64(500*MS+14,pair.correctedArrivalDifferenceDtu);
+  TEST_ASSERT_EQUAL_INT64(MUL_FOLLOWER_SLOT_DTU,pair.rawArrivalDifferenceDtu);
+  TEST_ASSERT_EQUAL_INT64(MUL_FOLLOWER_SLOT_DTU+14,pair.correctedArrivalDifferenceDtu);
   TEST_ASSERT_TRUE(pair.correctedAvailable);
   TEST_ASSERT_FALSE(pair.clockRelationAvailable); TEST_ASSERT_FALSE(pair.geometricTdoaAvailable);
   TEST_ASSERT_EQUAL_UINT64(UINT64_MAX,pair.physicalBoundDtu);
   TEST_ASSERT_TRUE(pair.reference.source.txTimestamp != pair.follower.source.txTimestamp);
-  TEST_ASSERT_FALSE(associate(1,701,1500*MS,8,1601)); // Duplicate cannot emit again.
+  TEST_ASSERT_FALSE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS)*MS,8,1101+MUL_FOLLOWER_SLOT_MS)); // Duplicate cannot emit again.
   TEST_ASSERT_FALSE(association.pending);
 }
 
 void test_mulAssociationRejectsWrongSlotStaleGapsOldAndOrder(void) {
   for (unsigned int which=0;which<6;which++) {
     setUp(); train();
-    if (which==0) { TEST_ASSERT_FALSE(associate(1,701,1400*MS,0,1500)); }
-    if (which==1) { TEST_ASSERT_FALSE(associate(1,701,1600*MS,0,1700)); }
-    if (which==2) { TEST_ASSERT_FALSE(associate(1,702,1500*MS,0,1600)); } // Gap.
-    if (which==3) { TEST_ASSERT_FALSE(associate(1,699,1500*MS,0,1600)); } // Old.
-    if (which==4) { TEST_ASSERT_FALSE(associate(1,701,1500*MS,0,1900)); } // Coarse age >700.
+    if (which==0) { TEST_ASSERT_FALSE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS-MUL_SLOT_TOLERANCE_MS-1)*MS,0,1100+MUL_FOLLOWER_SLOT_MS)); }
+    if (which==1) { TEST_ASSERT_FALSE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS+MUL_SLOT_TOLERANCE_MS+1)*MS,0,1100+MUL_FOLLOWER_SLOT_MS)); }
+    if (which==2) { TEST_ASSERT_FALSE(associate(1,702,(1000+MUL_FOLLOWER_SLOT_MS)*MS,0,1100+MUL_FOLLOWER_SLOT_MS)); } // Gap.
+    if (which==3) { TEST_ASSERT_FALSE(associate(1,699,(1000+MUL_FOLLOWER_SLOT_MS)*MS,0,1100+MUL_FOLLOWER_SLOT_MS)); } // Old.
+    if (which==4) { TEST_ASSERT_FALSE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS)*MS,0,1900)); } // Beyond the configured coarse age.
     if (which==5) {
-      association.pending=false; TEST_ASSERT_FALSE(associate(1,701,1500*MS,0,1600));
+      association.pending=false; TEST_ASSERT_FALSE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS)*MS,0,1100+MUL_FOLLOWER_SLOT_MS));
     }
   }
   setUp(); train();
@@ -124,13 +124,13 @@ void test_mulAssociationRejectsWrongSlotStaleGapsOldAndOrder(void) {
 
 void test_mulAssociationDomainGenerationAndMissingPowerProtection(void) {
   setUp(); train(); observations[0].receiverClock[0]^=1;
-  TEST_ASSERT_FALSE(associate(1,701,1500*MS,0,1600));
+  TEST_ASSERT_FALSE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS)*MS,0,1100+MUL_FOLLOWER_SLOT_MS));
   setUp(); train(); observations[0].sourceClock[1]=1;
-  TEST_ASSERT_FALSE(associate(1,701,1500*MS,0,1600));
+  TEST_ASSERT_FALSE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS)*MS,0,1100+MUL_FOLLOWER_SLOT_MS));
   setUp(); train(); observations[0].generation++;
-  TEST_ASSERT_FALSE(associate(1,701,1500*MS,0,1600));
+  TEST_ASSERT_FALSE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS)*MS,0,1100+MUL_FOLLOWER_SLOT_MS));
   setUp(); train(); observations[0].power.status=mulPowerMissing;
-  TEST_ASSERT_TRUE(associate(1,701,1500*MS,0,1600));
+  TEST_ASSERT_TRUE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS)*MS,0,1100+MUL_FOLLOWER_SLOT_MS));
   TEST_ASSERT_FALSE(pair.correctedAvailable); TEST_ASSERT_FALSE(pair.geometricTdoaAvailable);
 }
 
@@ -139,9 +139,9 @@ void test_mulAssociationReferenceRestartExpiresCandidateAndRequiresNewCadence(vo
   TEST_ASSERT_FALSE(association.pending);
   TEST_ASSERT_FALSE(associate(0,99,5000*MS,0,5100)); // Changed stale sequence: local generation 2.
   TEST_ASSERT_FALSE(association.pending);
-  TEST_ASSERT_FALSE(associate(1,5,5500*MS,0,5600));
+  TEST_ASSERT_FALSE(associate(1,5,(5000+MUL_FOLLOWER_SLOT_MS)*MS,0,5100+MUL_FOLLOWER_SLOT_MS));
   TEST_ASSERT_FALSE(associate(0,100,6000*MS,0,6100));
-  TEST_ASSERT_TRUE(associate(1,6,6500*MS,0,6600));
+  TEST_ASSERT_TRUE(associate(1,6,(6000+MUL_FOLLOWER_SLOT_MS)*MS,0,6100+MUL_FOLLOWER_SLOT_MS));
   TEST_ASSERT_EQUAL_UINT32(2,pair.reference.generation);
   TEST_ASSERT_EQUAL_UINT32(2,pair.follower.generation);
   TEST_ASSERT_FALSE(pair.reference.remoteEpochKnown);
@@ -150,11 +150,11 @@ void test_mulAssociationReferenceRestartExpiresCandidateAndRequiresNewCadence(vo
 void test_mulAssociationRejectsFullWrapAliasAndRecoversAfterMissingFrame(void) {
   train();
   // Same low 40 bits/slot, but coarse uptime reveals a whole counter wrap.
-  TEST_ASSERT_FALSE(associate(1,701,1500*MS,0,18800));
+  TEST_ASSERT_FALSE(associate(1,701,(1000+MUL_FOLLOWER_SLOT_MS)*MS,0,18800));
   TEST_ASSERT_FALSE(association.pending);
   setUp(); train();
   TEST_ASSERT_FALSE(associate(0,1,2000*MS,0,2100)); // Missing prior follower.
-  TEST_ASSERT_FALSE(associate(1,702,2500*MS,0,2600)); // Follower gap suppresses pair.
+  TEST_ASSERT_FALSE(associate(1,702,(2000+MUL_FOLLOWER_SLOT_MS)*MS,0,2100+MUL_FOLLOWER_SLOT_MS)); // Follower gap suppresses pair.
   TEST_ASSERT_FALSE(associate(0,2,3000*MS,0,3100));
-  TEST_ASSERT_TRUE(associate(1,703,3500*MS,0,3600));
+  TEST_ASSERT_TRUE(associate(1,703,(3000+MUL_FOLLOWER_SLOT_MS)*MS,0,3100+MUL_FOLLOWER_SLOT_MS));
 }

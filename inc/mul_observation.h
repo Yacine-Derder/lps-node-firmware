@@ -2,6 +2,7 @@
 #ifndef MUL_OBSERVATION_H
 #define MUL_OBSERVATION_H
 #include "mul_common.h"
+#include "mul_timing.h"
 #include "mul_power.h"
 
 // One bounded slot per full supported source identity. source.txTimestamp is in
@@ -26,7 +27,6 @@ void mulObservationExpire(mulObservation_t observations[2], uint32_t nowMs);
 mulSequenceResult_t mulObservationRecord(mulObservation_t observations[2],
   const mulTestPacket_t *packet, const mulPowerRx_t *rx, uint32_t nowMs);
 
-#define MUL_PAIR_MAX_AGE_MS 700
 // A single candidate reference, consumed once. No unbounded packet history.
 typedef struct {
   uint32_t referenceSequence;
