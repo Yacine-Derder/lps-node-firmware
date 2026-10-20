@@ -227,3 +227,34 @@ reliable combined control-loop operation. A records six UART error callbacks,
 27 dropped/flushed bytes and console queue loss; B records none. SPI interrupt
 masking is a concrete latency risk, not a proven cause. Mixed-radio timestamp,
 ranging, calibration and localization correctness remain unvalidated.
+
+
+## Stage 3G — Portable core and opt-in MUL diagnostic
+
+CP0/CP1 audit/design: canonical source will live in LPS `portable/mul_core`.
+STM32 will vendor an exact published LPS commit with file hashes, verified by
+its build; explicit export/check scripts prevent independently evolving copies.
+A third remote/submodule adds avoidable administration and clone dependencies.
+Local offline builds use checked-in pinned source; no sibling directory required.
+
+Extraction: move only existing pure `mul_common` codec/address/sequence/40-bit
+helpers, preserving APIs/wire behavior through LPS forwarding adapters. Keep
+clock estimator, correction lifecycle, relations, TWR, observations and radio
+scheduling in their current implementation. Introduce a separate type/version
+for diagnostic messages with full identities and explicit raw timestamp metadata;
+do not reinterpret Stage3E packets. Immediate TX reports actual hardware marker
+on completion and carries the previous completed marker with its sequence in
+the next packet, never a guessed current TX timestamp.
+
+Platform boundary: channel5 configuration, CRC/FCS, SPI/IRQ, raw timestamp reads,
+TX/RX ownership/rearm and logging remain platform-specific. No radio vtable or
+dynamic allocation. LPS overlays mode-exclusive128-byte scratch; STM32 uses
+bounded task-level polling/logging and optional timing instrumentation. Existing
+SPI interrupt masking remains a measured-risk investigation, not a claimed fix.
+
+Execution: CP2 core + host/golden tests; CP3 DW adapter; CP4 STM32 adapter and
+pin; CP5 regressions/build/resource matrix; CP6 coexistence instrumentation and
+assessment; CP7 exact hardware instructions and compatible Git SHA handoff.
+Preserve all pre-existing user edits, default/Stage3E/Stage3F operation. Do not
+flash, implement mixed-radio ranging/TDoA, or begin Stage3H. Stage3G hardware
+acceptance remains pending user A/B/concurrent UART experiment logs.
