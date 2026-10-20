@@ -1,7 +1,8 @@
 # Stage 3F: opt-in PHY packet experiment
 
-Status: CP0–CP6 software experiment implemented and validated; hardware
-interoperability UNVERIFIED. Stage 3G is gated on bidirectional valid reception.
+Status: Stage 3F packet interoperability accepted from user hardware logs reviewed
+2026-10-20. Stage 3G may begin; reliability and timing limitations are recorded
+in [the experiment results](#hardware-results-reviewed-2026-10-20).
 The central project document remains unchanged. Existing e-puck streaming/control
 work is preserved; this experiment does not port MUL or perform mixed-radio ranging.
 
@@ -29,15 +30,15 @@ The local driver definitions are authoritative for the installed API version.
 | STS / PDOA |not supported |STS off /M0 |off /M0; STS/4z/SCP excluded |
 | MAC/FCS |hardware CRC16 |hardware CRC16 |32-byte MAC+payload,34-byte PSDU incl FCS; no ACK/filter |
 | RX |IRQ-to-task, manual rearm |normal IRQ callbacks |bounded capture, rearm on frame/error/timeout; no radio wait loops |
-| Timeout |algorithm dependent |TWR dependent |RX ~0.5s; TX watchdog100ms, low-rate1Hz TX |
+| Timeout |algorithm dependent |TWR dependent |RX 50000 UUS (~51.28ms); TX watchdog100ms, low-rate1Hz TX |
 | Timestamp |40-bit, nominal15.65ps DTU |40-bit, nominal same DTU; coarse APIs also exist |log raw marker only; origins/calibration/correction semantics NOT interchangeable |
 
 Local evidence: LPS `src/uwb.c`, `dwSetDataRate`, `dwTune` and DW register
 constants; e-puck `qorvo_port.c`, `deca_device_api.h`, DW3000 configuration code.
-Confirmed: both installed drivers expose the candidate settings. Plausible:
-bidirectional frame interoperability, pending the user gate below. Unsupported:
+Confirmed: both installed drivers expose the candidate settings, and user logs
+demonstrate bidirectional CRC/payload-valid reception on channel5. Unsupported:
 current ch2/ch9 pairing, DW1000 STS/4z or DW3000 110K operation. Unresolved:
-actual RF reception, board RF/clock/OTP tuning, TX power,
+reproducible delivery performance, board RF/clock/OTP tuning, TX power,
 antenna placement and combined control-loop timing. Timestamps are diagnostic
 markers only, not mixed-radio range/TDoA validation. No MCS needed.
 
@@ -212,6 +213,187 @@ and any reproducible asymmetry explained or explicitly recorded. Compilation,
 local SPI mocks, same-family TWR, or a common channel do not meet this gate.
 Mixed-radio ranging/timestamps, portable MUL core and localization remain excluded.
 
+## Hardware results reviewed 2026-10-20
+
+The user performed the A/B experiments; Codex inspected all 2535 supplied lines,
+not physical hardware. Raw files remain in the sibling `epuck-stm32/` checkout
+(ignored local captures, not newly committed). Provenance:
+
+| File | Lines | SHA-256 |
+|---|---:|---|
+| A-tx.log |1158|`17e8230cbcdcc0d81b1544e3937f62e916847298c5c8d026a125e2f9a03508d7`|
+| A-rx.log |881|`efc48f4b996ec7ac1dea4938cc9a40ef79253e3f96fe09d101b7c649bc2c3b0c`|
+| B-tx.log |309|`c796de28e3cfda2f944d7027b33bed6437413533d9f0389c144ed752adcfef59`|
+| B-rx.log |187|`30e055e0f9d41caafeef806a3b4cc85d1ec2203be644db6f6564f981639e7cd0`|
+
+### Capture accounting
+
+Use one-based file lines and separate capture blocks at INIT/counter resets.
+Distinguish printed records from firmware cumulative counters. Forward sequence
+gaps count absent valid receptions between accepted sequences; they do not count
+leading/trailing capture omissions. Do not subtract independent radio timestamps
+to synchronize files. The v1 packet has no boot identifier or transmit timestamp.
+
+A-tx contains four INIT blocks, each with a startup seq0/1 prefix followed by a
+discontinuous continuation. B-rx repeats the same seq0 RX timestamp
+`2D61F1A48A` in both startup prefixes. These are evidence of duplicated/spliced
+capture sections, not sufficient evidence of distinct physical reboots. Never
+sum their cumulative counters or treat the discontinuities as RF packet loss.
+A-rx has a separate pre-experiment sensor session (lines1–530), then INIT and
+reset e-puck counters at531–532; its PHY observations belong to the latter session.
+
+| A TX block (INIT line) | Printed attempts / DONE records | Consecutive continuation | Last DONE counter |
+|---|---:|---|---:|
+|21|201 /201|369–567 (199 packets)|568|
+|645|81 /81|579–657 (79 packets)|658|
+|909|19 /19|13–29 (17 packets)|30|
+|987|57 /57|36–90 (55 packets)|91|
+
+All 358 printed attempts have matching completion records in their own block;
+there are352 distinct sequence values, with repeated startup0/1 prefixes.
+Neither358 nor352 is a denominator for A's RX capture. Every printed TX STAT
+has err=0,to=0. The first199-packet continuous continuation alone establishes
+the >=100 completed-transmission requirement; much of it is outside RX's window.
+The highest per-session DONE counter is658, not an additive experiment total.
+
+B-tx starts mid-session atseq66 and ends at134:69 consecutive attempts and69
+matching DONE records. DONE counters67–135 establish135 completions since that
+transmitter's initialization; the first66 completion lines are outside capture.
+STAT is printed before completion, so its final done=134 is correctly superseded
+by `PHY DONE ... seq=134 done=135` atline309. All TX STAT err=0,to=0.
+
+### Directional reception and errors
+
+| Evidence | A: DW1000 → DWM3000 | B: DWM3000 → DW1000 |
+|---|---|---|
+| Main receiver sequence span |2–90:89 sequence positions|0–136:137 sequence positions|
+| Firmware-valid receptions |85 (last STAT)|113 (STAT112 through135, then valid RX136)|
+| Firmware sequence gaps |4|24 (19 at118 was intermediate)|
+| Receiver-span valid fraction |85/89 =95.51%|113/137 =82.48%|
+| Printed RX records |82|65 in whole file;58 in main INIT block|
+| Duplicate / old / invalid counters |0 /0 /0|0 /0 /0 in both blocks|
+| Aggregate RX errors |103 through final STAT|56 through STAT at135; later count unknown|
+| RX timeouts |1634 through final STAT|2611 through STAT at135; later count unknown|
+| CRC / PHR-or-RS errors |0 /8 (cumulative detail counters)|not classified by this diagnostic driver|
+
+For A, `85 + 4 = 90 - 2 + 1`. Missing printed seq9,10,11 were received:
+seq8 and12 both report gaps=1, and valid rises5→10 between seq6 and12.
+The four actual receiver gaps are7,35,37,47. Thus seven absent text records
+are **not seven RF losses**. Two console messages explicitly report10 and2
+dropped output messages (lines535,626); these are not UART byte-drop counters.
+Nothing establishes delivery ofseq0/1 before A's first reception or afterseq90.
+
+B's first INIT block (lines21–59) has7 printed RX records, but last STAT
+valid24,gaps3,err8,to551 throughseq26. The main block (60–187) has58 RX records,
+including a repeated startup0; its counter totals cannot be added to the first
+block as independent receptions. In its main block, `113 + 24 = 136 + 1`.
+Counter increases account for unprinted earlier receptions; the0→68 text jump
+does not mean67 packets were lost. The final seq136 arrives after the last STAT;
+56 errors/2611 timeouts are observed lower bounds at that endpoint.
+
+Direct TX/RX record matching provides smaller, incomplete windows:
+
+- A: final TX continuations13–29 and36–90 give72 completed sequences,70
+  printed matches (97.22%); absent37,47. Startup0/1 repeats are excluded.
+  This excludes the other two receiver gaps and unprinted TX intervals.
+- B: bracket68–134 lies within the continuous TX66–134 capture and main RX
+  continuation:55/67 printed matches (82.09%); absent71,75,80,93,100,102,
+  104,120,124,125,126,128. RX135/136 follow the TX capture;66/67 precede the
+  visible RX continuation and must not be declared lost from missing text.
+
+These are descriptive fractions, not a synchronized end-to-end PDR measurement
+or a reproducible directional asymmetry. Geometry, antenna orientation, exact
+flashed image hashes/build flags and host-aligned capture times were not supplied.
+The logs confirm the advertised channel5 profile and diagnostic packet path,
+but cannot certify fixed geometry or exact firmware provenance. The strict
+`analyze_phy_logs.py` helper intentionally rejects A's discontinuous TX file;
+its reset-free assumptions do not apply to these full files. Do not force its
+output by merging repeated sequence numbers into one artificial experiment.
+
+### PHY diagnosis
+
+Installed Qorvo `deca_device_api.h` and `dw3000_deca_regs.h`, together with
+`Core/Src/phy_interop.c`, define the error interpretation. Of A's63 printed
+last-error snapshots,58 are `05800102` (SFD timeout bit`04000000`),4 are
+`01801302` (PHR error bit`00001000`), and1 is`01810F02` (RS/sync-loss
+bit`00010000`). Snapshot frequencies are **not event counts**: the service logs
+only the last status once per reporting interval; err103 and phr_rs8 are the
+cumulative counts. CRC remains0; these snapshots show no RX-overrun, CIA,
+STS-quality, filtering or SPI-CRC error bit. RCINIT/SPIRDY/PLL-lock and receive
+progress bits in the same words are not additional PHY failures.
+
+SFD timeout is classified in `err`, while ordinary frame-wait timeout increments
+`to`. At1Hz TX with ~51.28ms frame wait, roughly20 idle timeouts per second are
+expected. Neither timeout count is a missing-packet count. Errors may result
+from false preamble detection, interference, signal level/orientation or missed
+SFD acquisition; none of those causes is isolated here. B has only aggregate
+errors, so attributing its56 errors specifically to CRC would be unsupported.
+Successful valid reception after errors demonstrates recovery, not error-free RF.
+
+### e-puck UART and sensor diagnosis
+
+A's pre-experiment session has124 consecutive EPUCK status samples with rx=0,
+pong=0,data=0 despite advancing tx/started. Later it receives PONG, acknowledges
+STREAM and delivers data without recorded UART errors. This demonstrates an
+initially absent receive stream, not its electrical/power/firmware cause.
+`tx_fail=0` proves local transmission did not report failure; it does not prove
+the dsPIC was powered, ready or receiving it. No host time base supports an
+exact outage duration. The malformed console-command response atline413 is
+separate from USART1 receive/PHY errors.
+
+In A's actual PHY session, EPUCK counters end at rx73945,pong77,data702,
+drops27,errors6,bad_lines6,data_bad6,tx_fail0,stream_tx5. Drops/errors first
+appear atline623, then increase at715,784,794,861. These are demonstrated
+UART receive faults and rejected records, not just USB capture omissions.
+`epuck_link.c` counts error callbacks, damaged/full-ring bytes and deliberately
+flushed bytes on recovery;27 is not27 lost sensor samples, nor does errors6
+identify the hardware error subtype. STREAM re-acknowledgements and continuing
+valid sensor records demonstrate recovery. Valid sample ages in this session
+range54–175ms at printed snapshots; no motor/watchdog deadline guarantee follows.
+Acknowledged/confirmed100 with pending=1 alone is not a failed stream: pending
+also represents transaction/fence work in the current streaming state machine.
+
+B's34 EPUCK snapshots show continuous reception: data511→1171 (+660),
+pong53→119 (+66), rx53291→122084; all drops/errors/bad_lines/data_bad/tx_fail
+remain0, stream_tx1, acknowledged100,confirmed1,pending0. Valid sensor ages
+83–92ms are consistent with the100ms stream. DATA time65428→1892 advances
+2000ms modulo65536, matching the dsPIC bridge's16-bit unsigned tick in
+`epuck_programming/uart_bridge/main.c`; it is not evidence of a restart.
+Sampled status output is not the full10Hz DATA stream.
+
+One concrete latency risk exists in the unchanged Qorvo platform: both SPI
+rates use84MHz/64 =1.3125MHz, and `qorvo_spi.c` globally masks interrupts for
+blocking HAL transfers (`qorvo_irq.c`). A32-byte body alone takes about195us,
+versus86.8us per115200-8N1 UART character; RX reads and TX writes can delay
+USART1 servicing. This is a plausible overrun mechanism, not a demonstrated
+cause of A's six errors: no UART subtype, IRQ-off trace or timing correlation
+was captured, and B's TX session has no recorded UART errors. HAL_MAX_DELAY
+and the SPI-ready spin also prevent a hard latency bound. Do not change SPI
+speed, IRQ ownership, PHY or protocol solely on this evidence.
+
+Before claiming combined control-loop timing safety, capture USART error
+subtypes and IRQ-off/service latency alongside DATA ages and console-drop
+counters, with a matched UWB-off baseline and RX/TX trials at fixed geometry.
+Keep motors disarmed for that diagnosis. A later measured, separately tested
+platform fix may be justified; no production firmware change is made here.
+
+### Acceptance decision
+
+**Close Stage 3F's bidirectional packet-interoperability gate; Stage 3G may begin.**
+Both hardware CRC-good and strict v1 payload checks pass in both directions;
+each transmitter demonstrates >=100 completions, and gaps/errors/timeouts are
+assessed with the window limitations above. The gate specifies no zero-loss
+or minimum delivery percentage. This is user-performed hardware evidence,
+not an agent hardware test or proof of production reliability.
+
+The controlled >=100-packet **overlapping** fixed-geometry reliability run still
+needs an intact capture for each direction before making comparable PDR claims.
+Keep that follow-up and UART latency diagnosis visible in Stage3G planning.
+Stage3G authorization here means its gate is open; no shared-core extraction,
+mixed-radio ranging, clock conversion, calibration or localization is implemented
+by this review. The central project document still needs its owner's status
+update from Stage3F not started to packet gate accepted with these limitations.
+
 ### Restore the original default firmwares
 
 Close monitors. Restore LPS default channel2 without changing saved addresses/mode:
@@ -253,7 +435,8 @@ implementation f7f3e9f and final75a90e630de6bfb24bdcd23f2e25d40b07a52fd1 are pus
 to origin/main. LPS changes are isolated; the e-puck tree deliberately retains
 its ten pre-existing streaming/control edits/untracked document, checked by hashes
 and excluded from the diagnostic commits. Central/ESP32/dsPIC repositories were
-not modified. Proposed central-document update: Stage3F software ready, OTA pending.
+not modified. Proposed central-document update: Stage3F packet gate accepted,
+with reliability and combined UART timing limitations as reported above.
 
 Checks completed:
 - LPS193 host tests in default and Stage3E continuous10ms configurations;176 MUL
@@ -277,5 +460,11 @@ Checks completed:
   feature links no diagnostic state. HAL/vendor/library/interrupt timing remains
   outside these compiler-only figures; no hard real-time guarantee is claimed.
 
-No physical result has been obtained. The next required evidence is A/B/C logs
-and counters above; do not begin Stage3G or claim mixed-radio compatibility yet.
+Hardware-result review validation: all four full captures were parsed and their
+record/counter/window arithmetic checked with assertions. The three host analyzer
+regressions, STM32 codec/TX/RX/six activation sanitizer cases, and15 console /
+9 ESP regression scenarios were rerun and passed. This review changes
+documentation only; firmware/build files and the ten
+pre-existing user files were verified unchanged. Firmware was neither rebuilt
+for these documentation edits nor flashed. Prior build results above remain
+implementation-time validation; they do not identify the flashed hardware image.

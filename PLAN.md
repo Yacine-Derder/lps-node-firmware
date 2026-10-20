@@ -177,7 +177,7 @@ Stage4 online calibration and Stage5 localization remain future tasks.
 
 ## Stage 3F — Cross-radio PHY experiment
 
-**Software experiment implemented/tested; bidirectional hardware gate PENDING.**
+**Stage 3F packet-interoperability gate accepted from user A/B logs (2026-10-20).**
 Stage 3E stationary ~1 Hz TDoA is hardware validated (user-reported central
 handoff); this is not cross-radio validation or bounded physical accuracy.
 Canonical evidence matrix, packet v1 and exact A/B/reliability/restore commands:
@@ -207,14 +207,23 @@ LPS default text123024/data1072/bss15292 is unchanged (20 bytes spare);
 experimental data1080/bss15292 (12 spare), scratch128 unchanged, radio callback
 frame120 bytes. STM32 working-tree Release RAM28568 default,28992 RX; diagnostic
 service frame280. Compiler estimates are not stack high-water or hard deadlines.
-No hardware flashed. Central Stage3F status needs a user-owned update to
-software experiment ready / OTA pending; it was intentionally not edited.
+No hardware flashed. The central document remains unchanged and needs an
+owner update to Stage3F packet gate accepted with reliability/timing limitations.
 
-**Next exact action requires the user:** execute Experiments A/B/C and supply
-both raw TX/RX logs per direction, JSON summaries, firmware hashes/flags,
-separation/orientations and any reproducible asymmetry. Stage3G MUST NOT begin
-until CRC/payload-valid frames are observed in both directions and >=100 TX per
-direction are assessed. Do not infer OTA success from builds/mocks. If awaiting
-a continuation without new hardware evidence, inspect for supplied results;
-there is no justification for more firmware changes or repeat builds solely to
-restate this checkpoint. No mixed-radio TWR/TDoA/localization was implemented.
+**Hardware review:** all four complete user captures were inspected. A has85
+valid receptions/89 receiver-span positions,4 gaps,103 errors,1634 frame-wait
+timeouts, CRC0 and PHR/RS8. B has113/137 positions,24 gaps; last STAT before the
+final frame reports56 aggregate errors and2611 timeouts. TX demonstrates >=100
+completions per direction. Repeated startup prefixes, missing text and unequal
+windows preclude a synchronized PDR or reproducible asymmetry claim; do not sum
+cumulative counters across capture blocks. Full provenance/accounting and UART
+findings are in [the experiment report](docs/phy_interop.md#hardware-results-reviewed-2026-10-20).
+
+**Next milestone:** Stage3G's bidirectional frame gate is open; no Stage3G work
+was begun during this review. Preserve the validated diagnostic profile and
+normal firmware. Carry forward an intact, overlapping >=100-packet fixed-geometry
+capture per direction and measured UART/IRQ latency diagnosis before claiming
+reliable combined control-loop operation. A records six UART error callbacks,
+27 dropped/flushed bytes and console queue loss; B records none. SPI interrupt
+masking is a concrete latency risk, not a proven cause. Mixed-radio timestamp,
+ranging, calibration and localization correctness remain unvalidated.

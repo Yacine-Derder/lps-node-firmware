@@ -13,7 +13,9 @@ The code defines implemented behavior; planned extensions below are not firmware
 - This firmware currently configures channel 2 in `src/uwb.c`.
 - The normal channel-2 configuration cannot interoperate directly with the
   e-puck channel-9 DWM3000 configuration. Stage 3F adds an explicit opt-in
-  diagnostic channel-5 profile; this has no over-the-air validation yet.
+  diagnostic channel-5 profile with user-validated bidirectional CRC/payload
+  reception. Packet delivery and combined UART timing retain the limitations
+  recorded in the PHY experiment report.
   DW3000 hardware supports channels 5/9, with limited DW1000 compatibility on
   channel 5; the families are not register/API interchangeable.
   See [Qorvo's DW3110 specification](https://www.qorvo.com/products/p/DW3110)
