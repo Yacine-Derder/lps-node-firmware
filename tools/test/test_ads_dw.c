@@ -54,6 +54,19 @@ int main(void) {
   // A missing TX completion cannot be replaced by an intended time.
   tick=2000; mulAdsAlgorithm.onEvent(&d,eventTimeout); assert(state.core.pending);
   tick=2100; mulAdsAlgorithm.onEvent(&d,eventTimeout); assert(!state.core.pending && state.core.aborted==1);
+  assert(state.core.lastAbortReason==adsAbortDeadline && state.core.lastAbortStage==adsPollTx);
+  // Replay the real negative observation: completed raw measurement, rejected range.
+  tick=3000; mulAdsAlgorithm.onEvent(&d,eventTimeout); sent(&d,0x344A792200ULL);
+  mulAdsPacket_t neg={.source=0x86,.destination=0x84,.session=state.core.session,.transaction=state.core.transaction,.type=mulAdsResponse};
+  receive(&d,&neg,0x34502B98D1ULL); sent(&d,0x3452F90200ULL);
+  neg.type=mulAdsReport; neg.stamps[0]=0x761756DDC1ULL;neg.stamps[1]=0x761D0963FCULL;neg.stamps[2]=0x761FD6D14DULL;
+  receive(&d,&neg,0); assert(state.core.completed==2 && state.core.invalidRanges==1 && !state.core.rangeValid);
+  assert(state.core.tof<0); // Raw value retained, never clamped/replaced.
+  tick=4000;mulAdsAlgorithm.onEvent(&d,eventTimeout);sent(&d,1000);
+  neg.type=mulAdsResponse;neg.transaction=state.core.transaction;memset(neg.stamps,0,sizeof(neg.stamps));
+  receive(&d,&neg,2000);sent(&d,3000);neg.type=mulAdsReport; // zero Db: math rejection.
+  receive(&d,&neg,4000);assert(state.core.lastAbortReason==adsAbortMath && state.core.failedStages[adsReportRx-1]==1);
+
 #else
   mulAdsPacket_t p={.source=0x86,.destination=0x84,.type=mulAdsPoll,.session=55,.transaction=1};
   receive(&d,&p,MUL_TIMESTAMP_MASK-20); assert(transmitted().type==mulAdsResponse);

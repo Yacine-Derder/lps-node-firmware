@@ -937,3 +937,12 @@ TX/automatic RX and abort/retry, while STM32 requires UWB-only motor/ESP isolati
 Wire/state/arithmetic contracts are in portable/mul_core/README.md; current
 experiment/build/limitations are in [the ADS guide](mul_ads_twr.md). This does
 not implement localization, multi-robot scheduling or online calibration.
+
+
+ADS completed-exchange accounting now remains distinct from physical-range
+acceptance: negative raw ToF is retained for research with range_valid=false and
+an invalid-range count. Arithmetic and antenna defaults are unchanged; neither
+a validity flag nor a robust offline filter establishes calibration. Session-tagged
+six-stamp logs and classified failed-stage counters make cross-run analysis
+explicit. Source/wire APIs remain canonical in portable/mul_core; experimental
+selection rules, evidence and calibration handoff are in docs/mul_ads_twr.md.

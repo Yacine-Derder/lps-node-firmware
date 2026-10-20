@@ -1,9 +1,10 @@
 # UWB-only ADS-TWR engineering and hardware handoff
 
-Software foundation implemented; hardware ranging, accuracy and Stage3H hardware
-validation are **unverified**. Stage3G's reverse-direction sustained hardware gate
-also remains open. No hardware was flashed by Codex. No TDoA, localization,
-multi-robot scheduling, motion control or online calibration is added here.
+User hardware logs demonstrate mixed-radio ADS exchanges. Calibrated accuracy,
+reliability and safety acceptance remain **open**; the hardened software in this
+handoff has not been flashed. Stage3G's reverse-direction sustained gate remains
+open. No new Stage3H work, TDoA/localization, scheduling or calibration constants
+are introduced. Source/wire contract: portable/mul_core/README.md.
 
 ## Stage3G audit and evidence
 
@@ -133,166 +134,322 @@ proven channel5/PRF64/code9/preamble128/IEEE4a-SFD/6.8M/stdPHR profile. DWM poll
 is at most once/ms, task level; DW callback service wakes at most5ms when idle.
 No fine deterministic reply interval or physical deadline is promised.
 
-## Exact builds, artifacts and user-only flashing
+## First mixed-radio ranging review and hardening (2026-10-20)
 
-First test: DW1000 initiator84, DWM3000 responder86. Keep robots stationary,
-secured with wheels clear. ESP and sensor streaming remain off. Require actual
-startup STOP ACK/disarmed and STREAM_STATUS confirmed0 on STM32. ARM/movement
-are rejected; watchdog, emergency STOP and UART safety servicing stay active.
-The new STM32 profile refuses configuration unless MUL_UWB_ONLY=ON and both
-other radio roles are0. Default normal mode and diagnostics remain available.
-No ESP or dsPIC update is required for these UWB-only experiments.
+This handoff requires500 completed exchanges per distance. It audits the existing
+ADS foundation; no new Stage3H protocol,
+TDoA/localization, scheduling or online calibration stage is started.
+
+The user-operated approximate1m captures are now available locally. Generated
+[measurement report](ads_first_hardware_report.md) and
+[all219 raw samples/flags](ads_first_hardware_samples.csv) are authoritative for
+accounting, hashes, percentiles and selection denominators. Reproduce from LPS:
+
+```sh
+python3 tools/test/analyze_ads_logs.py \
+  --initiator /home/derder/Documents/ADS-ALR-initiator.log \
+  --responder /home/derder/Documents/ADS-RLR-responder.log \
+  --reference-m 1.0 --max-range-m 10 --jump-m 0.5 \
+  --csv docs/ads_first_hardware_samples.csv \
+  --report docs/ads_first_hardware_report.md
+python3 -m unittest discover -s tools/test -p test_analyze_ads_logs.py -v
+```
+
+If logs are elsewhere, supply their actual paths. If absent, place complete,
+unedited `ADS-ALR-initiator.log` and `ADS-RLR-responder.log` under
+`/home/derder/Documents/`, then run this command. Raw inputs are never overwritten.
+The tool handles concatenated/truncated records, counter resets/wrap, session
+changes, duplicate/out-of-order IDs, missing TIMES, nonfinite fields and signed
+modulo40 arithmetic. Unique preceding TIMES must match file/epoch/session/id;
+legacy untagged TIMES uses only its current capture epoch, never another session.
+Unknown responder sessions remain unknown. TIMES-only failed candidates remain
+in CSV without becoming successful ranges. Outputs are deterministic; report
+line numbers and hashes identify the inspected input. Counter snapshots are
+never summed as independent events or pooled across devices.
+
+### Findings and limits
+
+- 219 RESULTS each have six unique matching timestamps. Independent rational
+arithmetic agrees with every firmware ToF, ratio and metre output within its
+printing precision: max absolute residuals4.991e-7DTU,4.993e-10ratio and
+0.00004951m. No association/order/within-exchange wrap defect is demonstrated.
+Raw timestamps show26 across-result local clock decreases, consistent with wraps;
+no individual exchange interval crosses wrap in these captures.
+- All219 finite raw samples: mean1.337567m, median1.3420m, population SD0.187779m,
+RMSE0.386280m against the **approximate**1m reference. One negative sample
+(id362, -1.3884m) is retained. Primary218 verified nonnegative samples: mean
+1.350071m, SD0.034344m, RMSE0.351752m, extrema1.2764–1.4716m. The explicit
+MAD rule additionally flags five high samples, leaving213 with mean1.347908m
+and SD0.031584m; this filtered subset does not replace the raw evidence or prove
+that those five samples are physically invalid.
+- Closed initiator cohort IDs326–550 reconstructs219 computed exchanges/225
+attempts (97.3333%) and6 aborts/225 (2.6667%). Counter conservation and paired
+records support this *one initiator* cohort, including the negative computation.
+The earlier endpoint counters cover a large omitted interval and startup failures.
+Last STAT is attempt550/done462/abort87/stage1; RESULT550 follows, so at least463
+computed exchanges are observed through capture end. Responder window is separate:
+first258/244/14 to last483/468/15, both idle, hence224 completions/225 newly
+accepted POLLs (99.5556%) and1/225 abort. The483/468/15 lifetime endpoint has
+96.8944% completed/resolved. These different windows/definitions are not a PDR.
+- Initiator final errors249/timeouts10334; responder1098/8988. Many errors/timeouts
+occur idle. Without old abort causes they cannot be assigned to the six or15
+active failures. No malformed packets or protocol rejects are recorded, but this
+alone does not prove error-free timestamp association or complete logging.
+- The capture has a truncated STAT4 concatenated with STAT326. No console drop
+message is printed; missing text remains demonstrated. Responder has no INIT,
+STOP ACK or LINK_STATUS endpoints, so no complete boot/safety validation follows.
+
+For id362 the within-domain intervals are Ra95581905, Rb47017297, Da47016239,
+Db95585851 DTU. Exact recomputation gives -295.932823488DTU and the printed
+-1.3884m. Thus the negative value is explained **mathematically by its inputs**,
+not by a formatting, wrap or metre-conversion bug. Its ratio1.000035092 is about
+35.09ppm, versus neighboring/median~10.02ppm. Ratio is derived from these same
+timestamps, not an independent oscillator measurement. A hypothetical single
+~3575DTU (~56ns) early t2 marker would explain both deviations, but other
+combinations of timestamp errors or time-varying clocks can also fit. This is a
+counterfactual diagnostic, **not an identified cause or a correction to apply**.
+RX estimation/channel effects, transient timing errors and capture association
+remain hypotheses. Constant-rate skew cancellation cannot explain or repair an
+arbitrary transient marker error. No equation, antenna constant or observed
+measurement was adjusted toward1m.
+
+### UART evidence
+
+One visible `[EPUCK] FAULT uart=5 bits=0x8 drops=14 bad_lines=3 data_bad=0`
+occurs between responder attempt360 and361. This is **USART1 e-puck link ORE**
+(HAL hardware overrun), not the earlier USART3/ESP fault. Five callbacks and14
+dropped/flushed bytes are cumulative endpoints, not five visible new faults;
+no initial snapshot is available. STREAM0 is subsequently acknowledged, supporting
+configuration recovery, without proving all safety deadlines. Old responder STAT
+has no session/transaction tag or synchronized time, so it cannot be aligned to
+initiator id362 or used to claim the UART fault caused a range outlier.
+
+Qorvo SPI still masks global PRIMASK around blocking HAL transfers; the SPI
+clock remains1.3125MHz. A56-byte body alone occupies341.3us, versus86.8us per
+UART character at115200-8N1. UART reception can therefore be delayed; other IRQ-off
+sites, USB interrupts and command formatting also exist. No timing trace was
+captured in these ADS files. This is a concrete mechanism to measure, not proof
+of causation. No driver masking/rate/DMA/priority policy was changed. New optional
+ADS DWT maxima expose outer SPI-off/service/start gaps; they are sampled maxima,
+not a fault-time trace or WCET. Use a matched radio-disabled baseline and, if
+needed, a logic-analyzer GPIO/UART/SPI trace to establish temporal overlap.
+
+### Minimal hardening and parseable diagnostics
+
+Wire protocol v1, PHY, six timestamp math and metre conversion stay unchanged.
+`done` retains completed-exchange semantics. Negative raw ToF now has
+`range_valid=0`, is counted separately in cumulative `bad_range`, and is excluded
+from physical-range acceptance without clamping or suppressing the raw RESULT.
+Zero/small positive ToF remains supported; range_valid1 is not a calibration or
+uncertainty certificate. The analyzer also flags sub-print-resolution negatives
+from exact recomputation. Its configurable10m bound is a declared laboratory
+filter, not a general hardware limit.
+
+TIMES and STAT now include session. Active aborts emit one compact record:
+
+```text
+MULH ABORT session=0000000078C3DCF1 id=362 cause=3 stage=6 by_stage=0,0,0,0,0,1,0
+MULH RESULT session=... id=... tof_dtu=... ratio=... nominal_m=... uncalibrated=1 range_valid=0
+MULH STAT attempt=... done=... abort=... reject=... invalid=... err=... to=... stage=... session=... bad_range=...
+```
+
+The ABORT example is illustrative, not an explanation of old id362. Cause0
+cancel,1 deadline/missing TX completion,2 radio error,3 RX timeout,4 TX start/write
+failure,5 encoding failure,6 invalid timestamp ordering/interval/clock/math.
+Stage1 POLL_TX,2 RESPONSE_RX,3 RESPONSE_TX,4 FINAL_RX,5 FINAL_TX,6 REPORT_RX,
+7 REPORT_TX. by_stage is cumulative, saturating at65535; do not sum snapshots.
+Idle RF errors/timeouts do not create active-abort records. Associated math-invalid
+REPORTs retain TIMES even without RESULT. `MUL_ADS_TRACE_TIMES=0` / CMake
+`-DMUL_ADS_TRACE_TIMES=OFF` reduces normal timestamp output; keep it ON for all
+calibration runs. No per-poll logging or general telemetry is added.
+
+### Exact hardened builds and flashing artifacts
+
+Build the DW1000 initiator with a fresh session at each boot/run:
 
 ```sh
 cd /home/derder/Documents/lps-node-firmware
 twr_session=$(date -u +%Y%m%d%H%M%S)
 make clean
-make -j4 EXTRA_CFLAGS="-DMUL_TWR_ROLE=1 -DMUL_TWR_SESSION=${twr_session}ULL"
+make -j4 EXTRA_CFLAGS="-DMUL_TWR_ROLE=1 -DMUL_TWR_SESSION=${twr_session}ULL -DMUL_ADS_TRACE_TIMES=1"
 cd /home/derder/Documents/epuck-stm32
-cmake -S . -B build/AdsResponder -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release -DPHY_INTEROP_ROLE=0 -DMUL_DIAG_ROLE=0 -DMUL_TWR_ROLE=2 -DMUL_TIMING_TRACE=OFF -DMUL_UWB_ONLY=ON
-cmake --build build/AdsResponder
+cmake -S . -B build/AdsResponderTrace -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release -DMUL_UWB_ONLY=ON -DMUL_TWR_ROLE=2 -DMUL_DIAG_ROLE=0 -DPHY_INTEROP_ROLE=0 -DMUL_TIMING_TRACE=ON -DMUL_ADS_TRACE_TIMES=ON
+cmake --build build/AdsResponderTrace
 ```
 
-Artifacts: `/home/derder/Documents/lps-node-firmware/bin/lps-node-firmware.elf`
-and `/home/derder/Documents/lps-node-firmware/bin/lps-node-firmware.dfu`; STM32 `/home/derder/Documents/epuck-stm32/build/AdsResponder/EPuck_STM32.elf`.
-Only the user flashes: LPS existing DFU procedure `sudo make dfu` from the LPS
-checkout **after the chosen build**; this target does not build. STM32CubeProgrammer
-open the selected ELF over the existing ST-LINK/SWD, download/verify/reset, or:
+Exact artifacts:
+
+```text
+/home/derder/Documents/lps-node-firmware/bin/lps-node-firmware.elf
+/home/derder/Documents/lps-node-firmware/bin/lps-node-firmware.dfu
+/home/derder/Documents/epuck-stm32/build/AdsResponderTrace/EPuck_STM32.elf
+```
+
+User-only flashing (not performed by Codex): LPS `sudo make dfu` from its checkout
+**after** the selected build. STM32CubeProgrammer SWD download/verify/reset the
+selected ELF; equivalent command:
 
 ```sh
-/home/derder/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI -c port=SWD -w /home/derder/Documents/epuck-stm32/build/AdsResponder/EPuck_STM32.elf -v -rst
+/home/derder/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI -c port=SWD -w /home/derder/Documents/epuck-stm32/build/AdsResponderTrace/EPuck_STM32.elf -v -rst
 ```
 
-For reversed ranging roles (software-tested, physical test later):
+Use `build/AdsResponder` with identical options except MUL_TIMING_TRACE=OFF for a
+controlled instrumentation A/B comparison; its ELF is
+`/home/derder/Documents/epuck-stm32/build/AdsResponder/EPuck_STM32.elf`.
+For reversed ranging roles use DW MUL_TWR_ROLE2 and STM32 MUL_TWR_ROLE1
+with a fresh session; exact commands are below. Explicitly keep MUL_TWR_ROLE0
+for diagnostic builds. For the radio-disabled
+baseline: build UwbOffSafe with MUL_TWR_ROLE0/MUL_DIAG_ROLE0/PHY_INTEROP_ROLE0,
+MUL_UWB_ONLY=ON, MUL_TIMING_TRACE=OFF and existing APP_UWB_ENABLED0. Retain the
+safety UART. Do not flash ESP/dsPIC or issue motion commands.
+
+### Controlled multi-distance data collection and calibration
+
+1. Secure/disarm the robot, keep wheels clear. Require actual STOP ACK and
+STREAM_STATUS confirmed0. Save LINK_STATUS/MOTOR_STATUS before/after each run.
+No ESP, Wi-Fi, ARM or motion commands. Stop if STOP acknowledgement or safe
+state is uncertain. Capture both consoles before initiating ranging; record
+firmware HEADs, portable pin, fresh session, PHY/power, antenna registers,
+orientation, antenna height, temperature and any resets.
+2. Precisely measure antenna-to-antenna0.5,1,2,3,5m (adjust to available space),
+with fixed height/orientation, stationary boards, clear LOS and controlled nearby
+reflectors. Record the measured distance and its uncertainty, not just a nominal
+label. Keep the same firmware/session/PHY/power for a full series where possible;
+record boundaries and reset only with a fresh initiator session.
+3. Use distinct complete raw logs per distance. Example separate terminals:
+
+```sh
+picocom -b 115200 --logfile ADS-0p5m-ALR.log "$LPS_PORT"
+picocom -b 115200 --logfile ADS-0p5m-RLR.log "$STM32_PORT"
+```
+
+Collect a fixed >=10minute/>=600-attempt window per distance, requiring **at least
+500 completed exchanges**; retain all failures/negative values. If fewer complete,
+mark that run failed and investigate; do not silently select only a convenient
+successful interval. Repeat placements/series to assess reproducibility and
+thermal drift; keep the original raw data. Also collect a matched10minute
+UwbOffSafe baseline, and trace-on/off comparison if UART faults recur.
+4. Run the analyzer separately for each pair using `--reference-m` equal to the
+precisely measured value; choose/predeclare a lab `--max-range-m` and `--jump-m`.
+Report raw, primary and robust subsets together, their exact counts/flags, RMSE,
+quantiles, negatives, jumps, ratio changes, all abort stages, radio timeouts,
+UART faults and console loss. Separate epochs and unmatched windows. Physical
+reference uncertainty is not reduced by collecting more radio samples.
+5. For distance d_j, estimate b_j=mean(range_j)-d_j, alongside median and interval
+estimates. Fit range=beta0+beta1*distance to per-distance summaries, with repeat-run
+and ground-truth uncertainty. A stable beta0 and beta1 compatible with1 supports
+a combined constant range-offset model. A trend in b_j or slope different from1
+suggests distance/power/channel/scale effects that a single offset must not hide.
+Use independent repeats or block-resampling for correlated data, and validate on
+held-out placements/distances before choosing parameters.
+6. Under constant rates/reciprocal LOS, combined residual delay approximately
+satisfies sum(e_TX_A,e_RX_A,e_TX_B,e_RX_B)=2*b/c in seconds. One pair cannot identify
+the four individual delays or a TX/RX split; reversed roles add a consistency test,
+not enough independent constraints. Calibrated-reference and additional device/
+RF-reference measurements are needed. See the manufacturer's calibration
+[overview/datasheet](https://store.qorvo.com/datasheets/qorvo/dwm1000datasheet.pdf)
+and [APS014 listing](https://www.qorvo.com/products/p/DW1000). This single approximate
+1m run supplies no calibrated antenna constants. No range correction parameter
+is introduced/enabled by this software change.
+
+### Hardware acceptance for the next checkpoint
+
+Predeclare these provisional engineering criteria; they are not a claimed pass:
+complete matched captures and >=500 completions at every measured distance;
+zero independent timestamp/math/session-association discrepancies; no lost STOP,
+unsafe motor state or unexplained safety-UART fault; demonstrated timeout/error
+recovery; all negative/implausible samples retained, flagged and investigated.
+Target >=95% computed-exchange completion in closed initiator cohorts, while
+reporting physical-range acceptance separately. A numerical target is not a
+substitute for explaining invalid samples or UART faults. No calibration/accuracy
+gate closes while unexplained negative ranges or safety faults remain.
+
+A provisional constant-bias model may advance only if multi-distance/repeat data
+support an intercept and slope compatible with1 within stated uncertainty, and
+held-out residuals/outliers meet a predeclared application accuracy target.
+Proposed initial lab targets are |held-out mean bias|<=0.10m, population SD<=0.05m,
+and95th-percentile absolute error<=0.20m at each measured distance, with<=1%
+explicitly flagged invalid ranges and no unresolved negative/safety failure.
+Freeze or revise these targets before data collection; they are proposed
+engineering thresholds, not IPIN/ICRA requirements or a claimed uncertainty bound.
+They have not been demonstrated by this approximate-distance run. Sustained reverse
+Stage3G communication and a genuine receiver-disabled baseline remain separate
+open hardware gates. Hardware operation remains with the user.
+
+
+## Restore and reverse-role builds
+
+To restore Stage3G reverse communication (DWM3000 TX→DW1000 RX):
 
 ```sh
 cd /home/derder/Documents/lps-node-firmware
-make clean && make -j4 EXTRA_CFLAGS="-DMUL_TWR_ROLE=2"
+make clean && make -j4 EXTRA_CFLAGS="-DMUL_DIAG_ROLE=2"
+cd /home/derder/Documents/epuck-stm32
+cmake -S . -B build/UwbOnlyTX -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release -DMUL_TWR_ROLE=0 -DMUL_DIAG_ROLE=1 -DPHY_INTEROP_ROLE=0 -DMUL_UWB_ONLY=ON -DMUL_TIMING_TRACE=OFF
+cmake --build build/UwbOnlyTX
+```
+
+STM32 ELF `/home/derder/Documents/epuck-stm32/build/UwbOnlyTX/EPuck_STM32.elf`;
+LPS ELF/DFU paths are unchanged. User-only SWD/DFU commands above apply after the
+chosen builds. For forward diagnostics swap DW role1 and STM32 role2, using
+build/UwbOnlyRX. Run >=10minutes/>=500 TX with intact matching metadata logs,
+then collect a genuine UwbOffSafe baseline and explicit safety counter endpoints.
+
+Optional reversed ADS adapter test builds (no new protocol stage):
+
+```sh
+cd /home/derder/Documents/lps-node-firmware
+make clean && make -j4 EXTRA_CFLAGS="-DMUL_TWR_ROLE=2 -DMUL_ADS_TRACE_TIMES=1"
 cd /home/derder/Documents/epuck-stm32
 twr_session=$(date -u +%Y%m%d%H%M%S)
-cmake -S . -B build/AdsInitiator -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release -DPHY_INTEROP_ROLE=0 -DMUL_DIAG_ROLE=0 -DMUL_TWR_ROLE=1 -DMUL_TWR_SESSION="$twr_session" -DMUL_TIMING_TRACE=OFF -DMUL_UWB_ONLY=ON
+cmake -S . -B build/AdsInitiator -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release -DMUL_TWR_ROLE=1 -DMUL_TWR_SESSION="$twr_session" -DMUL_DIAG_ROLE=0 -DPHY_INTEROP_ROLE=0 -DMUL_UWB_ONLY=ON -DMUL_TIMING_TRACE=OFF -DMUL_ADS_TRACE_TIMES=ON
 cmake --build build/AdsInitiator
 ```
 
-STM32 ELF: `/home/derder/Documents/epuck-stm32/build/AdsInitiator/EPuck_STM32.elf`.
-Do not reuse the initiator session after a reboot. LPS flags require clean builds.
+ELF `/home/derder/Documents/epuck-stm32/build/AdsInitiator/EPuck_STM32.elf`.
+Normal restore: LPS `make clean && make`, then user DFU. Configure STM32
+NormalBaseline with all radio roles0, UWB-only OFF and tracing OFF, then build
+and user-flash its ELF. Existing EEPROM modes, ESP/dsPIC functionality and raw
+experiment logs are preserved. No tracked files were removed or archived.
 
-## First stationary experiment and acceptance
+## Software validation checkpoint
 
-Start complete captures in separate terminals BEFORE restarting the initiator:
+Canonical portable pin:0e3b5802e04f87e2c6e5e41ae07c165ae07ea0d1. The equation and
+56-byte wire remain unchanged.16 analyzer tests cover malformed/concatenated logs,
+resets/wrap/session boundaries, ambiguities, independent arithmetic, negative/
+near-zero samples, cohort conservation, statistics and deterministic output.
+Portable tests cover the actual id362 vector, known propagation, both roles,
+clock offset/skew, wrap, extreme turnaround asymmetry, missed/late messages,
+negative/zero ToF, classified timeout and saturated failed-stage counters.
+Both radio adapters replay the real negative sample and exercise math rejection;
+DWM tests also cover TX write/start failure and maximum-length log formatting,
+with TIMES both enabled/disabled. Timing tests check both MULG/MULH labels.
 
-```sh
-picocom -b 115200 --logfile H-DW-init.log "$LPS_PORT"
-picocom -b 115200 --logfile H-DWM-resp.log "$STM32_PORT"
-```
+195 default and195 Stage3E continuous tests,178 MUL ASan/UBSan tests, cross-codec/
+real-driver DW and retained PHY tests pass. STM32 ADS, Stage3G/PHY,15 console,
+9 ESP,9 interleaved coexistence and UWB-only safety suites pass. Eight LPS and
+11 STM32 Release profiles build (ADS both roles, traced/quiet, previous diagnostic
+and normal profiles). No new driver warning is accepted; retained vendor/newlib
+warnings remain. Clean committed-export verification is recorded at delivery.
 
-Expect INIT role1/2, channel5, version1, bytes56, nominal antenna values;
-STM32 startup STOP/STREAM0 ACK. Once per second expect MULH STAT; initiator also:
+Release text/data/bss: DW ADS initiator128080/1080/15292, responder127360/1080/15292;
+static RAM16372 (12bytes spare), shared scratch128 unchanged. Default123024/1072/
+15292 and continuous123096/1072/15292 are unchanged. DWM ADS initiator78636/732/
+16248, responder77996/732/16248, responder+trace78444/732/16272; section RAM16980/
+17004 versus linker spans16984/17008. RAM/stack estimates do not prove physical
+high-water or deadlines. No hardware was flashed.
 
-```text
-MULH TIMES id=1 t1=... t2=... t3=... t4=... t5=... t6=...
-MULH RESULT session=000000000000007B id=1 tof_dtu=... ratio=... nominal_m=... uncalibrated=1
-MULH STAT attempt=... done=... abort=... reject=... invalid=... err=... to=... stage=...
-```
-
-TIMES preserves ten hex digits for each of the six measured inputs; t1/t4/t5
-are initiator clock, t2/t3/t6 responder clock. Values above are illustrative. Responder done counts REPORT TX, initiator done
-counts successful calculations. Abort is active exchange cancellation; invalid
-is decoding failure, reject is decoded but state/identity mismatch. Errors and
-idle RX timeouts are not packet loss. No per-poll output. Keep console drop
-messages, counter endpoints and exact build HEADs/pin/session; never sum reset
-epochs. Query LINK_STATUS, STREAM_STATUS and MOTOR_STATUS at start/end and after
-faults. No motor operation is needed or authorized by this experiment.
-
-Measure antenna-to-antenna distances0.5,1,2,3,5m in clear LOS, fixed height,
-orientation/power/channel, away from reflective surfaces. At each distance,
-record at least200 attempts (target200 successful) in each of three repeated
-placements; retain failures, do not stop early to discard bad samples. Include
-runs >40s for timestamp wrap. Log ground-truth distance uncertainty, temperature,
-antenna register values and any intentional interruption. Fit/compare mean bias
-(range minus measured distance), median, SD, MAD, percentiles and outlier count
-using an explicitly stated rule (e.g. >3MAD); report all samples as well as any
-filtered subset. Report successful initiator results/attempts in matched windows,
-abort reasons/counters and recovery time after covering/separating/resetting a
-peer. Use a fresh session after initiator reboot. Check >40-bit wrap stability.
-
-Fail/stop on unsafe/unknown motor state, lost STOP acknowledgement, radio init
-failure, no recovery after timeout, impossible ordering/session acceptance,
-nonfinite result, repeated console loss or unexplained UART errors. Large bias
-or negative nominal distances must be retained and investigated, not corrected
-with an arbitrary constant. Determine physical TX+RX antenna bias from several
-known separations and orientations; one pair alone cannot uniquely identify
-four per-device TX/RX delays. Add calibrated-peer/reference measurements and
-reverse roles to separate device contributions; characterize power/multipath
-and temperature dependence before claiming a calibration or uncertainty bound.
-
-### Restore and close remaining Stage3G gates
-
-Restore diagnostics with explicit MUL_TWR_ROLE=0. LPS: `make clean && make
-EXTRA_CFLAGS="-DMUL_DIAG_ROLE=2"` for RX, role1 for TX; user DFU after build.
-STM32: configure UwbOnlyTX/UwbOnlyRX as in [the Stage3G guide](mul_core.md#next-user-experiments--uwb-first),
-adding `-DMUL_TWR_ROLE=0`; select the corresponding `build/<profile>/EPuck_STM32.elf`.
-Collect sustained reverse DWM3000 TX→DW1000 RX >=10min/>=500 completed TX with
-matching metadata, then repeat forward with clean epoch diagnostics and intact
-windows. Capture a genuine STM32 UwbOffSafe baseline plus explicit LINK_STATUS
-endpoints. This is still needed to close the original communication/safety gate.
-Normal recovery: LPS `make clean && make`; STM32 NormalBaseline with all radio
-roles0/UWB-only OFF. Existing EEPROM modes are untouched. Optional Wi-Fi repair
-is outside this iteration; previous normal functionality remains available.
-
-## Cleanup inventory and verification boundary
-
-Inspected tracked source/docs and artifact/reference lists in all four repos.
-No tracked logs/binaries/object files were cleanup candidates. Candidate directories:
-LPS bin (~3MB), STM32 build (~85MB before new profiles), ESP32 build (~328MB).
-They include tested rollback images/configuration or unclear historical value;
-**none removed**. Raw A/B, G-A/B/C, disabled-baseline and UWB-only captures are
-experimental evidence and remain untouched, including the misnamed baseline.
-No untracked user file, dsPIC/ESP functionality, TDoA implementation, calibration
-record or historical design document was deleted/archived. No demonstrably dead
-source/helper/script justified removal. Existing diagnostic guides remain useful;
-this guide is authoritative for ADS and links to those retained procedures.
-LPS ignore rules now cover local *.log and Python caches; ignore is not deletion.
-Potential old build directories may be removed only after their owner identifies
-what rollback/configuration evidence to retain. No broad cleanup command used.
-
-Portable core/math/state/golden/fuzz tests and both adapter-role suites pass host
-sanitizers. Safety, diagnostic/PHY and Stage3E regressions are checked separately.
-Firmware compilation is evidence of integration, not radio exchange, physical
-accuracy, measured UART latency or motor safety. See PLAN.md for current status.
-
-
-Verified resource/build checkpoint (Release, text/data/bss bytes): LPS default
-123024/1072/15292, Stage3E continuous123096/1072/15292 (both unchanged), ADS
-initiator127168/1080/15292 and responder126616/1080/15292. The shared128-byte
-scratch is unchanged; experimental static RAM16372 leaves12 bytes spare.
-DWM3000 ADS initiator78052/732/16224, responder77556/732/16224; section RAM16956,
-linker RAM span16960 and FLASH78844/78344 including alignment. Compiler frames:
-DW callback224 bytes; STM32 ADS process376, init224; portable receive80/calculate64
-on Cortex-M4, plus caller/HAL/libc/IRQ frames. LPS UWB task reservation1600 bytes,
-STM32 linker stack minimum1024; these are not physical high-water measurements.
-Existing vendor/newlib warnings are retained; no new adapter warning is accepted.
-
-195 default and195 continuous LPS tests pass;178 MUL ASan/UBSan tests pass,
-plus independent portable ADS/core suites, real-driver DW roles and STM32 ADS
-roles/activation/failure tests. STM32 diagnostic/PHY,15 console/9 ESP/9 interleaved
-coexistence and UWB-only safety tests pass. Eight LPS profiles (default,
-continuous, both Stage3F, both Stage3G, both ADS) and nine STM32 profiles (both
-ADS plus UwbOnlyRX/TX, UwbOffSafe, CoexistRX, NormalBaseline, both Stage3F)
-build. Delayed-TX failure is intentionally inapplicable: tests assert immediate
-TX mode, start failure and missing completion; no delayed scheduling is called.
-The canonical portable core pin is ccd78acfb56ac9ea42c31b88d5db458380c67564.
-
-Reproduce host checks from the relevant checkout:
+Host checks from the relevant checkout:
 
 ```sh
-# LPS; Rake's existing submodule check expects python to resolve to Python3.
+# LPS (Rake's existing submodule check needs python→Python3 on PATH)
 sh portable/mul_core/tests/run.sh
 rake unit summary
 python3 tools/test/ads.py
 python3 tools/test/mul_core.py
 python3 tools/test/phy_interop.py
 python3 tools/test/mul_slots.py --slot 10 --prop-age 6000 --speed 0 --sanitize
+python3 -m unittest discover -s tools/test -p test_analyze_ads_logs.py -v
 # STM32
 sh tests/ads_radio/run.sh
 sh tests/mul_diag/run.sh
@@ -302,6 +459,3 @@ sh tests/esp_link/run.sh
 sh tests/uwb_policy/run.sh
 python3 tests/mul_diag/run_coexist.py
 ```
-
-Canonical/vendor verification runs offline. Local test tooling used a temporary
-python→python3 PATH shim outside the repositories; no dependency was changed.

@@ -315,3 +315,27 @@ separations and recovery tests; separately repeat clean forward and sustained
 reverse Stage3G communication with a genuine receiver-off baseline/counter
 endpoints. Stage3G hardware closure and Stage3H ranging accuracy are not claimed.
 No localization, multi-robot scheduling, TDoA extension or online calibration.
+
+
+## ADS hardware-log audit and minimal hardening
+
+**First six-timestamp mixed-radio exchanges demonstrated by user logs; calibrated
+accuracy, safety and hardware acceptance remain open. No new Stage3H work.**
+219 printed results independently match timestamp arithmetic/units. One negative
+sample is input-consistent, not an identified formula/wrap bug; its physical cause
+remains unresolved. Nonnegative verified218 samples average1.3501m at an approximate
+1m reference; this is not an antenna calibration. Closed initiator cohort219/225
+computed exchanges is separate from responder counters and is not a PDR.
+
+Reusable deterministic analyzer, tests, raw CSV and generated report are in tools/
+test and docs/ads_first_hardware_*. Negative raw measurements are retained but now
+marked range_valid0; completed and physical-range acceptance stay separate.
+Session-tagged TIMES/STAT, classified active aborts/saturating failed-stage counts
+and optional ADS SPI/service timing improve diagnosis. No equation, PHY, antenna
+constant or SPI policy change. Portable pin0e3b5802e04f87e2c6e5e41ae07c165ae07ea0d1.
+
+Next: five precisely measured distances with>=500 completions each, complete paired
+captures, STOP/disarm/stream-off counter evidence, genuine UWB-disabled baseline,
+UART attribution and held-out calibration checks in docs/mul_ads_twr.md. USART1
+ORE in the responder capture is demonstrated; causation/impact on UWB is not.
+Existing Stage3G gates remain open. No flashing, ESP/dsPIC edits or central-doc edit.
