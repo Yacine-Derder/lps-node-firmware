@@ -46,6 +46,7 @@ mulCoreStatus_t mulCoreDecodeDiag(const uint8_t *f,size_t length,mulCoreDiag_t *
   mulCoreStatus_t status=validate(&decoded); if (status==mulCoreOk) *m=decoded;
   return status;
 }
+void mulCoreSequenceBeginEpoch(mulCoreSequence_t *s) { if (s) s->baseline=false; }
 void mulCoreSequenceReset(mulCoreSequence_t *s) { if (s) memset(s,0,sizeof(*s)); }
 mulCoreOrder_t mulCoreObserveSequence(mulCoreSequence_t *s,uint32_t seq) {
   if (!s) return mulCoreOld;

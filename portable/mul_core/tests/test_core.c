@@ -56,6 +56,14 @@ int main(void) {
   assert(mulCoreObserveSequence(&s,1)==mulCoreOld);
   assert(s.valid==5 && s.gaps==1 && s.duplicates==1 && s.old==1 && s.last==2);
   mulCoreSequenceReset(&s); assert(!s.baseline && !s.valid);
+  /* Fast restart is ambiguous in v1; explicit epoch reset is caller-owned. */
+  mulCoreObserveSequence(&s,2994); assert(mulCoreObserveSequence(&s,0)==mulCoreOld);
+  mulCoreSequenceBeginEpoch(&s); assert(mulCoreObserveSequence(&s,1)==mulCoreFirst);
+  assert(mulCoreObserveSequence(&s,3)==mulCoreGap);
+  assert(s.valid==4 && s.old==1 && s.gaps==1 && s.valid-s.old-s.duplicates==3);
+  mulCoreSequence_t other={0}; /* Separate source/session, never share baseline. */
+  assert(mulCoreObserveSequence(&other,900)==mulCoreFirst);
+  assert(mulCoreObserveSequence(&s,4)==mulCoreForward && other.last==900);
   uint32_t random=1;
   for (unsigned i=0;i<20000;i++) {
     for (unsigned k=0;k<sizeof(f);k++) { random=random*1664525u+1013904223u; f[k]=(uint8_t)(random>>24); }

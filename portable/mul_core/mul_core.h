@@ -35,6 +35,8 @@ typedef struct {
 bool mulCoreSourceValid(const uint8_t source[8]);
 mulCoreStatus_t mulCoreEncodeDiag(uint8_t *frame, size_t capacity, const mulCoreDiag_t *message);
 mulCoreStatus_t mulCoreDecodeDiag(const uint8_t *frame, size_t length, mulCoreDiag_t *message);
+/* New explicit epoch: preserve cumulative accounting, discard ordering baseline. */
+void mulCoreSequenceBeginEpoch(mulCoreSequence_t *state);
 void mulCoreSequenceReset(mulCoreSequence_t *state);
 mulCoreOrder_t mulCoreObserveSequence(mulCoreSequence_t *state, uint32_t sequence);
 mulCoreStatus_t mulCoreObserve(mulCoreObservation_t *out, const mulCoreDiag_t *message,

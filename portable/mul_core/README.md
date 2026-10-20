@@ -78,3 +78,67 @@ before publishing the consumer. Record compatible firmware SHAs in PLAN/handoff.
 Fresh clone: committed snapshot is sufficient; standard LPS driver submodule
 checkout is still required, no new submodule. Recovery: checkout the matching
 firmware commits; do not update a core implicitly during configure/build.
+
+## ADS-TWR foundation (separate protocol v1)
+
+`mul_ads.h/.c` own fixed-buffer serialization, one-peer exchange state and
+modular arithmetic. They have no driver, timers, allocation or logging. No
+Stage3E or diagnostic v1 bytes change. Initiator and responder can be reversed.
+
+All ADS frames are56 bytes excluding FCS: extended MAC0–20 with complete
+unicast destination/source, MUL21–23, type24 (0x71 POLL,0x72 RESPONSE,0x73 FINAL,
+0x74 REPORT), version1 at25, nonzero little-endian session64 at26–33,
+transaction32 at34–37 (nonzero; low byte also MAC sequence), three40-bit stamps
+at38–52, width40/unit1/pattern0xa5 at53–55. Only REPORT has stamps; all other
+stamp bytes must be zero. REPORT carries responder t2,t3,t6. Strict decoders
+reject unknown types/version/identity/length/unused fields and leave output
+unchanged on failure. Hardware FCS protects arbitrary payload corruption.
+
+POLL→RESPONSE→FINAL is the ranging exchange; a fourth timestamp REPORT returns
+measured responder times to the initiator, which has measured t1,t4,t5. This
+explicit follow-up avoids predicting FINAL TX time. REPORT's own timestamps
+are irrelevant to ToF. No unverified intended TX stamp enters the calculation.
+
+State: idle→POLL TX completion→RESPONSE RX→FINAL TX completion→REPORT RX→idle
+at initiator; idle→POLL RX→RESPONSE TX completion→FINAL RX→REPORT TX completion
+→idle at responder. TX must be taken once and completed before accepting its
+reply. Any abort/deadline clears the in-flight state. Per-stage timeout100ms,
+unsigned host-ms wrap; adapters retry whole exchanges at1Hz with a NEW ID.
+No overlapping exchange, retransmission of individual frames or heap queue.
+Matching includes both identities/session/transaction/type/state. Wrong/stale/
+duplicate frames do not advance state or extend its deadline. Responder rejects
+non-forward transactions within its current session and accepts a new session
+only when idle; no persistent replay protection across old sessions/reboots.
+Initiator stops at UINT32_MAX until reinitialized with a fresh session.
+
+Adapters require a deliberately chosen fresh nonzero MUL_TWR_SESSION for each
+initiator boot/run. Reusing it after a restart can correctly cause rejection;
+there is no silent EEPROM update, automatic epoch guess or cryptographic nonce.
+Reset both devices or rebuild the initiator with a new session for recovery.
+
+`mulAdsCalculate` uses independent within-device modulo40 differences only.
+Intervals must be positive and <=100ms (<half wrap). Binary64 conversion precedes
+products, which can exceed uint64; bounded cancellation error is <0.00001 DTU.
+The standard formula is (Ra*Rb-Da*Db)/(Ra+Rb+Da+Db). Responder/initiator rate
+ratio=(Rb+Db)/(Ra+Da) must lie within +/-1000ppm. For constant clock rates fa,fb
+and reciprocal fixed propagation p seconds, output equals 2*fa*fb/(fa+fb)*p;
+it is nominal mixed-clock DTU, not automatically reference DTU or calibrated SI.
+Constant offsets cancel; changing clock rate, motion, antenna bias and multipath
+do not. Fractional and negative results are retained to expose bias. Outputs are
+unchanged on failure. No cross-platform bias table or arbitrary offset is added.
+
+Counters wrap uint32. `attempts` counts begun/accepted POLLs; initiator completed
+means all six timestamps passed arithmetic checks, responder completed means
+REPORT TX completed (not proof initiator received it). `aborted` counts active
+exchange cancellations and `rejected` counts decoded but unaccepted packets.
+Decode failures are separate adapter `invalid`; PHY errors/timeouts are separate
+from delivery. No single counter proves physical accuracy or packet delivery.
+
+Diagnostic sequence `valid` still counts every decoded expected-peer frame,
+including duplicates/old. Accepted count is valid-old-duplicates modulo2^32.
+`mulCoreSequenceBeginEpoch` discards only the ordering baseline and retains
+cumulative counters; source/session lifetimes belong to callers. Diagnostic v1
+has no boot identity. Adapters log an idle epoch after >=5s without a decoded
+expected peer, never infer losses across that boundary; rapid restarts remain
+ambiguous and require receiver reset. RX `order` is0 first,1 forward,2 gap,
+3 duplicate,4 old. It makes decode success versus acceptance explicit.
