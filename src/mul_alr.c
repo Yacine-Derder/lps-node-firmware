@@ -111,9 +111,9 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   mulClockReset(&followerClock);
   mulTwrInit(&ranging);
   followerSeen = false;
-  printf("MUL ALR: Mode initialized role=%s src=0x%02X\r\n",
+  printf("MUL ALR: Mode initialized role=%s src=0x%02X slot_ms=%u\r\n",
          alrRole == mulAlrReference ? "REF" : alrRole == mulAlrFollower ? "FOLLOWER" : "UNSUPPORTED",
-         (unsigned int)source[0]);
+         (unsigned int)source[0], (unsigned int)MUL_FOLLOWER_SLOT_MS);
   if (alrRole != mulAlrReference) {
     if (alrRole == mulAlrFollower) {
       mulRxInit(dev);
@@ -363,10 +363,10 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     }
     printf("MUL ALR: REF_RX src=0x84 seq=%" PRIu32
            " tx=0x%02X%08" PRIX32 " rx=0x%02X%08" PRIX32
-           " state=%s slot_ms=500\r\n",
+           " state=%s slot_ms=%u\r\n",
            packet.sequence, (unsigned int)(packet.txTimestamp >> 32),
            (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
-           armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED");
+           armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED", (unsigned int)MUL_FOLLOWER_SLOT_MS);
     int32_t ppb = followerClock.skewPpb;
     uint32_t magnitude = (uint32_t)(ppb < 0 ? -ppb : ppb);
     printf("MUL ALR: CLOCK src=0x84 seq=%" PRIu32 " skew_ppm=%s%" PRIu32 ".%03" PRIu32

@@ -23,7 +23,7 @@ static void mulRlrInit(uwbConfig_t *config, dwDevice_t *dev)
   mulClockReset(&mulRoleScratch.rlr.rate);
   mulObservationInit(rlrObservations,config->address);
   memset(&rlrAssociation,0,sizeof(rlrAssociation));
-  printf("MUL RLR: Mode initialized\r\n");
+  printf("MUL RLR: Mode initialized slot_ms=%u rate_unit=ppb\r\n", (unsigned int)MUL_FOLLOWER_SLOT_MS);
   mulRxInit(dev);
 }
 

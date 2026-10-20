@@ -160,7 +160,7 @@ for mobile robots. No centimetre accuracy or finite confidence bound is claimed.
 
 ## Stage 3D.1 — Controlled transmission-spacing experiment
 
-Status: CP3 scheduling/association implemented; diagnostics and synthetic oracle next. Starting point
+Status: CP4 diagnostics and independent physical oracle implemented; full validation next. Starting point
 `3191b39`. User-reported midpoint geometry (1 m each side) produced -369 DTU /
 -1731 mm, STATIC/-2534 ppb, age 503 ms, power=1; TWR 1.88–1.95 m versus 2 m,
 follower skew +1.415 ppm, TX delta=0 and no gaps in the excerpt. An earlier
@@ -211,14 +211,20 @@ late ALR setup skips rather than moving TX or compromising timestamps. Validate
 
 ## Codex continuation checkpoint
 
-Stage 3D.1 CP1 pushed `dd52423`, CP2 pushed `9a4f43c`; CP3 is the commit
-containing this section. All 166 host tests pass for default 500 and stationary
-50/10 ms builds, including real-driver TX and live TWR exchanges. Slot windows
-are 450..550 /45..55 /8..12 ms; reference presence gates end at 600/60/14 ms.
-Candidate/rate maximum ages are 700/250/210 ms. One-Hz cadence, full identities,
-generations, single consumption and clock metadata binding are preserved.
-TWR needs no move: 650..730 ms remains separate from every supported slot;
-expiry stays 1000 ms, with earlier follower TX naturally leaving more validity.
-Next: CP4 compact configuration diagnostics, independent physical numerical
-oracle and focused boundary/priority regressions; CP5 sanitizers/builds/memory,
-architecture and hardware procedure. No physical hardware flashed.
+Stage 3D.1 CP1 `dd52423`, CP2 `9a4f43c`, CP3 `bdd7cbf` pushed; CP4 is the
+commit containing this section. All 173 host tests pass in stationary 500/50/10
+configurations, including real-driver TX equality, live TWR, out-of-window
+one-DTU boundaries, missing reference/follower, and stalled-TWR broadcast
+priority. Unsupported slot compilation fails as intended.
+Independent SI-time/metre oracle uses three independent oscillators and absolute
+clock origins, with zero and +/-1 m geometry and wrap: error <=2 DTU (~9.4 mm).
+Injected +/-10 ppb produces analytical spacing-dependent bias (approximately
++/-1.499/0.150/0.030 m); wrong receiver units and arrival-aligned origins are
+separately detected. The latter produces a fixed approximately +2 m error.
+No firmware arithmetic/correction equation changed. Initialization shows slot
+and RLR rate units; per-observation diagnostics retain their previous fields.
+Reproduce matrix: `python3 tools/test/mul_slots.py` (temporary native configs;
+add `--sanitize` for MUL ASan/UBSan including real-driver tests).
+Next: CP5 default-policy full suite, all-slot sanitizer matrix, clean default/
+50/10 firmware builds, RAM/stack review, architecture and hardware instructions.
+No physical hardware flashed; measured hardware bias remains unexplained.

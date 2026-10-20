@@ -657,3 +657,26 @@ void test_mulTwrOptionalCorrectionCannotInvalidateValidRawNearZeroRange(void) {
   TEST_ASSERT_TRUE(mulTwrResults(t,power,&raw,&corrected));
   TEST_ASSERT_EQUAL_UINT32(1,raw); TEST_ASSERT_EQUAL_UINT32(UINT32_MAX,corrected);
 }
+
+void test_mulTwrStalledExchangeOverlappingFollowerSlotLosesToFreshBroadcast(void) {
+  scenario(5000,2131); modeFollower();
+  // Fault injection: an old exchange stalled across the next reference, with
+  // its delayed message targeting the nominal follower slot. Normal TWR ends
+  // by 800 ms; this deliberately violates that timing to test hard priority.
+  ranging.active=true; ranging.txPending=true; ranging.stage=mulTwrResponse;
+  ranging.id=5; radios[1].armed=true;
+  ranging.expectedTx=clockAt(1,SEC+flight+MUL_FOLLOWER_SLOT_DTU);
+  ranging.deadline=mulTimestampMask(ranging.expectedTx+50*MS);
+  advance(SEC+flight+MS);
+  injectBroadcast(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));
+  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_TRUE(radios[1].armed);
+  TEST_ASSERT_EQUAL_UINT(MUL_RELATION_FRAME_LENGTH,radios[1].txLength);
+  mulTestPacket_t packet; mulRelation_t metadata;
+  TEST_ASSERT_TRUE(mulBroadcastDecode(radios[1].tx,radios[1].txLength,&packet,&metadata));
+  int64_t slot=mulTimestampDifference(packet.txTimestamp,clockAt(1,SEC+flight));
+  TEST_ASSERT_INT64_WITHIN(511,MUL_FOLLOWER_SLOT_DTU,slot);
+  advance(sendTime(1)+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
+  TEST_ASSERT_EQUAL_UINT64(packet.txTimestamp,radios[1].actual);
+  TEST_ASSERT_TRUE(radios[1].receiving);
+}

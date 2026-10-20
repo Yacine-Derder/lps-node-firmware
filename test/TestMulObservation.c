@@ -158,3 +158,21 @@ void test_mulAssociationRejectsFullWrapAliasAndRecoversAfterMissingFrame(void) {
   TEST_ASSERT_FALSE(associate(0,2,3000*MS,0,3100));
   TEST_ASSERT_TRUE(associate(1,703,(3000+MUL_FOLLOWER_SLOT_MS)*MS,0,3100+MUL_FOLLOWER_SLOT_MS));
 }
+
+void test_mulAssociationConfiguredHardwareWindowEdgesAndOneDtuOutside(void) {
+  const int64_t offsets[]={MUL_SLOT_MIN_DTU,MUL_SLOT_MAX_DTU,MUL_SLOT_MIN_DTU-1,MUL_SLOT_MAX_DTU+1,-1};
+  for (unsigned int i=0;i<5;i++) {
+    setUp(); train();
+    bool accepted=associate(1,701,1000*MS+offsets[i],0,1100+MUL_FOLLOWER_SLOT_MS);
+    TEST_ASSERT_EQUAL_INT(i<2,accepted);
+    TEST_ASSERT_FALSE(association.pending);
+  }
+}
+
+void test_mulAssociationMissingReferenceCannotPairNextFollower(void) {
+  train();
+  TEST_ASSERT_TRUE(associate(1,701,1000*MS+MUL_FOLLOWER_SLOT_DTU,0,1100+MUL_FOLLOWER_SLOT_MS));
+  // No reference for the next one-second period; independent follower cadence
+  // alone cannot resurrect the consumed reference candidate.
+  TEST_ASSERT_FALSE(associate(1,702,2000*MS+MUL_FOLLOWER_SLOT_DTU,0,2100+MUL_FOLLOWER_SLOT_MS));
+}
