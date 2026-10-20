@@ -85,6 +85,12 @@ SIZE=$(PREFIX)size
 
 all: check_submodules bin/lps-node-firmware.elf bin/lps-node-firmware.dfu
 
+# The compatibility translation units include the canonical .c files. This
+# Makefile has no compiler-generated header dependencies: invalidate objects on
+# any portable core input change so incremental builds cannot keep a stale core.
+MUL_CORE_INPUTS := $(wildcard portable/mul_core/*.[ch])
+$(OBJS): $(MUL_CORE_INPUTS)
+
 bin/lps-node-firmware.elf: $(OBJS)
 	$(LD) -o $@ $^ $(LDFLAGS)
 	$(SIZE) $@

@@ -259,6 +259,10 @@ All requested default/Stage 3E/Stage 3F/Stage 3G builds pass. LPS default/contin
 RAM unchanged; new diagnostic fits the same 128-byte scratch and 16372-byte RAM
 footprint as Stage 3F. Resource/stack estimates and retained warnings are in guide.
 
+Final audit also fixed LPS incremental dependencies on canonical C/headers;
+Make graph and source-mtime invalidation checks pass. Default/new RX rebuilds
+retain their measured binary sizes. Flag changes still require clean builds.
+
 CP6: at-most-once-per-ms polling, bounded USB queue and opt-in DWT timing for
 outer SPI IRQ-off/service/start gaps. No masking/speed/safety logic change and
 no claim that Stage 3F UART faults are fixed. CP7 hardware procedures ready.

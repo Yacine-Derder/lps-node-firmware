@@ -40,13 +40,17 @@ from a published LPS commit, with `UPSTREAM.json` and every file's SHA-256. Its
 configure AND build verify hashes offline and reject modified/extra files.
 No sibling checkout is required to build either firmware. Only canonical LPS
 files may be edited; regenerate/review/commit the consumer snapshot explicitly.
-There is no implicit fetch/update or package manager.
+There is no implicit fetch/update or package manager. LPS Make explicitly
+invalidates firmware objects when canonical core C/header inputs change,
+including code behind the compatibility wrappers. The real Make dependency
+graph and a source-mtime rebuild were checked; changing build-role flags still
+requires the documented clean build.
 
 Compatible implementation checkpoints (both published):
 
 - LPS / canonical core: `1b807c5c7507d67d802ee976ae4dfe5b27fd88e9`.
 - STM32 consumer: `1bd3ecdba534549b4c9ac89f17fd8bd7270fe056`.
-- STM32 `UPSTREAM.json` pins the LPS checkpoint above. Later documentation commits
+- STM32 `UPSTREAM.json` pins the LPS checkpoint above. Later commits
   retain that exact dependency. Record both final firmware HEADs with each capture.
 
 Fresh clone recovery: clone LPS with `--recurse-submodules` (existing driver/test

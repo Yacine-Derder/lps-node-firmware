@@ -12,6 +12,14 @@ peer=root.parent/'epuck-stm32'
 canonical=root/'portable/mul_core'
 vendor=peer/'ThirdParty/mul_core'
 pin=json.loads((vendor/'UPSTREAM.json').read_text())
+# Check the actual GNU Make graph even in a fresh checkout with no objects.
+plan=subprocess.run(['make','-qp'],cwd=root,capture_output=True,text=True)
+assert plan.returncode in (0,1),plan.stderr
+for obj in ['src/mul_common.o','src/mul_core.o','src/mul_diag_dw.o','src/uwb.o']:
+    dependencies=next(line.split(':',1)[1].split() for line in plan.stdout.splitlines() if line.startswith(obj+':'))
+    for source in canonical.glob('*.[ch]'):
+        assert source.relative_to(root).as_posix() in dependencies,(obj,source)
+
 subprocess.run(['python3',str(vendor/'verify.py')],check=True)
 assert {p.relative_to(canonical).as_posix() for p in canonical.rglob('*') if p.is_file()}==set(pin['sha256'])
 for relative,digest in pin['sha256'].items():
