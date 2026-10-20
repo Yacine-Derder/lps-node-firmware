@@ -11,11 +11,18 @@ The code defines implemented behavior; planned extensions below are not firmware
 - RLRs are e-puck robots intended to use custom STM32 + DWM3000 UWB turrets.
 - Current firmware prototyping uses DW1000 LPS nodes for both roles.
 - This firmware currently configures channel 2 in `src/uwb.c`.
-- The present configuration cannot interoperate directly with DWM3000 over UWB.
+- The normal channel-2 configuration cannot interoperate directly with the
+  e-puck channel-9 DWM3000 configuration. Stage 3F adds an explicit opt-in
+  diagnostic channel-5 profile; this has no over-the-air validation yet.
   DW3000 hardware supports channels 5/9, with limited DW1000 compatibility on
   channel 5; the families are not register/API interchangeable.
   See [Qorvo's DW3110 specification](https://www.qorvo.com/products/p/DW3110)
   and [migration guidance](https://forum.qorvo.com/t/dwm1000-to-dwm3000-migration/10120).
+- [Stage 3F evidence, canonical packet and hardware procedure](phy_interop.md)
+  define the reversible packet-only experiment. PHY_INTEROP_ROLE=0/1/2 selects
+  off/TX/RX at build time; normal defaults, EEPROM and MUL math stay unchanged.
+  Diagnostic state overlays the same 128-byte mode-exclusive reservation. There
+  is no portable MUL core, mixed-radio ranging or timestamp-model port yet.
 - Future cross-platform support requires a deliberate hardware/PHY/protocol
   strategy and physical validation; blanket incompatibility is not a chip-family fact.
 - Keep wire definitions and timestamp arithmetic independent of the hardware driver.

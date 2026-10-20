@@ -177,27 +177,43 @@ Stage4 online calibration and Stage5 localization remain future tasks.
 
 ## Stage 3F — Cross-radio PHY experiment
 
-Stage 3E stationary ~1 Hz TDoA is now hardware validated (user-reported central
-project handoff); this does not establish cross-radio operation or bounded accuracy.
-CP0/CP1: supported common profile is plausible, OTA unverified. Canonical PHY
-matrix and diagnostic v1 layout: [PHY experiment](docs/phy_interop.md).
-Starting LPS `0a5b1dc`, e-puck main `9a46df0`; e-puck pre-existing streaming/
-control edits must remain untouched. Central document and other repos read-only.
-CP2 implemented: opt-in DW1000 TX/RX using existing mode-exclusive scratch, no
-EEPROM or default PHY change. CP3: e-puck opt-in alongside existing app switches, bounded
-main-loop radio service without interfering with motor/UART safety. CP4–CP6:
-golden consistency, default/Stage3E/diagnostic builds and regressions, exact user
-bidirectional/reliability procedure, resource review and independent pushes.
+**Software experiment implemented/tested; bidirectional hardware gate PENDING.**
+Stage 3E stationary ~1 Hz TDoA is hardware validated (user-reported central
+handoff); this is not cross-radio validation or bounded physical accuracy.
+Canonical evidence matrix, packet v1 and exact A/B/reliability/restore commands:
+[PHY experiment](docs/phy_interop.md). No central-document/ESP32/dsPIC edits.
+
+CP0/CP1 `25bbc97` and CP2 `3f72be3` pushed to origin/master. E-puck CP3
+`f7f3e9f` pushed origin/main; its final hardening/docs checkpoint follows.
+CP4–CP6 software checks and operator guide are complete in this final commit.
+Opt-in0/off,1/TX,2/RX uses ch5/PRF64/code9/preamble128/IEEE4a-SFD/6.8M/stdPHR,
+no STS. Default ch2 and all MUL modes/packets/equations remain unchanged. Codec
+is a small diagnostic copy, not the Stage3G shared-core extraction.
 
 ## Codex continuation checkpoint
 
-CP0/CP1 pushed `25bbc97`; CP2 is the commit containing this section. DW1000
-role flags 0/off,1/TX,2/RX override only the running algorithm/PHY, not EEPROM.
-193 host tests pass; diagnostic real-driver tests pass both roles under ASan/UBSan;
-independent golden checks compile both repository codecs (3 vectors,768 bit flips
-and wrong lengths each). Clean default, Stage3E continuous and experimental
-TX/RX builds pass. Default RAM/text exactly baseline (data1072,bss15292,text123024),
-20 spare; diagnostic data1080,bss15292,12 spare; scratch128 unchanged. RX callback
-compiler frame120 bytes. No hardware flashed. Next CP3 e-puck tests/commit/push,
-then CP4–CP6 final cross-repo procedures, safety regressions and hardware gate.
-E-puck pre-existing streaming/control edits remain untouched and must not be staged.
+No required software work remains. LPS193 host tests pass default and Stage3E
+continuous10ms;176 MUL ASan/UBSan cases pass plus two diagnostic real-driver cases
+for each role. Both codecs independently pass3 golden vectors,768 single-bit
+corruptions and wrong-length checks; headers/vectors match. Three host log-analysis
+tests pass wrap/loss/reset/direction/minimum checks. STM32 codec/TX/RX and six
+activation/init-failure/IRQ combinations pass ASan/UBSan;15 console and9 ESP
+safety/streaming regression scenarios pass. All user pre-existing e-puck edits
+retain original checksums and are excluded from commits. Clean default,
+Stage3E and diagnostic TX/RX LPS builds pass; default/diagnostic and exported
+committed-tree STM32 builds pass (including legacy UWB enabled).
+LPS default text123024/data1072/bss15292 is unchanged (20 bytes spare);
+experimental data1080/bss15292 (12 spare), scratch128 unchanged, radio callback
+frame120 bytes. STM32 working-tree Release RAM28568 default,28992 RX; diagnostic
+service frame280. Compiler estimates are not stack high-water or hard deadlines.
+No hardware flashed. Central Stage3F status needs a user-owned update to
+software experiment ready / OTA pending; it was intentionally not edited.
+
+**Next exact action requires the user:** execute Experiments A/B/C and supply
+both raw TX/RX logs per direction, JSON summaries, firmware hashes/flags,
+separation/orientations and any reproducible asymmetry. Stage3G MUST NOT begin
+until CRC/payload-valid frames are observed in both directions and >=100 TX per
+direction are assessed. Do not infer OTA success from builds/mocks. If awaiting
+a continuation without new hardware evidence, inspect for supplied results;
+there is no justification for more firmware changes or repeat builds solely to
+restate this checkpoint. No mixed-radio TWR/TDoA/localization was implemented.

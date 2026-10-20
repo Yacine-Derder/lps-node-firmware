@@ -28,7 +28,10 @@ static void init(uwbConfig_t *config,dwDevice_t *dev) {
 static uint32_t event(dwDevice_t *dev,uwbEvent_t event) {
   uint32_t now=milliseconds();
   if (PHY_INTEROP_ROLE==1) {
-    if (event==eventPacketSent && state.pending) { state.done++; state.pending=false; dwIdle(dev); }
+    if (event==eventPacketSent && state.pending) {
+      state.done++; state.pending=false; dwIdle(dev);
+      printf("PHY DONE src=84 seq=%" PRIu32 " done=%" PRIu32 "\r\n",state.sequence-1,state.done);
+    }
     if (state.pending && (uint32_t)(now-state.lastTxMs)>=100) { state.errors++; state.pending=false; dwIdle(dev); }
     if (!state.pending && (uint32_t)(now-state.lastTxMs)>=1000) {
       phyDiagEncode(state.frame,PHY_DIAG_DW1000,state.sequence++);
