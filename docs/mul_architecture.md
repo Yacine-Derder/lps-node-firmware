@@ -46,6 +46,8 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `inc/mul_observation.h`, `src/mul_observation.c` | Bounded RLR observations and ordered association |
 | `inc/mul_relation.h`, `src/mul_relation.c` | Versioned simultaneous clock transport and inverse |
 | `inc/mul_downlink.h`, `src/mul_downlink.c` | Pair/model binding and explicit rate-domain TDoA |
+| `inc/mul_propagation.h` | Explicit propagation-age and relative-motion policy |
+| `inc/mul_localization.h`, `src/mul_localization.c` | Caller-owned localization observation and compact OBS output |
 | `inc/mul_role_state.h`, `src/mul_role_state.c` | Mode-exclusive fixed scratch storage |
 | `inc/mul_clock.h`, `src/mul_clock.c` | Clock rate, arrival mapping, and delay-aware correction |
 | `inc/mul_twr.h`, `src/mul_twr.c` | Directed TWR protocol, bounded radio exchange and live delay input |
@@ -217,8 +219,8 @@ make clean && make EXTRA_CFLAGS="-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1 -DMUL_
 ```
 
 Initialization reports slot_ms; RLR reports rate_unit=ppb. Existing adjacent
-PAIR/TDOA lines retain sequences, TX/RX reference intervals, signed DTU/mm, rate,
-relation age, power availability and UNKNOWN uncertainty without a longer burst.
+Stage 3E consolidates paired diagnostics into OBS, retaining sequences, signed
+DTU/mm, rate, delay/relation age, power availability and UNKNOWN uncertainty.
 `python3 tools/test/mul_slots.py --sanitize` reproduces native/sanitizer coverage
 for all slots; add `--slot 500 --default-rate` to check default unavailable-rate
 policy. Existing GCC/Ruby/Rake tooling and initialized submodules are required;
@@ -340,11 +342,12 @@ in follower units cannot be passed unchanged. The live TWR producer below suppli
 this contract; synthetic distances exist only in host tests.
 
 Initial application policy permits nonnegative delay <=63898 reference DTU
-(approximately 1 us/300 m) and a caller-selected age limit of 1..2000 ms,
-recommended 1000 ms. These are prototype applicability limits, not hardware range
+(approximately 1 us/300 m) and a caller-selected age limit of 1..6000 ms.
+The live default remains 1000 ms; continuous operation explicitly selects 6000. These are prototype applicability limits, not hardware range
 or motion guarantees. Validity checks wrap-safe age, full ordered identities,
-units, and epoch. A sequence guard of at most three forward reference advances
-at the established 1 Hz cadence also rejects uptime full-wrap aliases.
+units, and epoch. At the established 1 Hz cadence the sequence guard allows
+three advances for policies <=2000 ms; longer policies allow ceil(maxAge/1000)+2
+advances. The original uptime age still applies and full-wrap aliases fail closed.
 Both the affine origin and query must be covered: application span is the maximum
 of measurement age and `abs(measurement_age-origin_age)+ceil(abs(d_ref)/DTU_per_ms)`.
 It must fit the supplied age limit in addition to the existing affine horizon.
@@ -444,11 +447,11 @@ this confirms the initiator verified its own actual POLL/FINAL TX stamps. REPORT
 echo checks also retain the responder's verified RESPONSE TX. There is no delivery
 ACK for the last confirmation; either node can report a failure without peer
 delivery certainty, but an incomplete six-marker exchange cannot publish delay.
-Measurement time is backdated from the POLL callback by rounded-up hardware RX
-age; RESULT delivery and later broadcasts cannot refresh it. Epoch and reference
-ID remain bound to that exchange. The unchanged one-second age limit makes SYNC
-AVAILABLE briefly after a valid exchange and UNAVAILABLE between five-second
-attempts. Expiry timers run even without RX, without cancelling armed broadcasts.
+Measurement time is committed after RESULT, backdated to raw POLL RX by rounded-up
+hardware age; RESULT delivery and broadcasts cannot refresh it. Epoch and acquisition
+reference ID remain bound to that measurement. Strict 1000 ms policy makes SYNC
+intermittent; Stage 3E explicitly permits bounded six-second reuse. Expiry timers
+run even without RX, without cancelling armed broadcasts.
 
 Reciprocity, nearly constant propagation/rates during the exchange, and correct
 per-device antenna-delay estimates are assumptions, not calibration evidence. Multipath,
@@ -595,9 +598,10 @@ wire-level superframe identity or a general association algorithm.
 `mulPair_t` returns both complete observations, raw local arrival difference and
 corrected difference only if BOTH RX corrections are APPLIED. Original TX markers
 remain in their own clock domains and are never subtracted from each other.
-PAIR diagnostics are bounded to one per eligible reference and show sequences,
-raw/corrected local DTU differences (hex), and raw arrival slot separation in us.
-RLR RX diagnostics remain, with raw/corrected timestamps and Q metadata.
+Stage 3E OBS consolidates association diagnostics into sequences, validity, local
+time, selected TDoA and configured slot; raw/corrected arrival differences remain
+in the pair object for firmware consumers. Reference/unpaired RX diagnostics keep
+raw/corrected timestamps and Q metadata.
 
 ## Transported simultaneous clock relationship
 
@@ -610,7 +614,8 @@ uptime before publication. Thus the origin is simultaneous, not arrival-aligned;
 TX hardware antenna conventions and raw broadcast RX estimation are unchanged.
 Skew can contain path changes and physical error remains UNKNOWN.
 
-The type-2 broadcast preserves header/source/sequence/TX offsets 0..33 and adds:
+The default strict type-2/version-1 broadcast preserves header/source/sequence/TX
+offsets 0..33 and adds:
 
 | Bytes | Meaning |
 |---|---|
@@ -631,7 +636,7 @@ All integers are little endian, explicit fields, no C padding. Ordered full cloc
 identities are fixed unambiguously by version 1 and the full follower source
 85:00:00:00:00:00:cf:bc; reference is 84:00:00:00:00:00:cf:bc. Only the follower
 may send type 2. Length/type/version/flags/identities/skew/age/span checks are strict;
-legacy type-1/34 means unavailable metadata. Unavailable type 2 retains only epoch
+legacy type-1/34 means unavailable metadata. Unavailable version 1 retains only epoch
 and reference sequence, with other model fields zero. All nodes must update their
 parser to receive type-2 broadcasts; old parsers reject them rather than silently
 reinterpreting. TWR stays versioned 84 bytes; no new transmission is scheduled.
@@ -643,17 +648,87 @@ TX, and affine horizon, with an extra ms guard. It is never extended to the
 five-second TWR interval. Typically only the follower slot after a TWR is available
 (default delay age about 850 ms, remaining <150 ms); at 50/10 ms the age is
 about 400/360 ms and remaining <600/640 ms. Subsequent slots still report
-unavailable: shortening the slot never extends the 1000 ms TWR delay lifetime.
+unavailable under this strict compatibility policy: shortening the slot alone
+never extends the 1000 ms TWR delay lifetime. Stage 3E adds explicit bounded reuse
+as described below.
 
 RLR freezes hardware RX age before re-arm (max 15 ms accepted for a relation),
 then binds metadata to the current follower frame and associated reference sequence
 AND exact TX marker. It never substitutes cached available metadata. Local age,
-40-bit query horizon, original one-second delay span, full receiver/source clock
+40-bit query horizon, original measurement-age policy, full receiver/source clock
 identities and direction all apply. An accepted follower epoch change advances its
 local observation generation, drops that pair and resets experimental rate state.
 Fresh cadence is required. Epochs distinguish acquisitions within the follower boot;
 reference boot epochs are absent, and undetected restart/replay ambiguity remains
 subject to existing cadence/liveness checks. This is not authenticated time transfer.
+
+## Continuous propagation correction (Stage 3E)
+
+`MUL_PROP_MAX_AGE_MS` defaults to 1000 for strict v1 compatibility. Configure
+6000 on all three nodes for continuous operation. Values 1000..6000 are accepted;
+6000 bridges the five-second TWR cadence with about one second of margin while
+remaining below the DW1000 signed half-wrap (~8.6 s). This is a bounded sample
+hold, not prediction, a new clock algorithm or a calibrated accuracy guarantee.
+The affine model still reanchors at each 1 Hz reference, with its original 2 s
+origin/query horizon. Only the TWR propagation value is reused.
+
+The committed estimate (`tof`, epoch, estimateId, measuredMs, power flag) is
+separate from the exchange candidate. RESULT must verify all existing timestamps,
+power metadata and DS-TWR arithmetic before commitment. measuredMs is backdated
+from RESULT to the original raw POLL RX capture, rounded outward; callbacks,
+REPORT, failed attempts and later broadcasts cannot re-date it. Each packet
+predicts its original TWR age at scheduled antenna TX, rounded outward with a
+guard; RLR adds frozen hardware RX age and subsequent local processing age.
+
+Timeout, missing response, late setup and broadcast preemption retain a committed
+estimate only within its original policy. Malformed active exchange/result,
+invalid ranging arithmetic, TX/DX verification failure, antenna configuration
+fault or incompatible clock epoch invalidates it. Unrelated packets outside an
+active exchange do not refresh it. Clock loss/reset, role initialization and
+reacquisition cannot carry a previous estimate into a new epoch. There is no
+holdover transmission. A failed refresh cannot overwrite the committed age/value.
+
+States: NONE before any estimate; FRESH in its measurement reference cycle or
+first following reference; REUSED in later valid cycles; EXPIRED when original
+age exceeds policy; INVALIDATED after a trust/context failure. FRESH describes
+provenance, not calibrated accuracy. A successful new RESULT replaces the old
+measurement and starts a new FRESH cycle. Strict v1 cannot transport distinct
+unavailable states or the numeric delay; these remain UNKNOWN at its receiver.
+
+Continuous transport uses explicit **version 2**, still type 2 and 74 bytes.
+There is no spare v1 payload space for the propagation value and state. All
+unchanged fields retain their v1 offsets; only these v2 fields differ:
+
+| Bytes | Version 2 meaning |
+|---|---|
+| 34 | Version 2, explicitly incompatible with v1-only parsers |
+| 35 | Bits 0..2 unchanged; bits 3..5 state (NONE=0, FRESH=1, REUSED=2, EXPIRED=3, INVALIDATED=4); bits 6..7 rejected |
+| 70..71 | uint16 actual one-way propagation estimate, reference DTU (0..63898) |
+| 72..73 | uint16 original maximum estimate age, ms (1000..local configured policy) |
+
+Epoch/current reference sequence/TWR acquisition sequence and both original-age
+fields retain their meanings. v2 derives conservative remaining lifetime from
+original delay age, query span and affine-origin age, minus one ms; a broadcast
+cannot refresh the TWR lifetime. Available packets require FRESH/REUSED, matching
+sequence provenance, valid ages and the current associated reference origin.
+Unavailable v2 clears affine origins/skew/origin age but may retain the last delay,
+age and acquisition sequence when expired; NONE/INVALIDATED has empty delay
+metadata. Version/length/flags/age/state validation is strict. v1 remains decoded
+with its fixed 1000 ms contract even in a continuous build; a strict build rejects
+v2 policy beyond 1000. Old v1-only firmware rejects v2 rather than reinterpreting
+it. Use identical builds on all nodes. Reference 34-byte and TWR 84-byte packets,
+DS-TWR equations, PHY, antenna/power corrections and EEPROM are unchanged.
+
+`MUL_RELATIVE_SPEED_MM_S` is -1 (UNKNOWN) by default; 0 explicitly declares
+constant ALR separation; a positive integer is an externally justified upper
+bound on relative separation speed. For age dt in ms, the geometric-only bound
+is `ceil(v_max_mm_s * dt / 1000)` mm, converted outward to nominal reference DTU
+with `ceil(mm * 63897600000 / 299792458000)`. No floating state or fitted offset
+is used. A missing motion bound remains UNKNOWN even at age zero. This geometric
+term is distinct from unknown DS-TWR measurement, clock-skew, RLR-rate, power,
+antenna/path and other synchronization errors. The nominal DTU conversion is
+not an absolute oscillator calibration. Total physical uncertainty remains UNKNOWN
+with either zero or nonzero motion bound; no statistical SD is invented.
 
 ## RLR rate domains and signed downlink TDoA
 
@@ -686,21 +761,109 @@ Total physical uncertainty always remains UNKNOWN, including skew, origin, TWR,
 antenna, power, motion and path errors. Numerical rounding is not synchronization
 accuracy. A plausible result is conditional experimental availability, not calibration.
 
-PAIR diagnostics retain raw/corrected local intervals, slot separation and statuses.
-The following TDOA line reports hex `tx`/`rx` intervals in REFERENCE DTU, signed
-`dtu`/`mm`, rate=STATIC/<ppb>, model age in ms and power=0/1; uncertainty UNKNOWN
-is carried on its PAIR line. Unavailable reasons distinguish no relation, no rate,
-stale rate and inconsistency. At most one burst per associated pair is emitted;
-worst-case RX/PAIR/TDOA output fits the 512-byte best-effort nonblocking USB queue
-when empty. The pair object preserves original TX clocks and both local RX kinds.
-No position solver, distributed synchronization framework, or online calibration.
+`mulLocalization_t` is a caller-owned 88-byte value generated once per valid
+associated pair, including unavailable cases. It owns both full ALR identities,
+independent sequences, local generations, follower acquisition epoch, exact raw
+RLR follower RX marker, coarse follower callback uptime, slot, selected signed
+TDoA DTU/mm, propagation DTU/age/state, rate status/value, relation age/validity,
+power flags, association validity and component UNKNOWN flags. There are no
+pointers into radio buffers or new persistent packet/observation queues. Future
+localization code can consume it directly before printing; no solver is added.
+Unavailable numerical values use explicit sentinels and serialize as NA, never a
+plausible zero. Rate availability and computability do not imply physical accuracy.
+
+One `MUL OBS` line replaces redundant paired-follower RX/PAIR/TDOA output. RX
+tracking logs remain for reference and unpaired follower observations; ALR
+TX/CLOCK/MAP/SYNC/TWR logs remain. OBS has this stable field order:
+
+```text
+MUL OBS: ref=84/11 fol=85/905 t_ms=11012 rx=<40-bit hex> gen=1/1 epoch=<64-bit hex> status=AVAILABLE dtu=0 mm=0 slot_ms=10 delay_dtu=426 delay_age_ms=362 delay_state=FRESH rate=STATIC/-10000 clock_age_ms=12 clock=1 power=0 assoc=1 motion_mm=0 motion_dtu=0 quality=2F uncertainty=UNKNOWN
+```
+
+`t_ms` is uint32 RLR callback uptime, `rx` its exact 40-bit raw follower RX marker;
+these are local time domains, not reference/MCS absolute time. Sequences/generations
+and epoch identify acquisition segments; epochs are not persistent boot UUIDs.
+Status is AVAILABLE, NO_RELATION, NO_RATE, STALE_RATE or INCONSISTENT. dtu/mm are
+NA unless AVAILABLE. delay/clock ages are ms; unknown metadata prints UNKNOWN.
+rate is STATIC/<signed ppb> under explicit experimental stationary policy, NONE
+or STALE. clock/assoc are Boolean validity. power bits 0/1/2 indicate applied
+reference RX/follower RX/TWR corrections; absence is not calibrated zero error.
+quality bits 0..5 denote UNKNOWN TWR/clock/rate/power/motion/other components;
+2F still has unknown total uncertainty when motion is configured. Startup labels
+slot, propagation policy, motion bound and STATIC_EXPERIMENTAL versus UNAVAILABLE
+rate policy. The worst-case serial fixture is <512 bytes without a formatting
+buffer; emission occurs after radio rearm and only once per associated pair.
+
+For later MCS matching, capture each node's USB stream with host monotonic receive
+timestamps and preserve raw OBS lines, source identity and reset segments. Unwrap
+local rx/t_ms within each segment; use sequences/epochs/generations to prevent
+cross-restart matching. Establish a separate verified time alignment to MCS
+(e.g. common event) before assigning ground-truth poses. USB latency/local uptime
+alone do not provide calibrated cross-system synchronization. No MCS integration,
+bias fitting or online calibration is implemented in this stage.
 
 `mul_role_state` overlays 128 bytes of ALR TWR state with mode-6 relation/rate
 scratch because one persisted mode runs until reboot. No heap is added. The
 1600-byte UWB task and 2048-byte main/ISR stack reservations remain; static RAM
 has approximately 20 bytes outside existing reservations. Compiler stack frames
 are reviewed separately; on-device high-water and RF accuracy remain unmeasured.
-Further state growth requires an explicit memory review.
+Further state growth requires an explicit memory review. Stage 3E keeps relation48,
+scratch128, data1072 and bss/reservations15292 (20 spare). Record88 is transient.
+Compiler frames: RLR event520, record builder128/print88, TX setup248, publisher320.
+Reviewed nested paths stay below the reservation before library/context overhead;
+this does not establish on-device stack high-water or hard real-time safety.
+
+## Stage 3E build and hardware procedure
+
+Default safe compatibility: `make clean && make` (v1, 1000 ms, no justified RLR
+rate). Preferred **stationary experimental** continuous build:
+
+```sh
+make clean && make EXTRA_CFLAGS="-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1 -DMUL_FOLLOWER_SLOT_MS=10 -DMUL_PROP_MAX_AGE_MS=6000 -DMUL_RELATIVE_SPEED_MM_S=0"
+```
+
+Use slot 50 or 500 to retain other schedules. Omit the speed flag for UNKNOWN
+motion guarantee. Mobile-oriented metadata experiment (no mobile rate solution):
+
+```sh
+make clean && make EXTRA_CFLAGS="-DMUL_FOLLOWER_SLOT_MS=10 -DMUL_PROP_MAX_AGE_MS=6000 -DMUL_RELATIVE_SPEED_MM_S=500"
+```
+
+Here 500 mm/s is an explicit example assumption to justify for the actual robots,
+not an established WaveRover limit. Without a justified RLR/reference rate this
+build emits NO_RATE rather than pretending mobile TDoA is calibrated. A relative
+ALR speed bound does not make the stationary cadence-rate estimator motion-safe.
+
+**User-only flashing:** build first, put each node in DFU mode, then run
+`sudo make dfu` to flash that existing image; the dfu target does not rebuild.
+Use the identical image on 0x84/0x85 mode 5 and 0x86 mode 6. Codex did not flash.
+After warmup and a successful TWR, expect one OBS per pair near 1 Hz, FRESH then
+four REUSED cycles with growing original delay age, reset only by a successful
+new RESULT near five seconds. Observe >40 s for wrap. Missed refresh can preserve
+availability only up to six-second age, then EXPIRED/NO_RELATION. Clock reset/loss
+requires a new TWR and rate warmup. In the strict build availability remains
+intermittent, and default rate stays NONE. Verify delta=0, no gaps/starvation,
+expected lengths and no unexpected numerical values under unavailable status.
+Keep existing geometry for functional acceptance; detailed bias calibration is
+deferred until efficient MCS acquisition. Stage 4 online calibration and Stage 5
+localization remain future work.
+
+Reproduce host/sanitizer matrices with the existing native GCC/Ruby/Rake setup:
+
+```sh
+python3 tools/test/mul_slots.py --sanitize --prop-age 6000 --speed 500
+python3 tools/test/mul_slots.py --sanitize --prop-age 6000 --speed 0 --slot 10
+python3 tools/test/mul_slots.py --sanitize --slot 500 --default-rate
+python3 tools/test/mul_slots.py --sanitize --prop-age 6000 --slot 10 --default-rate
+python3 tools/test/mul_slots.py
+```
+
+The three-node synthetic test runs real handlers and wire transport through two
+successful TWR updates and a missed refresh, independent clock rates/sequences,
+startup, fresh/reused/expired states and counter wraps. A bounded separation-change
+case checks growing geometric aging and UNKNOWN remaining terms. Separate real-
+driver SPI tests preserve scheduling/register equality and power-correction tests
+preserve existing calculation. Host results do not establish RF accuracy.
 
 ## Planned measurement processing
 

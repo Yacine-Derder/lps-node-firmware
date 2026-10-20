@@ -172,8 +172,8 @@ void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool inval
   twr->active = twr->txPending = false;
   if (invalidateDelay) {
     if (twr->delayValid) twr->syncDirty = true;
+    twr->invalidated = twr->invalidated || wasActive || twr->delayValid || twr->estimateId!=0;
     twr->delayValid = false;
-    twr->invalidated = true;
   }
   if (wasActive) {
     dwIdle(dev);

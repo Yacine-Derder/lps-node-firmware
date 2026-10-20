@@ -69,3 +69,10 @@ void test_mulPropagationVersionTwoIsExplicitAndRejectsIncompatibleMetadata(void)
   frame[35]=(frame[35]&7)|(mulPropagationExpired<<3);
   TEST_ASSERT_FALSE(mulBroadcastDecode(frame,74,&decoded,&out));
 }
+
+void test_mulPropagationLifetimeGuardStillProducesDecodableUnavailablePacket(void) {
+  // Only one millisecond remains at TX: deliberately fail closed, including
+  // strict v1's all-zero unavailable extension rather than malformed metadata.
+  delay.measuredMs=6000+MUL_FOLLOWER_SLOT_MS+1-(MUL_PROP_MAX_AGE_MS-1);
+  TEST_ASSERT_FALSE(publish(0).available);
+}

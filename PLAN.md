@@ -139,8 +139,7 @@ cause of the spacing sensitivity. Detailed calibration awaits efficient MCS data
 
 ## Stage 3E — Continuous observations
 
-Status: CP1–CP2 implemented/software tested; integrated validation and final
-documentation remain.
+Status: **CP1–CP3 implemented/software tested; awaiting user hardware validation.**
 Default retains strict 1000 ms/v1 policy. Explicit `MUL_PROP_MAX_AGE_MS=6000`
 selects same-length 74-byte v2 with original TWR age, numeric estimate and state;
 all three nodes must use the same policy. Reference 34/TWR 84 bytes unchanged.
@@ -154,25 +153,50 @@ only after RESULT and never refreshed by a broadcast or failed attempt.
 
 Checkpoints:
 - CP1: `db6e029` pushed.
-- CP2: the commit containing this section. Caller-owned 88-byte localization
+- CP2: `0257ba0` pushed. Caller-owned 88-byte localization
   record, deterministic outward-rounded motion term (-1 UNKNOWN, 0 stationary,
   positive mm/s), compact OBS output replacing redundant paired RX/PAIR/TDOA.
-- CP3 next: end-to-end consecutive 1 Hz observations across TWR updates/loss,
-  all-slot/default/continuous sanitizer and real-driver matrix, clean builds,
-  RAM/stack review, architecture, commands and hardware expectations.
+- CP3: the commit containing this section; end-to-end consecutive 1 Hz pipeline,
+  missing refresh/expiry, bounded separation changes, full sanitizer/config/build
+  matrix, RAM/stack review and final architecture/hardware instructions complete.
+
+## Hardware checkpoint — Stage 3E
+
+Build/flash commands, OBS schema and MCS-alignment limitations are in
+[the architecture](docs/mul_architecture.md#stage-3e-build-and-hardware-procedure).
+The preferred stationary build adds `MUL_PROP_MAX_AGE_MS=6000` and explicit
+`MUL_RELATIVE_SPEED_MM_S=0` to stationary-rate/10 ms flags. Default remains
+strict 1000 ms, legacy v1 and rate unavailable. Continuous v2 stays 74 bytes;
+all three nodes must use the identical image. Codex did not flash physical nodes.
+After rate warmup and confirmed TWR, verify approximately 1 Hz OBS availability:
+FRESH then four REUSED cycles, original delay age increasing, reset only after
+successful TWR. Observe multiple cycles and >40 s for wrap, delta=0 and no gaps
+or starvation. A missed refresh retains only until original six-second expiry;
+reset/loss requires new clock warmup and TWR. Detailed bias/MCS characterization,
+Stage4 online calibration and Stage5 localization remain future tasks.
 
 ## Codex continuation checkpoint
 
-CP1 `db6e029` pushed; CP2 is the commit containing this section. 186 host tests
-pass all continuous stationary slots, strict default policy and continuous
-500 mm/s aging configuration. OBS schema/order, NA masking and <=512-byte
-line bound checked (worst-case fixture 358 bytes); startup labels rate policy,
-propagation lifetime and motion assumption. All component/total physical
-uncertainties except the explicitly configured geometric motion term stay UNKNOWN.
-Continuous10ms build: text123536, data1072, bss/reservations15292 (20 spare).
-Record88, relation48, role scratch128; no added persistent state. Frames: RLR520,
-record builder128, print88. No physical hardware flashed. Next exact work CP3:
-end-to-end 1 Hz sequence through two five-second live TWR refreshes, bounded
-separation changes, failed/missed refresh and epochs, sanitizer/config/build
-matrix, final RAM/stack review, architecture and exact build/flash instructions.
-Stage4 calibration and Stage5 localization remain out of scope.
+CP1 `db6e029` and CP2 `0257ba0` pushed; CP3 is the commit containing this
+section (final hash reported after push). No required software work remains.
+189 host tests pass nine configurations: strict stationary all slots, continuous
+all slots with 500 mm/s aging, continuous10ms stationary zero aging, default
+strict/no-rate and continuous10ms/no-rate UNKNOWN motion. 176 MUL ASan/UBSan tests
+pass six configurations (all continuous500mm/s slots, continuous10ms zero aging,
+strict default and continuous10ms no-rate). Each includes 11 real-driver cases.
+The live three-node test covers two successful five-second TWR updates, startup,
+one-second observations, original ages, missed refresh, expiry, independent
+rates/sequences, bounded separation change, passivity and wraps. Serializer tests
+check field order, NA masking and <=512-byte output; largest fixture358 bytes.
+Invalid slot, propagation-age and relative-speed configurations fail compilation.
+Clean default, continuous stationary500/50/10 and metadata-mobile10ms builds pass.
+Static RAM unchanged: data1072 + bss/reservations15292 =16364 bytes (20 spare).
+Relation48, role scratch128, transient record88; no heap/buffers/queues added.
+Compiler frames: ALR entry184, TX setup248, publisher320, corrected API240,
+map80; RLR event520, record builder128, print88, inverse56/coordinate48. Reviewed
+ALR publication chain ~1200 bytes and RLR decode/observation paths ~1080 before
+library/context overhead versus UWB1600 reservation; main/ISR2048 unchanged.
+These estimates do not establish on-device high-water, hard deadlines or RF
+accuracy. Final local artifact is default; rebuild preferred flags before user
+flashing. Next exact work: user hardware checkpoint above. Calibration fitting
+was deferred as requested; total physical uncertainty remains UNKNOWN.

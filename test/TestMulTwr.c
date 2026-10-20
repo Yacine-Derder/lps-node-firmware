@@ -17,7 +17,12 @@
 #include <string.h>
 
 #include "../src/mul_alr.c"
+static mulLocalization_t capturedObservation;
+static unsigned int observationCount;
+static void captureObservation(const mulLocalization_t *o) { capturedObservation=*o; observationCount++; }
+#define mulLocalizationPrint captureObservation
 #include "../src/mul_rlr.c"
+#undef mulLocalizationPrint
 
 #define MS MUL_TWR_DTU_PER_MS
 #define SEC (1000*MS)
@@ -32,12 +37,12 @@ typedef struct {
   bool armed, receiving;
   float powerDbm; int8_t powerDelta; int16_t rxBiasDtu; unsigned int corrections;
 } FakeRadio;
-static FakeRadio radios[2];
+static FakeRadio radios[3];
 static mulTwr_t contexts[2];
 static mulClock_t model;
 static int32_t skew;
 static int64_t physical, framePhysical, flight;
-static uint64_t offsets[2], origins[2];
+static uint64_t offsets[3], origins[2];
 static uint32_t exchangeSequence;
 static TickType_t ticks;
 static bool useAlr[2];
@@ -45,7 +50,7 @@ static const uint8_t identities[2][8] = {{0x84,0,0,0,0,0,0xcf,0xbc},{0x85,0,0,0,
 
 TickType_t xTaskGetTickCount(void) { return ticks; }
 static FakeRadio *radio(dwDevice_t *device) {
-  for (int i = 0; i < 2; i++) if (device == &radios[i].device) return &radios[i];
+  for (int i = 0; i < 3; i++) if (device == &radios[i].device) return &radios[i];
   TEST_FAIL_MESSAGE("Unknown radio");
   return &radios[0];
 }
@@ -105,14 +110,14 @@ void dwCorrectTimestamp(dwDevice_t *dev,dwTime_t *t) {
   radio(dev)->corrections++; t->full+=radio(dev)->powerDelta;
 }
 
-static long double rate(int node) { return node == 0 ? 1.0L : 1.0L+skew/1e9L; }
+static long double rate(int node) { return node == 0 ? 1.0L : node == 1 ? 1.0L+skew/1e9L : 1.0L-10000.0L/1e9L; }
 static uint64_t clockAt(int node, int64_t at) {
   return mulTimestampMask(offsets[node]+llroundl(at*rate(node)));
 }
 static void advance(int64_t at) {
   physical=at;
   ticks=(TickType_t)(5000+at/(int64_t)MS);
-  for (int i=0;i<2;i++) radios[i].now=clockAt(i,at);
+  for (int i=0;i<3;i++) radios[i].now=clockAt(i,at);
 }
 static int64_t sendTime(int node) {
   return physical+llroundl((mulTimestampDifference(radios[node].raw,radios[node].now)+radios[node].physicalTx)/rate(node));
@@ -144,13 +149,14 @@ static void scenario(int32_t ppb, int64_t tof) {
 }
 void setUp(void) {
   memset(radios,0,sizeof(radios)); memset(contexts,0,sizeof(contexts)); memset(useAlr,0,sizeof(useAlr));
-  for (int i=0;i<2;i++) {
+  for (int i=0;i<3;i++) {
     radios[i].antenna=radios[i].physicalTx=MUL_ANTENNA_TX_DTU;
     radios[i].rxAntenna=radios[i].physicalRx=MUL_ANTENNA_RX_DTU;
     radios[i].device.antennaDelay.full=MUL_ANTENNA_TX_DTU;
     radios[i].device.channel=CHANNEL_2; radios[i].device.pulseFrequency=TX_PULSE_FREQ_64MHZ;
     radios[i].powerDbm=NAN;
   }
+  observationCount=0; offsets[2]=MUL_TIMESTAMP_MASK-5000*MS;
   offsets[0]=MUL_TIMESTAMP_MASK-660*MS; offsets[1]=UINT64_C(0x723456789a);
   skew=0; flight=0; physical=framePhysical=0; ticks=5000;
   exchangeSequence=5; mulClockReset(&model);
@@ -717,4 +723,91 @@ void test_mulTwrSuccessfulRefreshCommitsNewAcquisitionTimeAndIdentifier(void) {
   TEST_ASSERT_TRUE(ctx(1)->delayValid); TEST_ASSERT_EQUAL_UINT32(10,ctx(1)->estimateId);
   TEST_ASSERT_UINT32_WITHIN(1,original+5000,ctx(1)->measuredMs);
   TEST_ASSERT_EQUAL_INT(mulPropagationFresh,mulTwrPropagationState(ctx(1),&model,ticks));
+}
+
+// Three virtual nodes use the real role handlers and wire frames. Only the
+// mode-exclusive scratch is swapped as each node runs; no production hooks.
+static void receiveRlr(mulRoleScratch_t *receiver,const uint8_t *frame,unsigned int length,uint64_t stamp) {
+  mulRoleScratch_t follower=mulRoleScratch; mulRoleScratch=*receiver;
+  memcpy(radios[2].rx,frame,length); radios[2].rxLength=length; radios[2].arrival=stamp;
+  radios[2].receiving=false; mulRlrAlgorithm.onEvent(&radios[2].device,eventPacketReceived);
+  *receiver=mulRoleScratch; mulRoleScratch=follower;
+  TEST_ASSERT_TRUE(radios[2].receiving); TEST_ASSERT_EQUAL_UINT(0,radios[2].sends);
+}
+static void continuousCycle(bool moving) {
+  scenario(5000,426); modeFollower(); nextSequence=900; // Independent counters.
+  mulRoleScratch_t follower=mulRoleScratch;
+  uwbConfig_t receiverConfig={.address={0x86,0,0,0,0,0,0xcf,0xbc}};
+  mulRlrAlgorithm.init(&receiverConfig,&radios[2].device);
+  mulRoleScratch_t receiver=mulRoleScratch; mulRoleScratch=follower;
+  uint32_t previousAge=0,previousMotion=0;
+  for (uint32_t sequence=6;sequence<=23;sequence++) {
+    int64_t when=(int64_t)(sequence-5)*SEC;
+    // Reference stays fixed; follower moves away at ~98.5 mm/s when enabled.
+    // Actual change is <= every tested positive bound (500 mm/s).
+    if (moving) flight=426+(int64_t)(sequence-5)*21;
+    uint8_t reference[34]; mulEncodeTestPacket(reference,identities[0],sequence,clockAt(0,when));
+    advance(when+213+MS);
+    receiveRlr(&receiver,reference,34,clockAt(2,when+213));
+    advance(when+flight+MS);
+    injectBroadcast(1,0,sequence,clockAt(0,when),clockAt(1,when+flight));
+    TEST_ASSERT_TRUE(txPending);
+    uint8_t broadcast[74]; memcpy(broadcast,radios[1].tx,74);
+    int64_t sent=sendTime(1); advance(sent+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
+    TEST_ASSERT_EQUAL_UINT64(mulDecodeTimestamp(broadcast+29),radios[1].actual);
+    unsigned int before=observationCount;
+    advance(sent+flight-213+MS);
+    receiveRlr(&receiver,broadcast,74,clockAt(2,sent+flight-213));
+    if (sequence>=7) {
+      TEST_ASSERT_EQUAL_UINT(before+1,observationCount);
+      TEST_ASSERT_EQUAL_UINT32(sequence,capturedObservation.referenceSequence);
+      TEST_ASSERT_EQUAL_UINT32(900+sequence-6,capturedObservation.followerSequence);
+      bool expected=sequence>=11 && sequence<=21 &&
+        (MUL_PROP_MAX_AGE_MS>1000 || sequence==11 || sequence==16) &&
+        MUL_EXPERIMENTAL_STATIONARY_RLR_RATE;
+      TEST_ASSERT_EQUAL_INT(expected,capturedObservation.status==mulDownlinkAvailable);
+      if (sequence<=10) TEST_ASSERT_EQUAL_INT(mulPropagationNone,capturedObservation.delayState);
+      if (expected) {
+        if (!moving) TEST_ASSERT_INT32_WITHIN(3,0,capturedObservation.tdoaDtu);
+        uint32_t actualAge=capturedObservation.observedMs-ranging.measuredMs;
+        TEST_ASSERT_TRUE(capturedObservation.delayAgeMs>=actualAge && capturedObservation.delayAgeMs<=actualAge+4);
+        TEST_ASSERT_EQUAL_UINT32(sequence<16 ? 10 : 15,ranging.estimateId);
+        if (MUL_PROP_MAX_AGE_MS>1000) {
+          TEST_ASSERT_EQUAL_INT(sequence==11 || sequence==16 ? mulPropagationFresh : mulPropagationReused,capturedObservation.delayState);
+          if (sequence!=11 && sequence!=16) {
+            TEST_ASSERT_UINT32_WITHIN(2,previousAge+1000,capturedObservation.delayAgeMs);
+#if MUL_RELATIVE_SPEED_MM_S > 0
+            TEST_ASSERT_TRUE(capturedObservation.motionBoundMm>previousMotion);
+#endif
+          }
+          previousAge=capturedObservation.delayAgeMs; previousMotion=capturedObservation.motionBoundMm;
+        }
+        TEST_ASSERT_TRUE(capturedObservation.unknownComponents & mulQualityTwrUnknown);
+      } else {
+        TEST_ASSERT_EQUAL_INT32(INT32_MIN,capturedObservation.tdoaDtu);
+      }
+      if (sequence>=22 && MUL_PROP_MAX_AGE_MS>1000)
+        TEST_ASSERT_EQUAL_INT(mulPropagationExpired,capturedObservation.delayState);
+    }
+    if (sequence==10 || sequence==15 || sequence==20) {
+      framePhysical=when; exchangeSequence=sequence;
+      origins[0]=clockAt(0,when); origins[1]=clockAt(1,when+flight);
+      advance(when+630*MS); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,sequence,origins[0]));
+      if (sequence==20) {
+        uint32_t old=ranging.measuredMs; transfer(0); // Missed response/result.
+        advance(when+801*MS); dispatch(0,eventTimeout); dispatch(1,eventTimeout);
+        TEST_ASSERT_TRUE(ranging.delayValid); TEST_ASSERT_EQUAL_UINT32(old,ranging.measuredMs);
+      } else { completeExchange(); TEST_ASSERT_TRUE(ranging.delayValid); }
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT(17,observationCount);
+  (void)previousMotion;
+}
+void test_mulContinuousThreeNodePipelineAcrossTwoTwrUpdatesMissingRefreshAndWrap(void) {
+  continuousCycle(false);
+}
+void test_mulContinuousBoundedSeparationChangeRetainsExplicitAgingBound(void) {
+#if MUL_RELATIVE_SPEED_MM_S >= 500
+  continuousCycle(true);
+#endif
 }

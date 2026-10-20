@@ -105,6 +105,16 @@ bool mulBroadcastDecode(const uint8_t *frame,size_t length,mulTestPacket_t *p,mu
   *p=packet; *r=relation; return true;
 }
 
+static void unavailableModel(mulRelation_t *r)
+{
+  r->available=false; r->referenceOrigin=r->followerOrigin=0;
+  r->skewPpb=0; r->originAgeMs=r->remainingMs=0;
+  if (r->version!=2) {
+    r->twrSequence=0; r->delayAgeMs=r->delayDtu=0;
+    r->powerCorrectedTwr=false; r->delayState=mulPropagationNone;
+  }
+}
+
 mulRelation_t mulRelationPublish(const mulClock_t *clock,const mulClockDelay_t *delay,
   uint64_t tx,uint64_t hardwareNow,uint32_t nowMs,bool powerCorrectedTwr)
 {
@@ -126,21 +136,20 @@ mulRelation_t mulRelationPublish(const mulClock_t *clock,const mulClockDelay_t *
   if (!delay || delay->maxAgeMs!=MUL_PROP_MAX_AGE_MS ||
       !mulClockMapRefToFollowerSimultaneous(clock,clock->referenceTx,delay,atTx,&origin) ||
       !mulClockMapFollowerSimultaneousToRef(clock,tx,delay,atTx,&inverse)) {
-    if (result.version==1) { result.twrSequence=0; result.delayAgeMs=0; result.powerCorrectedTwr=false; }
+    unavailableModel(&result);
     return result;
   }
   uint32_t span=origin.applicationAgeMs > inverse.applicationAgeMs ? origin.applicationAgeMs : inverse.applicationAgeMs;
   uint32_t remaining=MUL_PROP_MAX_AGE_MS-span;
   uint32_t originRemaining=2000-origin.affine.ageMs;
   if (remaining>originRemaining) remaining=originRemaining;
-  if (remaining<=1) return result;
+  if (remaining<=1) { unavailableModel(&result); return result; }
   result.available=true; result.referenceOrigin=clock->referenceTx; result.followerOrigin=origin.timestamp;
   result.skewPpb=clock->skewPpb; result.originAgeMs=origin.affine.ageMs;
   result.delayAgeMs=origin.delayAgeMs; result.remainingMs=remaining-1;
   uint64_t check;
   if (!mulRelationInverse(&result,tx,0,&check)) {
-    result.available=false; result.referenceOrigin=result.followerOrigin=0; result.skewPpb=0;
-    result.originAgeMs=result.remainingMs=0;
+    unavailableModel(&result);
   }
   return result;
 }
