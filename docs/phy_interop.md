@@ -1,6 +1,6 @@
 # Stage 3F: opt-in PHY packet experiment
 
-Status: CP0 feasibility and CP1 diagnostic contract software-defined; hardware
+Status: CP0–CP6 software experiment implemented and validated; hardware
 interoperability UNVERIFIED. Stage 3G is gated on bidirectional valid reception.
 The central project document remains unchanged. Existing e-puck streaming/control
 work is preserved; this experiment does not port MUL or perform mixed-radio ranging.
@@ -243,3 +243,39 @@ openocd -s "$OPENOCD_SCRIPTS" -f interface/stlink.cfg -f target/stm32f4x.cfg -c 
 The unchanged current app_config has APP_UWB_ENABLED=0; normal boot therefore
 leaves DWM3000 disabled. Normal APP_UWB_ENABLED=1 still selects the existing
 channel9 Qorvo link and original BOARD_ROLE. No ESP32/dsPIC reflash is required.
+
+
+## Final software validation and repository handoff
+
+LPS implementation checkpoints25bbc97/3f72be3 and validated operator guide92a8759
+are pushed; the final validation-record commit contains this section. E-puck
+implementation f7f3e9f and final75a90e630de6bfb24bdcd23f2e25d40b07a52fd1 are pushed
+to origin/main. LPS changes are isolated; the e-puck tree deliberately retains
+its ten pre-existing streaming/control edits/untracked document, checked by hashes
+and excluded from the diagnostic commits. Central/ESP32/dsPIC repositories were
+not modified. Proposed central-document update: Stage3F software ready, OTA pending.
+
+Checks completed:
+- LPS193 host tests in default and Stage3E continuous10ms configurations;176 MUL
+  ASan/UBSan cases plus two diagnostic real-driver cases for each TX/RX role.
+- Both independent codecs:3 identical golden vectors,768 single-bit mutations,
+  wrong lengths and sequence semantics. Crosscheck: after native runners exist,
+  `python3 tools/test/phy_interop.py` from LPS.
+- Log analyzer:3 wrap/loss/reset/direction/minimum tests via
+  `python3 -m unittest discover -s tools/test -p test_analyze_phy_logs.py`.
+- STM32 codec/TX/RX and six APP_UWB/role activation/init-failure/IRQ combinations
+  under ASan/UBSan via `sh tests/phy_interop/run.sh`;15 existing console and9 ESP
+  safety/telemetry scenarios pass using their original run.sh scripts.
+- Clean LPS default, Stage3E continuous and diagnostic TX/RX builds. Default
+  text123024/data1072/bss15292 is unchanged:20 bytes beyond reservations.
+  Experimental data1080/bss15292 leaves12; existing scratch128 is reused.
+  Diagnostic compiler frames80 TX/120 RX, not measured stack high-water.
+- STM32 default/experimental Release builds; exported committed-code builds
+  excluding unrelated edits also pass all roles and normal UWB-enabled/channel9.
+  Workspace RAM28568 default/28992 RX versus clean export28216/28640; difference
+  is preserved streaming work. Diagnostic service frames264 TX/280 RX. Disabled
+  feature links no diagnostic state. HAL/vendor/library/interrupt timing remains
+  outside these compiler-only figures; no hard real-time guarantee is claimed.
+
+No physical result has been obtained. The next required evidence is A/B/C logs
+and counters above; do not begin Stage3G or claim mixed-radio compatibility yet.

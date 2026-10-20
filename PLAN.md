@@ -184,7 +184,8 @@ Canonical evidence matrix, packet v1 and exact A/B/reliability/restore commands:
 [PHY experiment](docs/phy_interop.md). No central-document/ESP32/dsPIC edits.
 
 CP0/CP1 `25bbc97` and CP2 `3f72be3` pushed to origin/master. E-puck CP3
-`f7f3e9f` pushed origin/main; its final hardening/docs checkpoint follows.
+`f7f3e9f` and final `75a90e630de6bfb24bdcd23f2e25d40b07a52fd1`
+pushed origin/main.
 CP4–CP6 software checks and operator guide are complete in this final commit.
 Opt-in0/off,1/TX,2/RX uses ch5/PRF64/code9/preamble128/IEEE4a-SFD/6.8M/stdPHR,
 no STS. Default ch2 and all MUL modes/packets/equations remain unchanged. Codec
