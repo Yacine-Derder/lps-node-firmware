@@ -133,9 +133,10 @@ A stale stream may restart from a different sequence; replaying the last sequenc
 alone cannot reacquire. Duplicate, old, unknown, or malformed packets never arm TX.
 
 Each fresh reference sequence permits one attempt in the follower's local clock:
-`antenna target = local reference RX + 500 ms`; `raw DX_TIME = align_up(target -
+`antenna target = local reference RX + MUL_FOLLOWER_SLOT_MS`; `raw DX_TIME = align_up(target -
 live TX_ANTD, 512 ticks) modulo 2^40`. The encoded time is verified DX_TIME plus
-TX_ANTD, so intended antenna-referenced separation is 500 ms to within 511 ticks.
+TX_ANTD, so intended antenna-referenced separation is the configured local slot
+to within 511 ticks.
 The reference's embedded TX time is stored/logged, never used as a local TX target.
 Follower packet sequences are independent of reference sequences and survive reacquisition.
 
@@ -152,9 +153,9 @@ leave TX armed. Late setup (under 5 ms lead), register mismatch, or delayed-star
 errors skip the attempt and return to RX. No slot is moved forward or retried.
 Declared reference loss aborts pending TX; no missing superframe is extrapolated.
 
-This is coarse TDMA, not clock synchronization: 500 ms uses the follower's nominal
-clock rate, includes propagation/clock-rate effects, and leaves large slot guards.
-The follower cannot receive during its roughly 500 ms delayed-TX wait.
+This is coarse TDMA, not clock synchronization: the slot uses the follower's
+nominal clock rate and includes propagation/clock-rate effects. The follower
+cannot receive during its configured delayed-TX wait.
 RLR slot-separation tests compare its two local RX timestamps, not remote TX clocks.
 
 RLR state is fixed to two supported full identities. Each slot counts valid received
@@ -169,6 +170,69 @@ Duplicate/old packets are counted quietly; the next fresh log reports the counte
 There is no independently calibrated offset or geometric TDoA measurement.
 Stage 3C retains and associates these observations as described below.
 See [the focused reuse audit](mul_stage3_reuse_audit.md) for implementation decisions.
+
+## Configurable spacing experiment (Stage 3D.1)
+
+`inc/mul_timing.h` is the shared compile-time authority. All three nodes must use
+the same `MUL_FOLLOWER_SLOT_MS`; unsupported values fail compilation. Packet
+sizes/types, EEPROM, PHY, antenna/power corrections and mathematical clock/rate
+conversions remain unchanged. Default stationary-rate policy is still disabled.
+
+| Slot (ms) | RLR raw RX / converted TX window (ms) | Reference presence (ms) | Candidate / rate age (ms) |
+|---|---|---|---|
+| 500 (default) | 450..550 | 450..600 | 700 |
+| 50 | 45..55 | 45..60 | 250 |
+| 10 | 8..12 | 8..14 | 210 |
+
+Windows are inclusive: +/-10%, with a minimum 2 ms tolerance. Coarse age retains
+the original additional 200 ms margin; it does not override hardware ordering,
+independent 900..1100 ms cadence, source/generation checks or relation lifetime.
+The publication helper's generic 600 ms maximum future query remains a safety
+cap, not a scheduled offset. Origin/delay age fields are computed at actual TX.
+TWR remains at 650..730 ms, cutoff 800, preparation 630: no supported slot
+collides, and moving the exchange would add an unnecessary experimental variable.
+A stalled old exchange loses ownership to broadcasts; it cannot move a slot.
+
+Ten-ms timing is experimental. At 48 MHz CPU and normal 12 Mbit/s SPI, a generous
+1 KiB transfer allowance costs 0.69 ms (2.74 ms at initialization's 3 Mbit/s).
+Allowing up to 2 ms from RMARKER to completion for the supported reference PHY
+choices leaves roughly 2.3 ms CPU/dispatch budget before the existing 5 ms
+post-setup lead guard. This is an engineering budget, not measured WCET. Follower
+processing uses bounded integer clock/model calculations and 74-byte encoding;
+late setup skips safely, never transmits at an invented later target. RLR captures
+34-byte reference RX and optional power correction before rearming, then performs
+association/logging. Rearm should finish conservatively within 8 ms to precede the
+follower preamble even with the long preamble option. Highest task priority and
+nonblocking serial help, but HAL_MAX_DELAY SPI and IRQ/float-library latency mean
+there is no finite source-proven wall-time bound. Host tests verify guards and
+state transitions, not loss-free RF operation. Measure skips/loss on-device; if
+10 ms fails, use 50 ms without changing guard, PHY or clock mathematics.
+
+Build baseline: `make clean && make`. For the stationary comparison, use:
+
+```sh
+make clean && make EXTRA_CFLAGS="-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1 -DMUL_FOLLOWER_SLOT_MS=500"
+make clean && make EXTRA_CFLAGS="-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1 -DMUL_FOLLOWER_SLOT_MS=50"
+make clean && make EXTRA_CFLAGS="-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1 -DMUL_FOLLOWER_SLOT_MS=10"
+```
+
+Initialization reports slot_ms; RLR reports rate_unit=ppb. Existing adjacent
+PAIR/TDOA lines retain sequences, TX/RX reference intervals, signed DTU/mm, rate,
+relation age, power availability and UNKNOWN uncertainty without a longer burst.
+`python3 tools/test/mul_slots.py --sanitize` reproduces native/sanitizer coverage
+for all slots; add `--slot 500 --default-rate` to check default unavailable-rate
+policy. Existing GCC/Ruby/Rake tooling and initialized submodules are required;
+configs, binaries and logs stay temporary, with no dependency changes.
+
+The independent physical oracle constructs absolute SI-time/metre observations
+for three oscillators and checks production output against analytical geometry,
+including wrap. +/-10 ppb (0.010 ppm) receiver-rate error gives approximately
+-/+1.499, 0.150, 0.030 m bias at 500/50/10 ms. A deliberately arrival-aligned
+follower origin gives approximately +2 m at every slot in its 2 m geometry.
+These are diagnostic examples, not an explanation fitted to hardware. Compare
+fixed and spacing-dependent components without fitting an online correction;
+rate-estimator noise and scheduling/environment changes can confound the test.
+Hardware comparison and unresolved physical results are tracked in PLAN.md.
 
 ## Diagnostic relative clock rate
 
@@ -354,7 +418,8 @@ nonnegative and rounded ToF <=63898 DTU. Bounded integer products fit uint64.
 Distance diagnostics use `tof*299792458/63897600000` metres (vacuum convention).
 
 Initiation is once per eligible reference sequence (nonzero multiples of five),
-only after receiving the follower broadcast 450..600 ms into that local frame.
+only after receiving the follower broadcast in the configured presence window
+(default 450..600 ms) into that local frame.
 Prepare at 630 ms, hardware POLL at 650 ms, then each next message 20 ms after
 its local hardware RX. Expected markers are near 650/670/690/710/730 ms; follower
 accepts POLL only 600..700 ms after both its own reference RX and remote reference TX.
@@ -516,8 +581,9 @@ Same-sequence restarts and delayed packets after staleness remain ambiguous.
 A single `mulAssociation_t` candidate is armed only by a consecutive reference
 sequence with 900..1100 ms progress in its source TX clock, RLR raw RX clock and
 coarse uptime. A follower must independently show the same consecutive cadence,
-arrive after that reference by 450..550 ms in the RLR clock and within 700 coarse
-ms, with compatible local generations and identical receiver clock identities.
+arrive after that reference within the configured hardware window and coarse
+candidate age (default 450..550 and 700 ms), with compatible local generations
+and identical receiver clock identities.
 Sequence numbers are independent: equality is never an association rule. First
 observations warm up; gaps or changed generations require fresh cadence. Accepted
 followers consume candidates once, even when rejected; newer references replace
@@ -575,7 +641,9 @@ lead time plus a one-ms guard. Both existing corrected-API contracts must hold a
 TX; remaining lifetime covers the maximum application span to origin and follower
 TX, and affine horizon, with an extra ms guard. It is never extended to the
 five-second TWR interval. Typically only the follower slot after a TWR is available
-(delay age about 850 ms, remaining <150 ms); subsequent slots report unavailable.
+(default delay age about 850 ms, remaining <150 ms); at 50/10 ms the age is
+about 400/360 ms and remaining <600/640 ms. Subsequent slots still report
+unavailable: shortening the slot never extends the 1000 ms TWR delay lifetime.
 
 RLR freezes hardware RX age before re-arm (max 15 ms accepted for a relation),
 then binds metadata to the current follower frame and associated reference sequence
@@ -605,8 +673,8 @@ indistinguishable from skew. This assumption is not a mobile-robot solution.
 Observable cadence discontinuities, reference rebasing, follower epoch changes,
 incomplete convergence, or a stale rate invalidate availability.
 
-The rate must match the exact current reference sequence/TX/raw RX and be <=700
-ms old. Convert each bounded interval with
+The rate must match the exact current reference sequence/TX/raw RX and be no
+older than the configured candidate age (700/250/210 ms). Convert each bounded interval with
 `Delta_RX_ref = Delta_RX_rlr - round(Delta_RX_rlr*skewPpb/(1e9+skewPpb))`, then
 `TDoA_ref = Delta_RX_ref - Delta_TX_ref`. Positive means follower->RLR propagation
 minus reference->RLR propagation; sign is retained. Convert signed DTU to signed
@@ -644,8 +712,8 @@ Further state growth requires an explicit memory review.
 - Initially use known-map information for LOS probabilities.
 - Later investigate SLAM-derived LOS information and its uncertainty.
 
-These are architectural directions; no localization, clock-offset estimator, or calibration
-algorithm is currently implemented in MUL.
+These are architectural directions; no position solver, independent motion-aware
+clock estimator, or online measurement-error calibration is implemented in MUL.
 
 ## Reuse and evidence
 

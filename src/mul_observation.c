@@ -99,7 +99,7 @@ bool mulAssociate(mulAssociation_t *a, mulObservation_t observations[2],
     pair->correctedArrivalDifferenceDtu=mulTimestampDifference(fol->correctedRx,ref->correctedRx);
     pair->correctedAvailable=true;
   }
-  // There is no transmitted inter-ALR clock model. Never subtract source TXs,
-  // or fit an arrival mapping which would erase the geometric propagation term.
+  // Association alone never subtracts source TXs. The downlink layer must bind
+  // the transported simultaneous model and rate without fitting away geometry.
   return true;
 }

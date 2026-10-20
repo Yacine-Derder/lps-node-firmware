@@ -59,7 +59,7 @@ Current configuration, all using Bitcraze DW1000 LPS nodes:
 | Node | Address | Current role |
 |---|---|---|
 | ALR 1 | `0x84` | Reference transmitter, approximately 1 Hz |
-| ALR 2 | `0x85` | Reference-following transmitter, approximately 500 ms later |
+| ALR 2 | `0x85` | Reference-following transmitter, configured slot (default 500 ms) |
 | RLR | `0x86` | Passive receiver of both sources |
 
 Software acceptance covers complete two-radio exchanges with independent clock
@@ -95,7 +95,7 @@ observations from multiple ALRs can be paired without mixing clock domains.
 
 ### Stage 3D — Distributed clock relation and downlink TDoA
 
-Status: **Implemented/software tested; awaiting hardware validation.**
+Status: **Implemented/software tested; functional hardware evidence, accuracy unresolved.**
 Versioned follower metadata transports the existing propagation-corrected model.
 RLR association binds the current model to both transmissions. Default firmware
 exposes clock-relation availability but TDoA remains UNAVAILABLE without a justified
@@ -126,105 +126,78 @@ compare accuracy, uncertainty consistency, robustness, and relevant baselines.
 
 Update milestone status in place as evidence changes; Git preserves earlier states.
 
-## Stage 3D hardware validation checkpoint
-
-No physical hardware was flashed by Codex. Use the same current build on 0x84,
-0x85 (mode 5) and 0x86 (mode 6), retaining addresses and PHY.
-
-1. Default `make clean && make`: expect reference packets at 34 bytes, follower
-   packets at 74 bytes, TWR at 84 bytes. TX scheduled/packet/actual must still
-   match, TWR remain near five-second cadence, and PAIR retain raw/corrected local
-   differences. After a successful TWR, the following follower slot can show
-   clock_relation=AVAILABLE; other frames revert to UNAVAILABLE. Default TDOA
-   must report reason=RLR_RATE_UNAVAILABLE whenever the relation is available.
-2. Only for a declared stationary bench experiment, build with
-   `make clean && make EXTRA_CFLAGS=-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1`.
-   Keep all three nodes fixed and allow at least six fresh reference observations
-   plus the next successful TWR. Expect intermittent TDOA status=AVAILABLE with
-   rate=STATIC/<ppb>, signed dtu/mm, and power=1 only with both RLR RX corrections.
-   Missing power retains raw TDoA (power=0); UNKNOWN physical uncertainty remains.
-3. Place RLR at equal known distances from the ALRs, then nearer the reference,
-   then nearer the follower. After each reposition, remain stationary for at
-   least six reference observations before interpreting another fresh relation.
-   Expected signed range difference is distance(follower,RLR)-distance(reference,RLR):
-   near zero, positive, negative respectively. Compare logged mm against measured
-   geometry and save all three logs; do not fit an offset from these observations.
-4. Observe at least 40 seconds for counter wrap and several availability cycles.
-   No extra transmissions, gaps, lockups or nonzero TX deltas should appear.
-   Stale/missing model or rate must report unavailable, never a carried-forward
-   TDoA. Additional deliberate restart tests are optional; software covers them.
-
-The static option is an experimental declaration, not automatic stationarity
-recognition. Constant radial motion can masquerade as skew, so never enable it
-for mobile robots. No centimetre accuracy or finite confidence bound is claimed.
-
 ## Stage 3D.1 — Controlled transmission-spacing experiment
 
-Status: CP4 diagnostics and independent physical oracle implemented; full validation next. Starting point
-`3191b39`. User-reported midpoint geometry (1 m each side) produced -369 DTU /
--1731 mm, STATIC/-2534 ppb, age 503 ms, power=1; TWR 1.88–1.95 m versus 2 m,
-follower skew +1.415 ppm, TX delta=0 and no gaps in the excerpt. An earlier
-configuration gave about -4.5 m. Cause remains unknown; Stage 3D functional
-operation is supported by these excerpts, physical accuracy is not accepted.
+Status: **CP1–CP5 implemented/software tested; awaiting controlled hardware comparison.**
+User-reported geometry: reference --1 m-- RLR --1 m-- follower. Expected geometric
+range difference ~0 m; reported `TDOA status=AVAILABLE tx=07704B52F0
+rx=07704B517F dtu=-369 mm=-1731 rate=STATIC/-2534 age=503 power=1`.
+TWR was 1.88–1.95 m versus nominal 2 m, follower skew +1.415 ppm, TX delta=0,
+reception/pairing worked, and no gaps appeared in the midpoint excerpt. Relation
+was available shortly after TWR, then stale/unavailable. An earlier configuration
+produced approximately -4.5 m. Cause remains unknown; shorter spacing is a
+diagnostic experiment, not an established fix or hardware accuracy acceptance.
 
-Implementation checkpoints:
-- CP1: inspect timing and record this plan; baseline host suite and docs review.
-- CP2: shared compile-time slot 500 (default), 50 or 10 ms; reject other values.
-- CP3: derive association, converted-TX/RX gates, follower-presence gate and
-  candidate age from the slot; keep clock equations and 1000 ms delay validity.
-- CP4: configuration diagnostics and slot-parametric regressions; independent
-  physical-clock synthetic oracle, including injected rate error and wrap.
-- CP5: all-slot host/sanitizer/real-driver tests, three clean firmware builds,
-  RAM/stack review, architecture and exact stationary hardware procedure.
-Each checkpoint is committed and immediately pushed to origin/master. Record
-its hash in the next checkpoint (a commit cannot contain its own hash).
+Completed checkpoints:
+- CP1 timing inspection/plan: `dd52423` pushed.
+- CP2 shared compile-time slot configuration: `9a4f43c` pushed.
+- CP3 slot-dependent scheduling/association: `bdd7cbf` pushed.
+- CP4 diagnostics and independent physical-clock oracle: `c61303e` pushed.
+- CP5 full validation/docs: the commit containing this section; hash reported
+  after push (a commit cannot contain its own hash).
 
-Timing audit: slot is follower local hardware reference RX +500 ms, with live
-TX antenna compensation and upward 512-DTU alignment. Fixed 450..550 ms gates
-exist in observation association and downlink converted-TX/raw-RX validation;
-reference follower-presence is 450..600 ms. Candidate/rate age is 700 ms and
-publication lead is capped at 600 ms. Reference cadence/rate estimator uses 1 Hz
-reference observations, independent of follower spacing. Publication predicts
-freshness at actual TX, so shorter spacing changes age, not equations/lifetime.
-TWR prepares at 630 ms, transmits near 650/670/690/710/730 and stops at 800;
-POLL gates 600..700 refer to TWR, not follower slots. No proposed slot overlaps
-this window. Keep TWR timing, five-second eligibility and broadcast priority.
+Configuration, timing windows, latency budget and exact clean build commands:
+[architecture spacing experiment](docs/mul_architecture.md#configurable-spacing-experiment-stage-3d1).
+TWR stays 650..730 ms with 800 ms cutoff, no collision with 500/50/10 ms slots;
+priority and the one-second delay validity remain unchanged. Both ALRs remain
+1 Hz, TWR approximately five seconds, RLR passive. No physical hardware flashed.
 
-Timing feasibility: reference packet completion follows its RMARKER; even the
-supported slower/longer PHY combinations have an engineering allowance below
-2 ms for the 34-byte packet tail. Normal SPI is 48 MHz /4 =12 Mbit/s (slow
-initialization /16 =3 Mbit/s). A deliberately generous 1 KiB aggregate transfer
-allowance costs 0.69 ms fast /2.74 ms slow, excluding HAL/CPU/IRQ overhead.
-Follower work is bounded integer estimator/model/74-byte encoding before arm;
-RLR freezes 34-byte RX/power diagnostics (including software floating point),
-then rearms BEFORE association/logging. UWB task has highest task priority;
-serial sends are nonblocking, but HAL SPI uses HAL_MAX_DELAY. Therefore no
-finite worst-case wall time can be established from source/host tests: IRQ,
-HAL stalls and software float costs require device measurement. At 10 ms the
-existing 5 ms post-preparation hardware lead guard permits less than 5 ms total
-RX-tail + dispatch + processing + setup (slightly less due to TX antenna delay).
-Budgeting 2 ms RX tail +0.69 ms SPI leaves about 2.3 ms for CPU/dispatch at fast
-SPI. RLR must rearm before the follower preamble, conservatively within 8 ms.
-Ten ms is an experimental, fail-closed schedule, not guaranteed loss-free:
-late ALR setup skips rather than moving TX or compromising timestamps. Validate
-10 ms on-device; use 50 ms if skips/loss appear. No PHY or antenna changes.
+## Hardware comparison — next required work
+
+The user performs this experiment; Codex has not measured RF timing or accuracy.
+Keep reference --1 m-- RLR --1 m-- follower, antenna orientation/height and
+surroundings identical. Preserve addresses 0x84/0x85 mode 5 and 0x86 mode 6.
+
+1. Build the stationary 500, 50 and 10 ms configurations using the architecture's
+   commands, one at a time. The same image/configuration goes to all three nodes.
+   Confirm slot_ms at initialization and record full logs from both ALRs/RLR.
+2. After each build allow at least six fresh reference observations and a
+   successful TWR. Collect at least 10 AVAILABLE observations over multiple TWR
+   cycles (usually only one such observation per five-second cycle).
+3. For each observation retain the adjacent PAIR/TDOA sequences, actual arrival
+   slot_us, signed DTU/mm, reference-unit TX/RX intervals, STATIC rate in ppb,
+   relation age and power flag, plus corresponding TWR distance/skew. Retain
+   UNAVAILABLE reasons too; uncertainty remains UNKNOWN.
+4. Verify packet lengths 34/74/84, scheduled=packet=actual with delta=0, near-1 Hz
+   broadcasts, near-five-second TWR, no unexplained gaps or starvation. Observe
+   >40 s for wrap. In particular, check 10 ms for SLOT skipped/late TX, missing
+   RX/pairs and TWR failures: source-level budgeting does not prove feasibility.
+   If it fails, use 50 ms as the shortest validated interval; never relax guards.
+5. Compare mean signed error, sample standard deviation, RLR-rate mean/spread,
+   actual arrival separation and TWR ranges for each slot. Proportional bias
+   implicates residual rate error; fixed bias warrants offset/propagation/domain
+   investigation. Mixed results require quantifying both components; estimator
+   noise, changed scheduling or hardware conditions may confound interpretation.
+   Do not fit a firmware offset or promote this stationary option to mobile use.
 
 ## Codex continuation checkpoint
 
-Stage 3D.1 CP1 `dd52423`, CP2 `9a4f43c`, CP3 `bdd7cbf` pushed; CP4 is the
-commit containing this section. All 173 host tests pass in stationary 500/50/10
-configurations, including real-driver TX equality, live TWR, out-of-window
-one-DTU boundaries, missing reference/follower, and stalled-TWR broadcast
-priority. Unsupported slot compilation fails as intended.
-Independent SI-time/metre oracle uses three independent oscillators and absolute
-clock origins, with zero and +/-1 m geometry and wrap: error <=2 DTU (~9.4 mm).
-Injected +/-10 ppb produces analytical spacing-dependent bias (approximately
-+/-1.499/0.150/0.030 m); wrong receiver units and arrival-aligned origins are
-separately detected. The latter produces a fixed approximately +2 m error.
-No firmware arithmetic/correction equation changed. Initialization shows slot
-and RLR rate units; per-observation diagnostics retain their previous fields.
-Reproduce matrix: `python3 tools/test/mul_slots.py` (temporary native configs;
-add `--sanitize` for MUL ASan/UBSan including real-driver tests).
-Next: CP5 default-policy full suite, all-slot sanitizer matrix, clean default/
-50/10 firmware builds, RAM/stack review, architecture and hardware instructions.
-No physical hardware flashed; measured hardware bias remains unexplained.
+Stage 3D.1 CP1–CP4 hashes above are pushed; CP5 is the commit containing this
+section. All software work is complete. Native suite: 173/173 for every stationary
+slot plus default 500 policy; MUL ASan/UBSan: 160/160 for each slot plus default
+policy, including 11 real-driver cases per configuration. Unsupported slot20
+compilation fails. Clean default and stationary 500/50/10 firmware builds pass;
+final local build is default.
+Independent physical-clock oracle: midpoint and +/-1 m recovered within 2 DTU
+(~9.4 mm) at each spacing, with wrap; +/-10 ppb injected errors follow analytical
+bias approximately +/-1.499/0.150/0.030 m, while omitted propagation gives a fixed
+approximately +2 m. No physical cause has been established for the user's bias.
+RAM unchanged: data1072 + bss/reservations15292 =16364 bytes, 20 spare; scratch128,
+UWB1600 and main/ISR2048 reservations unchanged. Compiler frames: ALR entry184,
+TX setup256 (8 above previous recorded estimate), publisher376, corrected API240,
+map80; RLR event512, association216, relation inverse56. Reviewed publication
+chain approximately1264 bytes before compiler-library/context overhead, within
+1600 reservation with margin; no extra buffers/state. On-device stack high-water
+and loss-free10ms timing remain unmeasured. Default text120840 (+56), stationary
+50/10 text120808. Diagnostic burst unchanged (<=501 bytes). Next exact work:
+user hardware comparison above; no Stage4/5 or physical flashing by Codex.

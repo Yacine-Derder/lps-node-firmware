@@ -42,8 +42,8 @@ typedef struct {
   int64_t correctedArrivalDifferenceDtu;
   uint64_t physicalBoundDtu; // UINT64_MAX: UNKNOWN.
   bool correctedAvailable;
-  bool clockRelationAvailable; // False: the follower's model is not broadcast.
-  bool geometricTdoaAvailable; // False: cannot remove unrelated TX clock offsets.
+  bool clockRelationAvailable; // Set only after binding current transported metadata.
+  bool geometricTdoaAvailable; // Also requires a justified receiver/reference rate.
 } mulPair_t;
 
 void mulAssociationExpire(mulAssociation_t *association,

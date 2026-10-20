@@ -26,6 +26,7 @@ def run(command, log, env):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sanitize', action='store_true')
+    parser.add_argument('--default-rate', action='store_true', help='test default unavailable-rate policy instead of stationary opt-in')
     parser.add_argument('--slot', type=int, choices=[500, 50, 10], action='append')
     args = parser.parse_args()
     # Keep logs available after completion, outside the source tree.
@@ -38,9 +39,9 @@ def main():
         config = work / f'{slot}.yml'
         ruby = '''require 'yaml'
 c=YAML.safe_load(File.read('tools/test/gcc.yml'), permitted_classes: [Symbol], aliases:true)
-c['compiler']['defines']['items'] += ["MUL_FOLLOWER_SLOT_MS=#{ARGV[1]}", 'MUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1']
+c['compiler']['defines']['items'] += ["MUL_FOLLOWER_SLOT_MS=#{ARGV[1]}", "MUL_EXPERIMENTAL_STATIONARY_RLR_RATE=#{ARGV[2]}"]
 File.write(ARGV[0],YAML.dump(c))'''
-        subprocess.run(['ruby', '-e', ruby, str(config), str(slot)], cwd=ROOT, check=True)
+        subprocess.run(['ruby', '-e', ruby, str(config), str(slot), '0' if args.default_rate else '1'], cwd=ROOT, check=True)
         output = run(['rake', f'config[{config}]', 'unit', 'summary'], work / f'host-{slot}.log', env)
         summary = re.search(r'\d+ TOTAL TESTS \d+ TOTAL FAILURES \d+ IGNORED', output)
         if not summary or '0 TOTAL FAILURES' not in summary[0]:
@@ -61,7 +62,7 @@ File.write(ARGV[0],YAML.dump(c))'''
                 command = ['gcc', '-std=c99', '-O1', '-g', '-Wall', '-Wextra', '-Werror',
                            '-Wno-unused-parameter', '-Wno-sign-compare', '-DUNITY_SUPPORT_64',
                            '-DSTM32F072xB', '-DHSI48_VALUE=((uint32_t)48000000)',
-                           f'-DMUL_FOLLOWER_SLOT_MS={slot}', '-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE=1',
+                           f'-DMUL_FOLLOWER_SLOT_MS={slot}', f'-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE={0 if args.default_rate else 1}',
                            '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie']
                 command += ['-I' + i for i in includes]
                 command += [str(test), f'generated-test/build/{test.stem}_Runner.c',
