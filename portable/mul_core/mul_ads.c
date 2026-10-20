@@ -50,16 +50,22 @@ bool mulAdsInit(mulAds_t *s,uint8_t local,uint8_t peer,bool initiator,uint64_t s
   if(!s || !id(local) || !id(peer) || local==peer || !session) return false;
   memset(s,0,sizeof(*s)); s->local=local; s->peer=peer; s->initiator=initiator; s->session=session; return true;
 }
-void mulAdsAbort(mulAds_t *s) {
-  if(s && s->stage!=adsIdle) { s->aborted++; s->stage=adsIdle; s->pending=false; }
+bool mulAdsRangeValid(double tof) { return isfinite(tof) && tof>=0; }
+void mulAdsAbortWithReason(mulAds_t *s,mulAdsAbortReason_t reason) {
+  if(s && s->stage!=adsIdle) {
+    s->lastAbortStage=s->stage; s->lastAbortReason=(uint8_t)reason;
+    if(s->stage<=adsReportTx && s->failedStages[s->stage-1]<UINT16_MAX) s->failedStages[s->stage-1]++;
+    s->aborted++; s->stage=adsIdle; s->pending=false; s->rangeValid=false;
+  }
 }
+void mulAdsAbort(mulAds_t *s) { mulAdsAbortWithReason(s,adsAbortCancelled); }
 bool mulAdsTick(mulAds_t *s,uint32_t now) {
-  if(s && s->stage!=adsIdle && (uint32_t)(now-s->changedMs)>=MUL_ADS_TIMEOUT_MS) { mulAdsAbort(s); return true; }
+  if(s && s->stage!=adsIdle && (uint32_t)(now-s->changedMs)>=MUL_ADS_TIMEOUT_MS) { mulAdsAbortWithReason(s,adsAbortDeadline); return true; }
   return false;
 }
 bool mulAdsBegin(mulAds_t *s,uint32_t now) {
   if(!s || !s->initiator || s->stage!=adsIdle || s->transaction==UINT32_MAX) return false;
-  s->transaction++; s->attempts++; s->changedMs=now; s->stage=adsPollTx; s->pending=false;
+  s->transaction++; s->attempts++; s->changedMs=now; s->stage=adsPollTx; s->pending=false; s->rangeValid=false;
   memset(s->stamps,0,sizeof(s->stamps)); return true;
 }
 bool mulAdsTakeTx(mulAds_t *s,uint32_t now,mulAdsPacket_t *p) {
@@ -96,7 +102,9 @@ bool mulAdsReceive(mulAds_t *s,const mulAdsPacket_t *p,uint64_t rx,uint32_t now)
     else if(!s->initiator && s->stage==adsFinalRx && p->type==mulAdsFinal) { s->stamps[2]=rx; s->stage=adsReportTx; }
     else if(s->initiator && s->stage==adsReportRx && p->type==mulAdsReport) {
       uint64_t t[6]={s->stamps[0],p->stamps[0],p->stamps[1],s->stamps[1],s->stamps[2],p->stamps[2]};
-      if(!mulAdsCalculate(t,&s->tof,&s->rateRatio)) { mulAdsAbort(s); goto reject; }
+      if(!mulAdsCalculate(t,&s->tof,&s->rateRatio)) { mulAdsAbortWithReason(s,adsAbortMath); goto reject; }
+      s->rangeValid=mulAdsRangeValid(s->tof);
+      if(!s->rangeValid) s->invalidRanges++;
       s->completed++; s->stage=adsIdle;
     } else goto reject;
   }

@@ -14,12 +14,16 @@ typedef struct {
 } mulAdsPacket_t;
 typedef enum { adsIdle, adsPollTx, adsResponseRx, adsResponseTx,
                adsFinalRx, adsFinalTx, adsReportRx, adsReportTx } mulAdsStage_t;
+typedef enum { adsAbortCancelled, adsAbortDeadline, adsAbortRadio, adsAbortRxTimeout,
+               adsAbortTxStart, adsAbortEncode, adsAbortMath } mulAdsAbortReason_t;
 typedef struct {
   uint64_t session, stamps[3]; /* Initiator t1,t4,t5 OR responder t2,t3,t6. */
   double tof, rateRatio;
-  uint32_t transaction, changedMs, attempts, completed, aborted, rejected;
+  uint32_t transaction, changedMs, attempts, completed, aborted, rejected, invalidRanges;
+  uint16_t failedStages[7]; /* Saturating counts for stages1..7; not wrapping. */
   uint8_t local, peer, stage;
-  bool initiator, pending, seen;
+  bool initiator, pending, seen, rangeValid;
+  uint8_t lastAbortStage, lastAbortReason;
 } mulAds_t;
 bool mulAdsEncode(uint8_t *frame,size_t capacity,const mulAdsPacket_t *packet);
 bool mulAdsDecode(const uint8_t *frame,size_t length,mulAdsPacket_t *packet);
@@ -32,6 +36,9 @@ bool mulAdsTakeTx(mulAds_t *s,uint32_t nowMs,mulAdsPacket_t *packet);
 bool mulAdsTxDone(mulAds_t *s,uint64_t actualMarker,uint32_t nowMs);
 /* true only when accepted, not merely decoded. */
 bool mulAdsReceive(mulAds_t *s,const mulAdsPacket_t *packet,uint64_t rxMarker,uint32_t nowMs);
-void mulAdsAbort(mulAds_t *s);
+/* Negative ToF stays raw/completed, but cannot be accepted as a physical range. */
+bool mulAdsRangeValid(double tof);
+void mulAdsAbortWithReason(mulAds_t *s,mulAdsAbortReason_t reason);
+void mulAdsAbort(mulAds_t *s); /* Explicit cancellation, retained API. */
 bool mulAdsTick(mulAds_t *s,uint32_t nowMs); /* true on deadline abort */
 #endif

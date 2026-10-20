@@ -20,6 +20,12 @@
 #ifndef PHY_INTEROP_ROLE
 #define PHY_INTEROP_ROLE 0
 #endif
+#ifndef MUL_ADS_TRACE_TIMES
+#define MUL_ADS_TRACE_TIMES 1
+#endif
+#if MUL_ADS_TRACE_TIMES != 0 && MUL_ADS_TRACE_TIMES != 1
+#error "MUL_ADS_TRACE_TIMES must be 0 or 1"
+#endif
 #ifndef MUL_TIMING_TRACE
 #define MUL_TIMING_TRACE 0
 #endif
@@ -29,7 +35,7 @@
 #if (MUL_TWR_ROLE && (MUL_DIAG_ROLE || PHY_INTEROP_ROLE)) || (MUL_DIAG_ROLE && PHY_INTEROP_ROLE)
 #error "Stage 3F and Stage 3G diagnostics are mutually exclusive"
 #endif
-#if MUL_TIMING_TRACE && !MUL_DIAG_ROLE
-#error "MUL_TIMING_TRACE requires the opt-in Stage 3G diagnostic"
+#if MUL_TIMING_TRACE && !MUL_DIAG_ROLE && !MUL_TWR_ROLE
+#error "MUL_TIMING_TRACE requires an opt-in MUL diagnostic or ADS profile"
 #endif
 #endif

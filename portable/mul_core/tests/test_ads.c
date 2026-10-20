@@ -5,8 +5,10 @@
 #include <stdio.h>
 #include <string.h>
 static uint64_t wrap(uint64_t v) { return mulTimestampMask(v); }
+static int32_t propagation=20000;
+static uint64_t replyA=2000000000,replyB=1000000000;
 static void times(uint64_t t[6],double rate,uint64_t a,uint64_t b) {
-  const double p=20000,db=1000000000,da=2000000000;
+  const double p=propagation,db=replyB,da=replyA;
   t[0]=a; t[1]=wrap(b+(uint64_t)llround(rate*p));
   t[2]=wrap(b+(uint64_t)llround(rate*(p+db)));
   t[3]=wrap(a+(uint64_t)(db+2*p)); t[4]=wrap(a+(uint64_t)(db+2*p+da));
@@ -42,7 +44,8 @@ static void exchange(bool reverse,double rate,uint64_t a,uint64_t b) {
   assert(mulAdsReceive(&r,&final,t[5],6));
   mulAdsPacket_t report=wire(&r,7); assert(mulAdsTxDone(&r,wrap(t[5]+12345),7));
   assert(mulAdsReceive(&i,&report,wrap(t[4]+123456),8));
-  assert(fabs(i.tof-20000*2*rate/(1+rate))<0.00001);
+  assert(fabs(i.tof-propagation*2*rate/(1+rate))<0.00001);
+  assert(i.rangeValid==(propagation>=0) && i.invalidRanges==(unsigned)(propagation<0));
   assert(fabs(i.rateRatio-rate)<1e-12 && i.completed==1 && r.completed==1);
   assert(!mulAdsReceive(&i,&report,0,9)); assert(!mulAdsReceive(&r,&p,0,9));
   p.session++; assert(mulAdsReceive(&r,&p,0,10)); /* Explicit new sender session. */
@@ -57,6 +60,28 @@ int main(void) {
   assert(sizeof(mulAds_t)<=128);
   for(unsigned reverse=0;reverse<2;reverse++) for(int ppm=-500;ppm<=500;ppm+=50)
     exchange(reverse,1.0+ppm/1e6,MUL_TIMESTAMP_MASK-100000000, UINT64_C(0x8765432100));
+  for(propagation=-213;propagation<=213;propagation+=213) exchange(false,1,100000,90000000);
+  propagation=1; exchange(true,1,100000,90000000);
+  propagation=20000; replyA=10000; replyB=6000000000ULL;
+  exchange(false,1.0005,MUL_TIMESTAMP_MASK-10,90000000);
+  replyA=6000000000ULL; replyB=10000; exchange(true,.9995,100000,90000000);
+  replyA=2000000000;replyB=1000000000;
+  assert(!mulAdsRangeValid(-1) && !mulAdsRangeValid(NAN) && !mulAdsRangeValid(INFINITY));
+  assert(mulAdsRangeValid(0) && mulAdsRangeValid(.000001));
+  mulAds_t deadline; mulAdsPacket_t poll,response={.source=0x86,.destination=0x84,.session=9,.transaction=1,.type=mulAdsResponse};
+  assert(mulAdsInit(&deadline,0x84,0x86,true,9));
+  assert(mulAdsBegin(&deadline,0) && mulAdsTakeTx(&deadline,0,&poll) && mulAdsTxDone(&deadline,1000,1));
+  assert(!mulAdsReceive(&deadline,&response,2000,101));
+  assert(deadline.lastAbortReason==adsAbortDeadline && deadline.lastAbortStage==adsResponseRx && deadline.failedStages[adsResponseRx-1]==1);
+  assert(mulAdsBegin(&deadline,102));
+  deadline.failedStages[adsPollTx-1]=UINT16_MAX;
+  mulAdsAbortWithReason(&deadline,adsAbortTxStart);
+  assert(deadline.failedStages[adsPollTx-1]==UINT16_MAX && deadline.lastAbortReason==adsAbortTxStart);
+  uint32_t aborted=deadline.aborted; mulAdsAbortWithReason(&deadline,adsAbortRadio); assert(deadline.aborted==aborted);
+  /* Exact raw hardware outlier: preserve it; do not disguise it with a correction. */
+  uint64_t observed[]={0x344A792200ULL,0x761756DDC1ULL,0x761D0963FCULL,0x34502B98D1ULL,0x3452F90200ULL,0x761FD6D14DULL};
+  double raw,rawRatio; assert(mulAdsCalculate(observed,&raw,&rawRatio));
+  assert(fabs(raw+295.9328234880507)<0.00001 && !mulAdsRangeValid(raw));
   double tof=42,ratio=42; uint64_t t[6]; times(t,1,123,456);
   assert(mulAdsCalculate(t,&tof,&ratio) && fabs(tof-20000)<1e-9);
   t[4]=t[3]; assert(!mulAdsCalculate(t,&tof,&ratio)); assert(tof==20000);

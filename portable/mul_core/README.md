@@ -142,3 +142,32 @@ has no boot identity. Adapters log an idle epoch after >=5s without a decoded
 expected peer, never infer losses across that boundary; rapid restarts remain
 ambiguous and require receiver reset. RX `order` is0 first,1 forward,2 gap,
 3 duplicate,4 old. It makes decode success versus acceptance explicit.
+
+### Measurement validity and classified failure diagnostics
+
+The ADS equation,56-byte wire format and six timestamp ownerships are unchanged.
+`completed` still counts mathematically complete initiator exchanges, including
+raw negative ToF, and responder REPORT TX completion. `rangeValid` is true only
+for finite nonnegative ToF; `invalidRanges` separately counts negative computed
+measurements. No raw ToF is clamped/replaced. Zero and small positive values are
+retained; this validity flag does not establish calibration or physical accuracy.
+A plausible maximum distance is an explicit offline experimental selection rule,
+not an invented universal range limit or calibration constant in firmware.
+
+`mulAdsAbortWithReason` records cause and the failed stage before clearing active
+state. Causes:0 explicit cancel,1 deadline/missing completion,2 radio error,
+3 RX frame-wait timeout,4 TX start/write failure,5 encoding failure,6 timestamp
+ordering/interval/clock-envelope/math rejection. `failedStages[0..6]` correspond
+to stages1 POLL_TX,2 RESPONSE_RX,3 RESPONSE_TX,4 FINAL_RX,5 FINAL_TX,6 REPORT_RX,
+7 REPORT_TX. They saturate at65535; existing uint32 counters retain modular wrap.
+Idle radio errors/timeouts do not count as aborted exchanges or failed stages.
+The104-byte portable state plus DW adapter fits the existing128-byte scratch.
+
+Adapters log session on TIMES and STAT, range_valid on RESULT, cumulative
+bad_range on STAT, and a compact ABORT with cause/stage/cumulative by_stage
+counts only on active cancellation. This is diagnostic metadata, not a packet
+version change. Associated malformed measurement candidates can still emit
+TIMES before a math abort. `MUL_ADS_TRACE_TIMES=0` disables six-stamp logging
+(default1); keep it enabled for research captures. DWM optional MUL_TIMING_TRACE
+now also supports ADS, reporting MULH TIME after startup. Maxima do not identify
+the instant of a UART overrun or establish interrupt WCET.
