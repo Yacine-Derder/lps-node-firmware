@@ -183,16 +183,21 @@ CP0/CP1: supported common profile is plausible, OTA unverified. Canonical PHY
 matrix and diagnostic v1 layout: [PHY experiment](docs/phy_interop.md).
 Starting LPS `0a5b1dc`, e-puck main `9a46df0`; e-puck pre-existing streaming/
 control edits must remain untouched. Central document and other repos read-only.
-Next CP2: opt-in DW1000 TX/RX using existing mode-exclusive scratch, no EEPROM
-or default PHY change. CP3: e-puck opt-in alongside existing app switches, bounded
+CP2 implemented: opt-in DW1000 TX/RX using existing mode-exclusive scratch, no
+EEPROM or default PHY change. CP3: e-puck opt-in alongside existing app switches, bounded
 main-loop radio service without interfering with motor/UART safety. CP4–CP6:
 golden consistency, default/Stage3E/diagnostic builds and regressions, exact user
 bidirectional/reliability procedure, resource review and independent pushes.
 
 ## Codex continuation checkpoint
 
-Stage 3F CP0/CP1 is the commit containing this section. 191 host tests pass default
-policy, including two diagnostic codec tests. Candidate: ch5, PRF64/code9,
-preamble128/PAC8, IEEE4a SFD,6.8M,standard850K PHR,STS/PDOAoff,MAC32+FCS2.
-No physical hardware flashed. New golden vectors/codec are diagnostic only;
-Stage3G remains gated on valid bidirectional reception plus >=100 packets/direction.
+CP0/CP1 pushed `25bbc97`; CP2 is the commit containing this section. DW1000
+role flags 0/off,1/TX,2/RX override only the running algorithm/PHY, not EEPROM.
+193 host tests pass; diagnostic real-driver tests pass both roles under ASan/UBSan;
+independent golden checks compile both repository codecs (3 vectors,768 bit flips
+and wrong lengths each). Clean default, Stage3E continuous and experimental
+TX/RX builds pass. Default RAM/text exactly baseline (data1072,bss15292,text123024),
+20 spare; diagnostic data1080,bss15292,12 spare; scratch128 unchanged. RX callback
+compiler frame120 bytes. No hardware flashed. Next CP3 e-puck tests/commit/push,
+then CP4–CP6 final cross-repo procedures, safety regressions and hardware gate.
+E-puck pre-existing streaming/control edits remain untouched and must not be staged.

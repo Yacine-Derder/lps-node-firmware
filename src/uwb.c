@@ -33,6 +33,7 @@
 
 #include "libdw1000.h"
 #include "dwOps.h"
+#include "phy_interop_dw.h"
 
 #include <FreeRTOS.h>
 #include <semphr.h>
@@ -180,10 +181,15 @@ void uwbInit()
 
   dwSetPreambleCode(dwm, PREAMBLE_CODE_64MHZ_9);
 
+#if PHY_INTEROP_ROLE
+  // Explicit build-only diagnostic: no persisted role/PHY changes.
+  algorithm = &phyInteropAlgorithm;
+  phyInteropConfigure(dwm);
+#endif
   dwCommitConfiguration(dwm);
   // Original modes retain their software antenna compensation and zero registers.
   // Configure only ALRs, after the last full commit, without changing PHY/EEPROM.
-  if (config.mode == 5) {
+  if (config.mode == 5 && !PHY_INTEROP_ROLE) {
     mulAntennaConfigure(dwm);
   }
 
