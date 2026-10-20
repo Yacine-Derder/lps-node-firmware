@@ -6,6 +6,7 @@
 #include "mul_twr.h"
 #include "mul_relation.h"
 #include "mul_role_state.h"
+#include "mul_timing.h"
 #include "task.h"
 
 #include <inttypes.h>
@@ -19,8 +20,6 @@
 #define MUL_TX_MIN_LEAD_DTU (5 * MUL_DTU_PER_MS)
 #define MUL_TX_COMPLETION_MS 100
 #define MUL_TX_ALIGNMENT UINT64_C(512)
-#define MUL_FOLLOWER_SLOT_MS 500
-#define MUL_FOLLOWER_SLOT_DTU (MUL_FOLLOWER_SLOT_MS * MUL_DTU_PER_MS)
 
 // SYS_STATUS bits 27 (HPDWARN) and 34 (TXPUTE), read at byte offset 3.
 // Match Decawave dwt_starttx()'s delayed-start check. libdw1000 returns void.
@@ -252,7 +251,7 @@ static uint32_t followerWait(dwDevice_t *dev)
 static bool scheduleFollowerTx(dwDevice_t *dev, uint64_t localRx)
 {
   uint16_t antennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
-  // Aim for antenna-referenced TX at RX + 500 ms, in this follower's clock.
+  // Aim for antenna-referenced TX at RX + the configured slot, in this follower's clock.
   // Subtract TX_ANTD before aligning the raw DX_TIME upwards to 512 ticks.
   uint64_t rawTarget = mulTimestampMask(localRx + MUL_FOLLOWER_SLOT_DTU - antennaDelay);
   dwTime_t rawTx = {.full = mulTimestampMask(

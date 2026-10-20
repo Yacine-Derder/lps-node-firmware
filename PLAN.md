@@ -160,7 +160,7 @@ for mobile robots. No centimetre accuracy or finite confidence bound is claimed.
 
 ## Stage 3D.1 — Controlled transmission-spacing experiment
 
-Status: CP1 timing inspection complete; implementation pending. Starting point
+Status: CP2 shared configuration implemented; receiver gates follow in CP3. Starting point
 `3191b39`. User-reported midpoint geometry (1 m each side) produced -369 DTU /
 -1731 mm, STATIC/-2534 ppb, age 503 ms, power=1; TWR 1.88–1.95 m versus 2 m,
 follower skew +1.415 ppm, TX delta=0 and no gaps in the excerpt. An earlier
@@ -211,6 +211,8 @@ late ALR setup skips rather than moving TX or compromising timestamps. Validate
 
 ## Codex continuation checkpoint
 
-Stage 3D.1 CP1 is the commit containing this section; no firmware edits yet.
-Next: CP2 shared timing configuration, then CP3 gates, CP4 diagnostic tests,
+Stage 3D.1 CP1 pushed: `dd52423`. CP2 is the commit containing this section.
+Shared header accepts only 500/50/10; default host suite passes. Short-slot
+receiver acceptance is deliberately completed in CP3, before experimental use.
+Next: CP3 gates, CP4 diagnostic tests,
 CP5 full validation and hardware instructions. No physical hardware flashed.
