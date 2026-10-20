@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "profile": {
+    "channel": 5,
+    "center_mhz": 6489.6,
+    "prf_mhz": 64,
+    "preamble_symbols": 128,
+    "preamble_code": 9,
+    "sfd": "IEEE_4A_8",
+    "data_rate_kbps": 6800,
+    "phr": "standard_850K",
+    "sts": false,
+    "psdu_bytes": 34
+  },
+  "vectors": [
+    {
+      "source": 132,
+      "sequence": 0,
+      "hex": "418800cfbcffff84004d3346490100000000212023222524272629282b2a2d2c"
+    },
+    {
+      "source": 134,
+      "sequence": 305419896,
+      "hex": "418878cfbcffff86004d33464901785634125b7415325f701136537c1d3a5778"
+    },
+    {
+      "source": 132,
+      "sequence": 4294967295,
+      "hex": "4188ffcfbcffff84004d33464901ffffffffdedfdcdddadbd8d9d6d7d4d5d2d3"
+    }
+  ]
+}
