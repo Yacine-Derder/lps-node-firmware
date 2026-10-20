@@ -191,7 +191,7 @@ Opt-in0/off,1/TX,2/RX uses ch5/PRF64/code9/preamble128/IEEE4a-SFD/6.8M/stdPHR,
 no STS. Default ch2 and all MUL modes/packets/equations remain unchanged. Codec
 is a small diagnostic copy, not the Stage3G shared-core extraction.
 
-## Codex continuation checkpoint
+## Stage 3F software validation checkpoint
 
 No required software work remains. LPS193 host tests pass default and Stage3E
 continuous10ms;176 MUL ASan/UBSan cases pass plus two diagnostic real-driver cases
@@ -262,3 +262,9 @@ acceptance remains pending user A/B/concurrent UART experiment logs.
 CP2: canonical codec/arithmetic extraction byte-identical to baseline;193 default
 host tests and new core golden/bounds/wrap/reset/20000 malformed-input sanitizer
 tests pass. New diagnostic is44 bytes, previous measured TX metadata only.
+
+CP3: DW1000 opt-in MUL_DIAG_ROLE1/2 adapter implemented; shared channel5 profile,
+44-byte diagnostic frames, raw40-bit RX and previous measured hardware TX marker.
+No production mode/EEPROM/clock/TWR changes.195 default and continuous host tests
+pass;178 MUL sanitizer cases pass at10ms/6000ms stationary policy. Integration
+and resource/build matrix validation in progress; hardware acceptance pending.

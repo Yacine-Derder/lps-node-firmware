@@ -4,10 +4,12 @@
 #include "mul_twr.h"
 #include "mul_relation.h"
 #include "phy_diag.h"
+#include "mul_diag_dw.h"
 // A node runs exactly one persisted mode until reboot. Mode 5 uses TWR state;
 // mode 6 is passive and reuses that RAM for received relations and RX rate state.
 typedef union {
   mulTwr_t twr;
+  mulDiagDwState_t diag;
   phyDiagState_t interop; // Experimental role shares existing 128-byte reservation.
   struct { mulRelation_t relation; mulClock_t rate; } rlr;
 } mulRoleScratch_t;

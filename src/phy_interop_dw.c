@@ -1,13 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 #include "phy_interop_dw.h"
-#if PHY_INTEROP_ROLE
+#if PHY_INTEROP_ROLE || MUL_DIAG_ROLE
 #include "mul_role_state.h"
 #include "task.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
-#define state mulRoleScratch.interop
-static uint32_t milliseconds(void) { return (uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS; }
 void phyInteropConfigure(dwDevice_t *dev) {
   dwEnableMode(dev,MODE_SHORTDATA_FAST_ACCURACY);
   dwSetChannel(dev,CHANNEL_5); dwSetPreambleCode(dev,PREAMBLE_CODE_64MHZ_9);
@@ -18,6 +16,9 @@ void phyInteropConfigure(dwDevice_t *dev) {
   dwSetReceiveWaitTimeout(dev,50000); dwInterruptOnReceiveTimeout(dev,true);
   dwInterruptOnReceiveFailed(dev,true);
 }
+#if PHY_INTEROP_ROLE
+#define state mulRoleScratch.interop
+static uint32_t milliseconds(void) { return (uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS; }
 static void rearm(dwDevice_t *dev) { dwNewReceive(dev); dwSetDefaults(dev); dwStartReceive(dev); }
 static void init(uwbConfig_t *config,dwDevice_t *dev) {
   (void)config; dwIdle(dev); memset(&state,0,sizeof(state));
@@ -66,4 +67,5 @@ static uint32_t event(dwDevice_t *dev,uwbEvent_t event) {
   return 50; // Bounded service/watchdog wake; not a precise radio timestamp.
 }
 uwbAlgorithm_t phyInteropAlgorithm={.init=init,.onEvent=event};
+#endif
 #endif
