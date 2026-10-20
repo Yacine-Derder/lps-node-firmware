@@ -139,7 +139,7 @@ cause of the spacing sensitivity. Detailed calibration awaits efficient MCS data
 
 ## Stage 3E — Continuous observations
 
-Status: **CP1–CP3 implemented/software tested; awaiting user hardware validation.**
+Status: **CP1–CP3 complete; stationary functional hardware validation user-reported, accuracy unresolved.**
 Default retains strict 1000 ms/v1 policy. Explicit `MUL_PROP_MAX_AGE_MS=6000`
 selects same-length 74-byte v2 with original TWR age, numeric estimate and state;
 all three nodes must use the same policy. Reference 34/TWR 84 bytes unchanged.
@@ -189,26 +189,26 @@ pushed origin/main.
 CP4–CP6 software checks and operator guide are complete in this final commit.
 Opt-in0/off,1/TX,2/RX uses ch5/PRF64/code9/preamble128/IEEE4a-SFD/6.8M/stdPHR,
 no STS. Default ch2 and all MUL modes/packets/equations remain unchanged. Codec
-is a small diagnostic copy, not the Stage3G shared-core extraction.
+is a small diagnostic copy, not the Stage 3G shared-core extraction.
 
 ## Stage 3F software validation checkpoint
 
-No required software work remains. LPS193 host tests pass default and Stage3E
+No required software work remains. LPS193 host tests pass default and Stage 3E
 continuous10ms;176 MUL ASan/UBSan cases pass plus two diagnostic real-driver cases
 for each role. Both codecs independently pass3 golden vectors,768 single-bit
 corruptions and wrong-length checks; headers/vectors match. Three host log-analysis
 tests pass wrap/loss/reset/direction/minimum checks. STM32 codec/TX/RX and six
-activation/init-failure/IRQ combinations pass ASan/UBSan;15 console and9 ESP
+activation/init-failure/IRQ combinations pass ASan/UBSan;15 console and 9 ESP
 safety/streaming regression scenarios pass. All user pre-existing e-puck edits
 retain original checksums and are excluded from commits. Clean default,
-Stage3E and diagnostic TX/RX LPS builds pass; default/diagnostic and exported
+Stage 3E and diagnostic TX/RX LPS builds pass; default/diagnostic and exported
 committed-tree STM32 builds pass (including legacy UWB enabled).
 LPS default text123024/data1072/bss15292 is unchanged (20 bytes spare);
 experimental data1080/bss15292 (12 spare), scratch128 unchanged, radio callback
 frame120 bytes. STM32 working-tree Release RAM28568 default,28992 RX; diagnostic
 service frame280. Compiler estimates are not stack high-water or hard deadlines.
 No hardware flashed. The central document remains unchanged and needs an
-owner update to Stage3F packet gate accepted with reliability/timing limitations.
+owner update to Stage 3F packet gate accepted with reliability/timing limitations.
 
 **Hardware review:** all four complete user captures were inspected. A has85
 valid receptions/89 receiver-span positions,4 gaps,103 errors,1634 frame-wait
@@ -219,7 +219,7 @@ windows preclude a synchronized PDR or reproducible asymmetry claim; do not sum
 cumulative counters across capture blocks. Full provenance/accounting and UART
 findings are in [the experiment report](docs/phy_interop.md#hardware-results-reviewed-2026-10-20).
 
-**Next milestone:** Stage3G's bidirectional frame gate is open; no Stage3G work
+**Next milestone:** Stage 3G's bidirectional frame gate is open; no Stage 3G work
 was begun during this review. Preserve the validated diagnostic profile and
 normal firmware. Carry forward an intact, overlapping >=100-packet fixed-geometry
 capture per direction and measured UART/IRQ latency diagnosis before claiming
@@ -231,40 +231,44 @@ ranging, calibration and localization correctness remain unvalidated.
 
 ## Stage 3G — Portable core and opt-in MUL diagnostic
 
-CP0/CP1 audit/design: canonical source will live in LPS `portable/mul_core`.
-STM32 will vendor an exact published LPS commit with file hashes, verified by
-its build; explicit export/check scripts prevent independently evolving copies.
-A third remote/submodule adds avoidable administration and clone dependencies.
-Local offline builds use checked-in pinned source; no sibling directory required.
+**Software/build validation complete; hardware validation PENDING. Do not begin Stage 3H.**
+CP0/CP1: architecture audit complete; canonical core lives in portable/mul_core.
+STM32 deterministic vendoring pins a published LPS commit with offline file-hash
+verification at configure/build. No third remote, new submodule or local-only
+build dependency. Existing user modifications remain unchanged and uncommitted.
 
-Extraction: move only existing pure `mul_common` codec/address/sequence/40-bit
-helpers, preserving APIs/wire behavior through LPS forwarding adapters. Keep
-clock estimator, correction lifecycle, relations, TWR, observations and radio
-scheduling in their current implementation. Introduce a separate type/version
-for diagnostic messages with full identities and explicit raw timestamp metadata;
-do not reinterpret Stage3E packets. Immediate TX reports actual hardware marker
-on completion and carries the previous completed marker with its sequence in
-the next packet, never a guessed current TX timestamp.
+CP2: existing mul_common codec/identity/sequence/40-bit helpers extracted without
+behavior change. New strict44-byte type0x70/v1 diagnostic carries explicit raw
+clock metadata and the previous completed TX marker; no Stage 3E packet, math,
+correction lifecycle or observation fields changed. Core owns no hardware/heap.
+CP3/CP4: opt-in MUL_DIAG_ROLE0/1/2 adapters implemented on both radios using the
+proven Stage 3F PHY; defaults/EEPROM/modes/Stage 3E/Stage 3F preserved. Radio APIs,
+SPI/IRQ, capture/scheduling/rearm, transport and storage remain platform-owned.
 
-Platform boundary: channel5 configuration, CRC/FCS, SPI/IRQ, raw timestamp reads,
-TX/RX ownership/rearm and logging remain platform-specific. No radio vtable or
-dynamic allocation. LPS overlays mode-exclusive128-byte scratch; STM32 uses
-bounded task-level polling/logging and optional timing instrumentation. Existing
-SPI interrupt masking remains a measured-risk investigation, not a claimed fix.
+Implementation-compatible SHAs: LPS/canonical
+`1b807c5c7507d67d802ee976ae4dfe5b27fd88e9`, STM32
+`1bd3ecdba534549b4c9ac89f17fd8bd7270fe056`; latter pins former. Final metadata
+commits retain the same dependency. See [the guide](docs/mul_core.md) for precise
+files/APIs, wire specification, standalone build/export and A/B/C instructions.
 
-Execution: CP2 core + host/golden tests; CP3 DW adapter; CP4 STM32 adapter and
-pin; CP5 regressions/build/resource matrix; CP6 coexistence instrumentation and
-assessment; CP7 exact hardware instructions and compatible Git SHA handoff.
-Preserve all pre-existing user edits, default/Stage3E/Stage3F operation. Do not
-flash, implement mixed-radio ranging/TDoA, or begin Stage3H. Stage3G hardware
-acceptance remains pending user A/B/concurrent UART experiment logs.
+CP5: 195 LPS default/continuous tests, 178 MUL sanitizer cases, both new/old DW
+radio roles and cross-codec vectors pass. STM32 core/adapter/activation tests,
+15 console/9 ESP and 9 interleaved coexistence scenarios pass sanitizers. A clean
+committed export also builds/tests independently (6 console/8 ESP/8 coexistence).
+All requested default/Stage 3E/Stage 3F/Stage 3G builds pass. LPS default/continuous
+RAM unchanged; new diagnostic fits the same 128-byte scratch and 16372-byte RAM
+footprint as Stage 3F. Resource/stack estimates and retained warnings are in guide.
 
-CP2: canonical codec/arithmetic extraction byte-identical to baseline;193 default
-host tests and new core golden/bounds/wrap/reset/20000 malformed-input sanitizer
-tests pass. New diagnostic is44 bytes, previous measured TX metadata only.
+CP6: at-most-once-per-ms polling, bounded USB queue and opt-in DWT timing for
+outer SPI IRQ-off/service/start gaps. No masking/speed/safety logic change and
+no claim that Stage 3F UART faults are fixed. CP7 hardware procedures ready.
+The central roadmap is stale (3F not started); leave it unchanged for owner
+update to Stage 3F accepted / Stage 3G software ready, hardware pending.
 
-CP3: DW1000 opt-in MUL_DIAG_ROLE1/2 adapter implemented; shared channel5 profile,
-44-byte diagnostic frames, raw40-bit RX and previous measured hardware TX marker.
-No production mode/EEPROM/clock/TWR changes.195 default and continuous host tests
-pass;178 MUL sanitizer cases pass at10ms/6000ms stationary policy. Integration
-and resource/build matrix validation in progress; hardware acceptance pending.
+**Next exact action:** user runs A/B (>=100 completed TX each with matching
+RX/previous-TX metadata) and C with disabled baseline, sensor/ESP traffic,
+STOP/ARM/zero-speed heartbeat checks and timing/UART/drop counters. No hardware
+flashed. Preserve the uncommitted 100 ms streaming patch for 10 Hz trials; published
+STM32 baseline retains 1 Hz polling. Do not conflate the two tested images.
+Full Stage 3G acceptance awaits those logs; physical timestamp/ranging accuracy,
+UART causation, mixed-radio TDoA and Stage 3H remain unresolved/out of scope.

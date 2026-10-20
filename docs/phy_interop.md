@@ -3,6 +3,9 @@
 Status: Stage 3F packet interoperability accepted from user hardware logs reviewed
 2026-10-20. Stage 3G may begin; reliability and timing limitations are recorded
 in [the experiment results](#hardware-results-reviewed-2026-10-20).
+Stage3G reuses this profile through a shared setup helper; its new message and
+hardware gate are documented in [the portable-core guide](mul_core.md). Stage3F
+packet layout and recorded measurements below remain unchanged.
 The central project document remains unchanged. Existing e-puck streaming/control
 work is preserved; this experiment does not port MUL or perform mixed-radio ranging.
 

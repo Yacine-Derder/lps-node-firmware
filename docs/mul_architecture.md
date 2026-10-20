@@ -24,11 +24,14 @@ The code defines implemented behavior; planned extensions below are not firmware
   define the reversible packet-only experiment. PHY_INTEROP_ROLE=0/1/2 selects
   off/TX/RX at build time; normal defaults, EEPROM and MUL math stay unchanged.
   Diagnostic state overlays the same 128-byte mode-exclusive reservation. There
-  is no portable MUL core, mixed-radio ranging or timestamp-model port yet.
+  is now a small canonical portable codec/timestamp core, with an opt-in Stage 3G
+  diagnostic adapter on each radio. Mixed-radio ranging/timestamp-model ports
+  remain unimplemented; the new diagnostic still needs hardware validation.
 - Future cross-platform support requires a deliberate hardware/PHY/protocol
   strategy and physical validation; blanket incompatibility is not a chip-family fact.
 - Keep wire definitions and timestamp arithmetic independent of the hardware driver.
-  Do not add DW3000 support or a generic radio abstraction ahead of a concrete task.
+  Keep the current diagnostic adapters narrow; further radio/model ports need
+  their own timing and hardware acceptance evidence.
 
 ## Localization architecture
 
@@ -47,7 +50,7 @@ The code defines implemented behavior; planned extensions below are not firmware
 | `src/main.c` | USB configuration menus and mode/address persistence requests |
 | `inc/uwb.h`, `src/uwb.c` | Algorithm interface, registry, PHY setup, IRQ/task dispatch |
 | `src/cfg.c`, `src/eeprom.c` | Existing persistent configuration |
-| `inc/mul_common.h`, `src/mul_common.c` | Wire encoding/validation and modular timestamp utilities |
+| `portable/mul_core`, `inc/src/mul_common` forwarding adapters | Canonical legacy wire codec and modular timestamp utilities, plus separate versioned diagnostic |
 | `inc/mul_alr.h`, `src/mul_alr.c` | Reference delayed TX and reference-following follower slots |
 | `inc/mul_rlr.h`, `src/mul_rlr.c` | Passive RX and bounded per-source observation state |
 | `inc/mul_rx.h`, `src/mul_rx.c` | Shared DW1000 RX setup, bounded reads, and re-arming |
@@ -897,3 +900,26 @@ The existing Unity/CMock infrastructure covers packet utilities, MUL event behav
 and real-driver operations against a simulated SPI device; these are software checks.
 Physical acceptance belongs to the milestone and task checkpoints in PLAN.md.
 Maintain decisions here and status there; Git history provides the change history.
+
+
+## Stage 3G portable boundary
+
+Canonical `portable/mul_core` extracts only the existing pure common codec,
+identity/sequence and40-bit arithmetic; LPS forwarding files preserve callers.
+STM32 checks in an immutable hash-verified snapshot from a published LPS commit,
+avoiding a third repository while retaining standalone builds. Update through
+`tools/mul_core_vendor.py`; do not independently edit the consumer snapshot.
+Clock estimators, relation/correction lifecycle, TWR and localization records
+stay in their existing modules rather than being redefined by this extraction.
+
+New type0x70/version1 diagnostics use the existing extended-address MAC and
+explicit full identities, sequence,40-bit width/nominal DTU and unavailable/
+previous-completed-TX metadata. Immediate TX reports a measured earlier marker,
+not a prediction. The raw receiver marker stays in the receiver clock domain.
+Radio initialization, antenna calibration, SPI/IRQ, scheduling/rearm, platform
+storage and logging remain adapter responsibilities. No generic radio vtable,
+allocation or mixed-radio ranging/TDoA implementation is introduced.
+
+[API, wire contract, validation/resources, UART risks and user experiments](mul_core.md)
+define the current software-ready, hardware-pending checkpoint. Stage3F's packet
+proof does not validate this new format, timestamp semantics or combined timing.
