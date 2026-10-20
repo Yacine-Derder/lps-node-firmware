@@ -120,7 +120,13 @@ Stage 3G TX/RX and retained normal APP_UWB_ENABLED=1/channel-9 code.
 | STM32 clean committed Stage 3G TX |76536 /736 /27936|28672|
 | STM32 clean committed Stage 3G RX + trace |77100 /736 /27960|28696|
 
-Flash is text+data. LPS default/continuous and Stage 3F sizes are unchanged.
+Text+data gives flash section contents; the linker FLASH span also includes
+section-alignment gaps. STM32 workspace linker spans are53,372 bytes default,
+79,420/79,648 Stage3F TX/RX,79,928/80,052 Stage3G TX/RX and80,492 RX+trace.
+Clean committed spans are50,768 default,77,048 Stage3F RX,77,332 Stage3G TX
+and77,896 RX+trace. For example, the STM32 vector-to-text alignment adds56
+bytes not counted by the size utility's text+data sum. LPS default/continuous
+and Stage 3F section sizes are unchanged.
 The new DW runtime fits the existing 128-byte mode-exclusive scratch; frame
 storage is 46 bytes including FCS reserve. No heap or new persistent RX queue.
 STM32 keeps a <=128-byte diagnostic state plus small error/poll counters;
