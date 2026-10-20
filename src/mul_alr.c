@@ -154,6 +154,8 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
     bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
     mulRelation_t relation=mulRelationPublish(&followerClock,supplied ? &delay : NULL,
       pendingTimestamp,readHardwareTime(dev),(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,ranging.powerCorrected);
+    if (relation.version==2 && !supplied)
+      relation.delayState=mulTwrPropagationState(&ranging,&followerClock,(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS);
     mulTestPacket_t packet={.sequence=pendingSequence,.txTimestamp=pendingTimestamp}; memcpy(packet.source,source,8);
     mulRelationEncode(txFrame,&packet,&relation); length=MUL_RELATION_FRAME_LENGTH;
   }

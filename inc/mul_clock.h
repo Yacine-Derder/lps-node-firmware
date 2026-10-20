@@ -3,6 +3,7 @@
 #define MUL_CLOCK_H
 
 #include "mul_common.h"
+#include "mul_propagation.h"
 
 #define MUL_CLOCK_HISTORY 5
 #define MUL_CLOCK_MAX_PPB 200000 // +/-200 ppm plausibility gate, not calibration.
@@ -95,7 +96,7 @@ bool mulClockMapFollowerToRef(const mulClock_t *clock, uint64_t localArrival,
 // Records are volatile: discard on firmware restart; do not persist/replay epochs.
 #define MUL_CLOCK_BOUND_UNKNOWN UINT64_MAX
 #define MUL_CLOCK_DELAY_DEFAULT_MAX_AGE_MS 1000
-#define MUL_CLOCK_DELAY_MAX_AGE_MS 2000
+#define MUL_CLOCK_DELAY_MAX_AGE_MS 6000
 // Initial application policy: <=1 us (~300 m), rounded up to a reference DTU.
 #define MUL_CLOCK_DELAY_MAX_DTU INT64_C(63898)
 typedef enum {

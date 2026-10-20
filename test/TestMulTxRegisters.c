@@ -236,7 +236,7 @@ void test_mulTwrRealDriverPollFinalResultTimestampsAndRxTransitions(void) {
   report.txTimestamp=mulTimestampMask(report.stamps[5]+20*ms);
   twrRealRx(&report,mulTimestampMask(context.stamps[4]+20*ms+2*tof));
   TEST_ASSERT_TRUE(context.txPending); TEST_ASSERT_EQUAL_INT(mulTwrResult,context.stage);
-  TEST_ASSERT_EQUAL_UINT32(tof,context.tof);
+  TEST_ASSERT_EQUAL_UINT32(tof,context.candidateTof);
   twrRealTxComplete();
   TEST_ASSERT_FALSE(context.active); TEST_ASSERT_EQUAL_UINT(3,completionCount);
   TEST_ASSERT_EQUAL_UINT(2,receiveCount); directTwr=NULL;
@@ -271,7 +271,7 @@ void test_mulTwrRealDriverResponseReportAndResultAcceptance(void) {
   result.txTimestamp=mulTimestampMask(context.stamps[4]+40*ms);
   twrRealRx(&result,mulTimestampMask(context.stamps[5]+40*ms));
   TEST_ASSERT_TRUE(context.delayValid); TEST_ASSERT_FALSE(context.active);
-  TEST_ASSERT_EQUAL_UINT32(tof,context.tof); TEST_ASSERT_EQUAL_UINT64(7,context.epoch);
+  TEST_ASSERT_EQUAL_UINT32(tof,context.candidateTof); TEST_ASSERT_EQUAL_UINT64(7,context.epoch);
   TEST_ASSERT_EQUAL_UINT(2,completionCount); TEST_ASSERT_EQUAL_UINT(3,receiveCount);
   TEST_ASSERT_EQUAL_UINT(RX_MODE,radio.deviceMode); directTwr=NULL;
 }
@@ -382,7 +382,7 @@ void test_mulRelationRealDriverPublishesFreshTxBoundOriginsThenExpiresAcrossWrap
       // Seed a confirmed delay producer; the existing real-driver TWR tests
       // separately exercise all five messages. This tests its publication contract.
       mulRoleScratch.twr.delayValid=true; mulRoleScratch.twr.epoch=epoch;
-      mulRoleScratch.twr.tof=tof; mulRoleScratch.twr.id=5;
+      mulRoleScratch.twr.tof=tof; mulRoleScratch.twr.id=5; mulRoleScratch.twr.estimateId=5;
       mulRoleScratch.twr.measuredMs=5650; mulRoleScratch.twr.powerCorrected=true;
     }
     uint64_t tx=mulTimestampMask(refBase+i*1000*ms),rx=mulTimestampMask(folBase+i*1000*ms+tof);
@@ -394,8 +394,8 @@ void test_mulRelationRealDriverPublishesFreshTxBoundOriginsThenExpiresAcrossWrap
     TEST_ASSERT_TRUE(mulBroadcastDecode(transmitted,MUL_RELATION_FRAME_LENGTH,&p,&r));
     TEST_ASSERT_EQUAL_UINT64(mulDecodeTimestamp(registers[TX_TIME]),p.txTimestamp);
     TEST_ASSERT_EQUAL_UINT32(i,p.sequence); epoch=r.epoch;
-    if (i==6) {
-      TEST_ASSERT_TRUE(r.available); TEST_ASSERT_EQUAL_UINT32(6,r.referenceSequence);
+    if (i==6 || (i==7 && MUL_PROP_MAX_AGE_MS>1000)) {
+      TEST_ASSERT_TRUE(r.available); TEST_ASSERT_EQUAL_UINT32(i,r.referenceSequence);
       TEST_ASSERT_EQUAL_UINT32(5,r.twrSequence); TEST_ASSERT_EQUAL_UINT64(tx,r.referenceOrigin);
       TEST_ASSERT_EQUAL_UINT64(mulTimestampMask(rx-tof),r.followerOrigin);
       uint64_t converted; TEST_ASSERT_TRUE(mulRelationInverse(&r,p.txTimestamp,1,&converted));

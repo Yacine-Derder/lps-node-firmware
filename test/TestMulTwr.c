@@ -308,7 +308,7 @@ void test_mulTwrResultMustConfirmActualSixMarkersBeforeDelayAcceptance(void) {
 void test_mulTwrExpirationLossEpochAndHardWindowInvalidateCorrection(void) {
   scenario(-10000,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
   completeExchange(); mulTwrSync(ctx(1),&model,ticks,false); TEST_ASSERT_TRUE(ctx(1)->syncAvailable);
-  uint32_t expiry=ctx(1)->measuredMs+MUL_CLOCK_DELAY_DEFAULT_MAX_AGE_MS+1;
+  uint32_t expiry=ctx(1)->measuredMs+MUL_PROP_MAX_AGE_MS+1;
   mulTwrSync(ctx(1),&model,expiry,false); TEST_ASSERT_FALSE(ctx(1)->syncAvailable);
   mulClockReset(&model); mulClockDelay_t delay;
   TEST_ASSERT_FALSE(mulTwrDelay(ctx(1),&model,&delay));
@@ -348,7 +348,7 @@ void test_mulTwrLiveFollowerIntegrationBroadcastPriorityAvailabilityAndLoss(void
   TEST_ASSERT_TRUE(mulBroadcastDecode(radios[1].tx,radios[1].txLength,&extended,&relation));
   TEST_ASSERT_TRUE(relation.available); TEST_ASSERT_EQUAL_UINT32(6,relation.referenceSequence);
   TEST_ASSERT_EQUAL_UINT64(radios[1].actual,extended.txTimestamp);
-  TEST_ASSERT_TRUE(relation.delayAgeMs>=350+MUL_FOLLOWER_SLOT_MS && relation.remainingMs<=650-MUL_FOLLOWER_SLOT_MS);
+  TEST_ASSERT_TRUE(relation.delayAgeMs>=350+MUL_FOLLOWER_SLOT_MS && relation.remainingMs<=MUL_PROP_MAX_AGE_MS-350-MUL_FOLLOWER_SLOT_MS);
   uint64_t raw=radios[1].raw; unsigned int sends=radios[1].sends;
   // A spurious ranging RX while the mandatory TX is armed must never schedule another TX.
   radios[1].rxLength=MUL_TWR_FRAME_LENGTH;
@@ -466,6 +466,7 @@ void test_mulTwrReferenceHardBroadcastPriorityCancelsMissingResponse(void) {
 }
 
 void test_mulTwrLiveFollowerDelayExpiresBetweenFiveSecondAttempts(void) {
+  if (MUL_PROP_MAX_AGE_MS>1000) return; // Continuous-cycle expiry covered separately.
   scenario(-10000,1066); modeFollower(); advance(630*MS);
   TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
   completeExchange(); TEST_ASSERT_TRUE(ranging.syncAvailable);
@@ -679,4 +680,40 @@ void test_mulTwrStalledExchangeOverlappingFollowerSlotLosesToFreshBroadcast(void
   advance(sendTime(1)+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
   TEST_ASSERT_EQUAL_UINT64(packet.txTimestamp,radios[1].actual);
   TEST_ASSERT_TRUE(radios[1].receiving);
+}
+
+static void beginRefresh(void) {
+  framePhysical=5*SEC; exchangeSequence=10;
+  origins[0]=clockAt(0,framePhysical); origins[1]=clockAt(1,framePhysical+flight);
+  model.sequence=10; model.referenceTx=origins[0]; model.localRx=origins[1]; model.observedMs=10000;
+  advance(framePhysical+630*MS);
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,10,origins[0]));
+}
+void test_mulTwrMissedRefreshRetainsOnlyOriginalCommittedEstimate(void) {
+  scenario(0,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  completeExchange(); uint32_t original=ctx(1)->measuredMs;
+  beginRefresh(); transfer(0); // New POLL must not overwrite committed time/id/tof.
+  TEST_ASSERT_EQUAL_UINT32(original,ctx(1)->measuredMs); TEST_ASSERT_EQUAL_UINT32(5,ctx(1)->estimateId);
+  TEST_ASSERT_TRUE(ctx(1)->delayValid);
+  mulTwrCancel(ctx(1),&radios[1].device,"timeout",false);
+  mulClockDelay_t old; TEST_ASSERT_TRUE(mulTwrDelay(ctx(1),&model,&old));
+  TEST_ASSERT_EQUAL_UINT32(original,old.measuredMs); TEST_ASSERT_EQUAL_UINT32(5,old.referenceSequence);
+  TEST_ASSERT_EQUAL_INT(MUL_PROP_MAX_AGE_MS>1000 ? mulPropagationReused : mulPropagationExpired,
+    mulTwrPropagationState(ctx(1),&model,ticks));
+}
+void test_mulTwrMalformedRefreshInvalidatesPreviouslyConfirmedEstimate(void) {
+  scenario(0,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  completeExchange(); beginRefresh();
+  transfer(0); transfer(1); transfer(0); transfer(1);
+  radios[0].tx[64]^=1; transfer(0);
+  TEST_ASSERT_FALSE(ctx(1)->delayValid);
+  TEST_ASSERT_EQUAL_INT(mulPropagationInvalidated,mulTwrPropagationState(ctx(1),&model,ticks));
+}
+void test_mulTwrSuccessfulRefreshCommitsNewAcquisitionTimeAndIdentifier(void) {
+  scenario(0,1000); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  completeExchange(); uint32_t original=ctx(1)->measuredMs;
+  beginRefresh(); completeExchange();
+  TEST_ASSERT_TRUE(ctx(1)->delayValid); TEST_ASSERT_EQUAL_UINT32(10,ctx(1)->estimateId);
+  TEST_ASSERT_UINT32_WITHIN(1,original+5000,ctx(1)->measuredMs);
+  TEST_ASSERT_EQUAL_INT(mulPropagationFresh,mulTwrPropagationState(ctx(1),&model,ticks));
 }

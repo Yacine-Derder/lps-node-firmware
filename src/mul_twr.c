@@ -135,10 +135,11 @@ bool mulTwrResults(const uint64_t stamps[6], const mulPower_t power[3],
 
 static bool evaluate(mulTwr_t *twr)
 {
-  uint32_t corrected;
-  if (!mulTwrResults(twr->stamps,twr->power,&twr->rawTof,&corrected)) return false;
-  twr->powerCorrected=corrected != UINT32_MAX;
-  twr->tof=twr->powerCorrected ? corrected : twr->rawTof;
+  uint32_t raw,corrected;
+  if (!mulTwrResults(twr->stamps,twr->power,&raw,&corrected)) return false;
+  twr->rawTof=(uint16_t)raw;
+  twr->candidatePowerCorrected=corrected != UINT32_MAX;
+  twr->candidateTof=(uint16_t)(twr->candidatePowerCorrected ? corrected : raw);
   return true;
 }
 
@@ -172,6 +173,7 @@ void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool inval
   if (invalidateDelay) {
     if (twr->delayValid) twr->syncDirty = true;
     twr->delayValid = false;
+    twr->invalidated = true;
   }
   if (wasActive) {
     dwIdle(dev);
@@ -212,7 +214,7 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   dwTime_t verified = {.full=0};
   dwSpiRead(dev, DX_TIME, NO_SUB, verified.raw, LEN_DX_TIME);
   if (verified.full != raw.full) {
-    mulTwrCancel(twr, dev, "dx_time", false);
+    mulTwrCancel(twr, dev, "dx_time", true);
     return false;
   }
   twr->expectedTx = mulTimestampMask(verified.full + antenna);
@@ -220,7 +222,7 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   if (type == mulTwrResponse) twr->stamps[2] = twr->expectedTx;
   if (type == mulTwrFinal) twr->stamps[4] = twr->expectedTx;
   mulTwrPacket_t packet = {.type=type, .id=twr->id, .txTimestamp=twr->expectedTx,
-                           .tof=type == mulTwrResult ? twr->tof : 0};
+                           .tof=type == mulTwrResult ? twr->candidateTof : 0};
   memcpy(packet.stamps, twr->stamps, sizeof(packet.stamps));
   memcpy(packet.power, twr->power, sizeof(packet.power));
   uint8_t frame[MUL_TWR_FRAME_LENGTH+2] = {0}; // libdw1000 reads two FCS reserve bytes.
@@ -263,8 +265,8 @@ static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
     printf("%02X%08" PRIX32 "%s", (unsigned int)(twr->stamps[i]>>32),
       (uint32_t)twr->stamps[i], i == 5 ? "" : ",");
   }
-  printf(" raw_tof=%" PRIu32 " corrected_tof=",twr->rawTof);
-  if (twr->powerCorrected) printf("%" PRIu32,twr->tof); else printf("UNAVAILABLE");
+  printf(" raw_tof=%" PRIu32 " corrected_tof=",(uint32_t)twr->rawTof);
+  if (twr->candidatePowerCorrected) printf("%" PRIu32,(uint32_t)twr->candidateTof); else printf("UNAVAILABLE");
   printf(" I=%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 " Q=",
     (uint32_t)mulTimestampDifference(twr->stamps[3],twr->stamps[0]),
     (uint32_t)mulTimestampDifference(twr->stamps[4],twr->stamps[3]),
@@ -273,11 +275,11 @@ static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
   for (unsigned int i=0;i<3;i++) printf("%d/%d/%u/%u%s",twr->power[i].powerCentiDbm,
     twr->power[i].deltaDtu,twr->power[i].status,twr->power[i].table,i==2 ? "\r\n" : ",");
   // Vacuum speed of light 299792458 m/s; display integer millimetres, not an accuracy claim.
-  uint32_t mm = (uint32_t)(((uint64_t)twr->tof*UINT64_C(299792458000) + UINT64_C(31948800000)) /
+  uint32_t mm = (uint32_t)(((uint64_t)twr->candidateTof*UINT64_C(299792458000) + UINT64_C(31948800000)) /
                          UINT64_C(63897600000));
   printf("MUL TWR: id=%" PRIu32 " role=%s ref=0x84 fol=0x85 result=OK tof_dtu=%" PRIu32
          " distance_m=%" PRIu32 ".%03" PRIu32 " power=%s raw_mm=%" PRIu32 " uncertainty=UNKNOWN\r\n",
-         twr->id, role == mulAlrReference ? "INIT" : "RESP", twr->tof, mm/1000, mm%1000, twr->powerCorrected ? "APPLIED" : "UNAVAILABLE",
+         twr->id, role == mulAlrReference ? "INIT" : "RESP", (uint32_t)twr->candidateTof, mm/1000, mm%1000, twr->candidatePowerCorrected ? "APPLIED" : "UNAVAILABLE",
          (uint32_t)(((uint64_t)twr->rawTof*UINT64_C(299792458000)+UINT64_C(31948800000))/UINT64_C(63897600000)));
 }
 
@@ -294,7 +296,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   int64_t phase = mulTimestampDifference(hardwareNow(dev), origin);
   if (twr->active && (phase < 0 || phase >= (int64_t)(MUL_TWR_END_MS*MUL_TWR_DTU_PER_MS) ||
       sequence != twr->id || (role == mulAlrFollower && epoch != twr->epoch))) {
-    mulTwrCancel(twr, dev, "window_or_epoch", true);
+    mulTwrCancel(twr, dev, "window_or_epoch", role == mulAlrFollower && epoch != twr->epoch);
   }
   if (event == eventPacketReceived &&
       (dwGetDataLength(dev) == MUL_TEST_FRAME_LENGTH || dwGetDataLength(dev) == MUL_RELATION_FRAME_LENGTH)) {
@@ -311,7 +313,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     dwTime_t actual = {.full=0};
     dwGetTransmitTimestamp(dev, &actual);
     if (mulTimestampMask(actual.full) != twr->expectedTx) {
-      mulTwrCancel(twr, dev, "tx_stamp", false);
+      mulTwrCancel(twr, dev, "tx_stamp", true);
       return true;
     }
     twr->txPending = false;
@@ -337,7 +339,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     valid = mulTwrDecode(frame, sizeof(frame), &packet) && sender(packet.type) != role && packet.id == sequence;
   }
   if (!valid) {
-    if (twr->active) mulTwrCancel(twr, dev, "packet", false); else mulRxRearm(dev);
+    if (twr->active) mulTwrCancel(twr, dev, "packet", true); else mulRxRearm(dev);
     return true;
   }
   dwTime_t rx = {.full=0};
@@ -364,13 +366,12 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     memset(twr->power, 0, sizeof(twr->power));
     twr->id = sequence;
     twr->attempted = twr->active = true;
-    twr->delayValid = false; // Never re-date an earlier estimate while a new exchange runs.
+    // Preserve the committed estimate during an attempted refresh.
     twr->windowEnd = mulTimestampMask(origin+MUL_TWR_END_MS*MUL_TWR_DTU_PER_MS);
     twr->epoch = epoch;
     // Backdate the coarse acquisition time by hardware RX-to-callback latency,
     // rounded upwards. Neither callback delay nor RESULT delivery can re-date it.
-    twr->measuredMs = nowMs - (uint32_t)(((uint64_t)captureAge + MUL_TWR_DTU_PER_MS - 1) /
-                                        MUL_TWR_DTU_PER_MS);
+    // Commit acquisition time only after RESULT, backdated from stored P2.
     twr->stamps[0] = packet.stamps[0];
     twr->stamps[1] = capture.corrected; twr->power[0]=capture.power;
     sendPacket(twr, dev, mulTwrResponse, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
@@ -382,12 +383,12 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   for (unsigned int i=0;i<prefix/2;i++) if (!samePower(&packet.power[i],&twr->power[i])) metadataMatch=false;
   if (!metadataMatch || !twr->active || packet.type != twr->stage || packet.id != twr->id ||
       memcmp(packet.stamps, twr->stamps, prefix*sizeof(uint64_t))) {
-    if (twr->active) mulTwrCancel(twr, dev, "exchange", false); else mulRxRearm(dev);
+    if (twr->active) mulTwrCancel(twr, dev, "exchange", true); else mulRxRearm(dev);
     return true;
   }
   if (packet.type == mulTwrResponse) {
     if (!interval(packet.stamps[2],packet.stamps[1])) {
-      mulTwrCancel(twr, dev, "response_interval", false);
+      mulTwrCancel(twr, dev, "response_interval", true);
       return true;
     }
     twr->stamps[1] = packet.stamps[1]; twr->stamps[2] = packet.stamps[2]; twr->stamps[3] = capture.corrected;
@@ -396,20 +397,30 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   } else if (packet.type == mulTwrFinal) {
     twr->stamps[3] = packet.stamps[3]; twr->stamps[4] = packet.stamps[4]; twr->stamps[5] = capture.corrected;
     twr->power[1]=packet.power[1]; twr->power[2]=capture.power;
-    if (!evaluate(twr)) mulTwrCancel(twr, dev, "intervals", false);
+    if (!evaluate(twr)) mulTwrCancel(twr, dev, "intervals", true);
     else sendPacket(twr, dev, mulTwrReport, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
   } else if (packet.type == mulTwrReport) {
     twr->stamps[5] = packet.stamps[5]; twr->power[2]=packet.power[2];
     if (!interval(packet.txTimestamp,packet.stamps[5]) || !evaluate(twr))
-      mulTwrCancel(twr, dev, "range", false);
+      mulTwrCancel(twr, dev, "range", true);
     else sendPacket(twr, dev, mulTwrResult, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
   } else if (packet.type == mulTwrResult) {
     int64_t resultInterval = mulTimestampDifference(packet.txTimestamp, twr->stamps[4]);
     if (resultInterval < (int64_t)(30*MUL_TWR_DTU_PER_MS) ||
         resultInterval > (int64_t)(60*MUL_TWR_DTU_PER_MS) ||
-        !evaluate(twr) || twr->tof != packet.tof) {
-      mulTwrCancel(twr, dev, "result", false);
+        !evaluate(twr) || twr->candidateTof != packet.tof) {
+      mulTwrCancel(twr, dev, "result", true);
     } else {
+      // P2 is power corrected; reconstruct its raw capture before backdating.
+      uint64_t rawPoll=mulTimestampMask(twr->stamps[1]-twr->power[0].deltaDtu);
+      int64_t elapsed=mulTimestampDifference(hardwareNow(dev),rawPoll);
+      if (elapsed<0 || elapsed>(int64_t)(200*MUL_TWR_DTU_PER_MS)) {
+        mulTwrCancel(twr,dev,"measurement_age",true); return true;
+      }
+      twr->measuredMs=nowMs-(uint32_t)(((uint64_t)elapsed+MUL_TWR_DTU_PER_MS-1)/MUL_TWR_DTU_PER_MS);
+      twr->estimateId=twr->id;
+      twr->tof=twr->candidateTof; twr->powerCorrected=twr->candidatePowerCorrected;
+      twr->invalidated=false;
       twr->delayValid = true;
       twr->syncDirty = true;
       twr->active = false;
@@ -435,10 +446,18 @@ bool mulTwrDelay(const mulTwr_t *twr, const mulClock_t *clock, mulClockDelay_t *
 {
   if (twr == NULL || clock == NULL || delay == NULL || !twr->delayValid) return false;
   *delay = (mulClockDelay_t){.epoch=twr->epoch, .oneWayDtu=twr->tof, .units=mulClockDelayReferenceDtu,
-    .measuredMs=twr->measuredMs, .referenceSequence=twr->id, .maxAgeMs=MUL_CLOCK_DELAY_DEFAULT_MAX_AGE_MS,
+    .measuredMs=twr->measuredMs, .referenceSequence=twr->estimateId, .maxAgeMs=MUL_PROP_MAX_AGE_MS,
     .valid=true, .measurementBoundDtu=MUL_CLOCK_BOUND_UNKNOWN, .motionBoundDtuPerMs=MUL_CLOCK_BOUND_UNKNOWN};
   memcpy(delay->reference, addresses[0], 8); memcpy(delay->follower, addresses[1], 8);
   return delay->epoch == clock->epoch;
+}
+
+mulPropagationState_t mulTwrPropagationState(const mulTwr_t *twr,const mulClock_t *clock,uint32_t nowMs)
+{
+  if (twr->invalidated || (twr->delayValid && twr->epoch!=clock->epoch)) return mulPropagationInvalidated;
+  if (!twr->delayValid) return mulPropagationNone;
+  if ((uint32_t)(nowMs-twr->measuredMs)>MUL_PROP_MAX_AGE_MS) return mulPropagationExpired;
+  return (uint32_t)(clock->sequence-twr->estimateId)<=1 ? mulPropagationFresh : mulPropagationReused;
 }
 
 void mulTwrSync(mulTwr_t *twr, const mulClock_t *clock, uint32_t nowMs, bool force)
@@ -465,8 +484,8 @@ void mulTwrSync(mulTwr_t *twr, const mulClock_t *clock, uint32_t nowMs, bool for
 uint32_t mulTwrDelayWait(const mulTwr_t *twr, uint32_t nowMs, uint32_t fallback)
 {
   uint32_t age = nowMs - twr->measuredMs;
-  if (twr->delayValid && age <= MUL_CLOCK_DELAY_DEFAULT_MAX_AGE_MS) {
-    uint32_t remaining = MUL_CLOCK_DELAY_DEFAULT_MAX_AGE_MS + 1 - age;
+  if (twr->delayValid && age <= MUL_PROP_MAX_AGE_MS) {
+    uint32_t remaining = MUL_PROP_MAX_AGE_MS + 1 - age;
     if (remaining < fallback) return remaining;
   }
   return fallback;

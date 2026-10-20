@@ -208,8 +208,9 @@ mulClockDelayStatus_t mulClockDelayStatus(const mulClock_t *clock,
     return mulClockDelayInvalid;
   }
   if (clock == NULL || clock->epoch == 0 || delay->epoch != clock->epoch ||
-      (uint32_t)(clock->sequence - delay->referenceSequence) > 3) {
-    // At 1 Hz a <=2 s record cannot lag >3 reference sequences. This additional
+      (uint32_t)(clock->sequence - delay->referenceSequence) >
+        (delay->maxAgeMs <= 2000 ? 3u : (delay->maxAgeMs+999)/1000+2)) {
+    // Bound sequence distance as well as the original measurement age. This additional
     // modular guard also rejects uptime full-wrap aliases and future sequences.
     return mulClockDelayEpochMismatch;
   }
