@@ -258,3 +258,7 @@ assessment; CP7 exact hardware instructions and compatible Git SHA handoff.
 Preserve all pre-existing user edits, default/Stage3E/Stage3F operation. Do not
 flash, implement mixed-radio ranging/TDoA, or begin Stage3H. Stage3G hardware
 acceptance remains pending user A/B/concurrent UART experiment logs.
+
+CP2: canonical codec/arithmetic extraction byte-identical to baseline;193 default
+host tests and new core golden/bounds/wrap/reset/20000 malformed-input sanitizer
+tests pass. New diagnostic is44 bytes, previous measured TX metadata only.
