@@ -158,21 +158,59 @@ The static option is an experimental declaration, not automatic stationarity
 recognition. Constant radial motion can masquerade as skew, so never enable it
 for mobile robots. No centimetre accuracy or finite confidence bound is claimed.
 
+## Stage 3D.1 — Controlled transmission-spacing experiment
+
+Status: CP1 timing inspection complete; implementation pending. Starting point
+`3191b39`. User-reported midpoint geometry (1 m each side) produced -369 DTU /
+-1731 mm, STATIC/-2534 ppb, age 503 ms, power=1; TWR 1.88–1.95 m versus 2 m,
+follower skew +1.415 ppm, TX delta=0 and no gaps in the excerpt. An earlier
+configuration gave about -4.5 m. Cause remains unknown; Stage 3D functional
+operation is supported by these excerpts, physical accuracy is not accepted.
+
+Implementation checkpoints:
+- CP1: inspect timing and record this plan; baseline host suite and docs review.
+- CP2: shared compile-time slot 500 (default), 50 or 10 ms; reject other values.
+- CP3: derive association, converted-TX/RX gates, follower-presence gate and
+  candidate age from the slot; keep clock equations and 1000 ms delay validity.
+- CP4: configuration diagnostics and slot-parametric regressions; independent
+  physical-clock synthetic oracle, including injected rate error and wrap.
+- CP5: all-slot host/sanitizer/real-driver tests, three clean firmware builds,
+  RAM/stack review, architecture and exact stationary hardware procedure.
+Each checkpoint is committed and immediately pushed to origin/master. Record
+its hash in the next checkpoint (a commit cannot contain its own hash).
+
+Timing audit: slot is follower local hardware reference RX +500 ms, with live
+TX antenna compensation and upward 512-DTU alignment. Fixed 450..550 ms gates
+exist in observation association and downlink converted-TX/raw-RX validation;
+reference follower-presence is 450..600 ms. Candidate/rate age is 700 ms and
+publication lead is capped at 600 ms. Reference cadence/rate estimator uses 1 Hz
+reference observations, independent of follower spacing. Publication predicts
+freshness at actual TX, so shorter spacing changes age, not equations/lifetime.
+TWR prepares at 630 ms, transmits near 650/670/690/710/730 and stops at 800;
+POLL gates 600..700 refer to TWR, not follower slots. No proposed slot overlaps
+this window. Keep TWR timing, five-second eligibility and broadcast priority.
+
+Timing feasibility: reference packet completion follows its RMARKER; even the
+supported slower/longer PHY combinations have an engineering allowance below
+2 ms for the 34-byte packet tail. Normal SPI is 48 MHz /4 =12 Mbit/s (slow
+initialization /16 =3 Mbit/s). A deliberately generous 1 KiB aggregate transfer
+allowance costs 0.69 ms fast /2.74 ms slow, excluding HAL/CPU/IRQ overhead.
+Follower work is bounded integer estimator/model/74-byte encoding before arm;
+RLR freezes 34-byte RX/power diagnostics (including software floating point),
+then rearms BEFORE association/logging. UWB task has highest task priority;
+serial sends are nonblocking, but HAL SPI uses HAL_MAX_DELAY. Therefore no
+finite worst-case wall time can be established from source/host tests: IRQ,
+HAL stalls and software float costs require device measurement. At 10 ms the
+existing 5 ms post-preparation hardware lead guard permits less than 5 ms total
+RX-tail + dispatch + processing + setup (slightly less due to TX antenna delay).
+Budgeting 2 ms RX tail +0.69 ms SPI leaves about 2.3 ms for CPU/dispatch at fast
+SPI. RLR must rearm before the follower preamble, conservatively within 8 ms.
+Ten ms is an experimental, fail-closed schedule, not guaranteed loss-free:
+late ALR setup skips rather than moving TX or compromising timestamps. Validate
+10 ms on-device; use 50 ms if skips/loss appear. No PHY or antenna changes.
+
 ## Codex continuation checkpoint
 
-Stage 3D CP1–CP5 implemented/software tested. Previous pushed checkpoint
-`c76a106`; final checkpoint is the commit containing this section. Reference
-broadcast remains 34 bytes, follower is explicit type-2/version-1 74 bytes, TWR
-unchanged at 84 bytes. Current-frame corrected clock metadata is validated at RLR;
-rate-domain conversion yields signed raw/corrected TDoA only under explicit
-stationary opt-in. Default rate is unavailable; physical uncertainty UNKNOWN.
-Validation: 166 host tests, 153 MUL ASan/UBSan tests, 66 additional stationary
-opt-in sanitizer tests, real-driver publication/expiry across wrap, and clean
-default/stationary firmware builds pass. No required software checks remain unrun.
-Static RAM: data 1072 + bss/reservations 15292 = 16364 bytes (20 spare); scratch
-overlay stays 128 bytes. Compiler stack frames: RLR event 512, ALR entry 184,
-delayed setup 248, publisher 376, corrected API up to 240 bytes; nested publication
-path reviewed against the 1600-byte UWB reservation, without claiming on-device
-high-water verification. RX/PAIR/TDOA worst-case diagnostic burst <=501 bytes.
-Next exact task: three-node hardware validation above, without assuming bounded
-accuracy. Stage 4 online calibration and Stage 5 localization remain pending.
+Stage 3D.1 CP1 is the commit containing this section; no firmware edits yet.
+Next: CP2 shared timing configuration, then CP3 gates, CP4 diagnostic tests,
+CP5 full validation and hardware instructions. No physical hardware flashed.
