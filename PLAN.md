@@ -235,7 +235,8 @@ ranging, calibration and localization correctness remain unvalidated.
 CP0/CP1: architecture audit complete; canonical core lives in portable/mul_core.
 STM32 deterministic vendoring pins a published LPS commit with offline file-hash
 verification at configure/build. No third remote, new submodule or local-only
-build dependency. Existing user modifications remain unchanged and uncommitted.
+build dependency. Initial extraction preserved local work; the follow-up
+integrates the reviewed streaming/client changes.
 
 CP2: existing mul_common codec/identity/sequence/40-bit helpers extracted without
 behavior change. New strict44-byte type0x70/v1 diagnostic carries explicit raw
@@ -269,10 +270,23 @@ no claim that Stage 3F UART faults are fixed. CP7 hardware procedures ready.
 The central roadmap is stale (3F not started); leave it unchanged for owner
 update to Stage 3F accepted / Stage 3G software ready, hardware pending.
 
-**Next exact action:** user runs A/B (>=100 completed TX each with matching
-RX/previous-TX metadata) and C with disabled baseline, sensor/ESP traffic,
-STOP/ARM/zero-speed heartbeat checks and timing/UART/drop counters. No hardware
-flashed. Preserve the uncommitted 100 ms streaming patch for 10 Hz trials; published
-STM32 baseline retains 1 Hz polling. Do not conflate the two tested images.
-Full Stage 3G acceptance awaits those logs; physical timestamp/ranging accuracy,
-UART causation, mixed-radio TDoA and Stage 3H remain unresolved/out of scope.
+**Hardware review/follow-up:** A/B demonstrate bidirectional shared-core packets
+and exact comparable previous-TX markers (43/43,62/62); boot TX counters89/93
+fall short of the >=100 gate. C reaches at least542 valid RX with6 gaps and a
+USART3 ORE (`bits=0x8`); no added recorded gap near that visible fault. The user
+confirms the disabled baseline: separate1000ms and100ms sessions show zero UART/
+drop/parser faults. Unmatched windows prevent causal attribution or delivery ratios.
+
+The software follow-up adds explicit UWB-only STOP/disarm/stream-off policy,
+quiet debug output and normal1Hz light-free DATA2 Wi-Fi telemetry. Reviewed
+streaming and client/UI/tools work is integrated; normal mode remains available.
+SPI speed/masking, core pin, packet/timestamp math and all LPS firmware remain
+unchanged. Five STM32 profiles, safety/diagnostic/transport/client tests and ESP
+build pass. Full evidence and exact build/ELF/CubeProgrammer commands are in
+[the guide](docs/mul_core.md#next-user-experiments--uwb-first).
+
+**Next exact action:** sustained UWB-only >=10min/>=500 completed TX per direction,
+then matched UwbOffSafe baseline; optional controlled NormalBaseline/CoexistRX
+comparison. Establish safety/STOP and UART impact before closing Stage3G.
+No hardware flashed; no Stage3H. Physical timing/ranging accuracy and the exact
+cause of UART overrun remain unresolved.
