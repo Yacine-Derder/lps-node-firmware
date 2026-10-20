@@ -139,8 +139,8 @@ cause of the spacing sensitivity. Detailed calibration awaits efficient MCS data
 
 ## Stage 3E — Continuous observations
 
-Status: CP1 continuous propagation transport/validity implemented and software
-tested; observation record/output and integrated validation remain.
+Status: CP1–CP2 implemented/software tested; integrated validation and final
+documentation remain.
 Default retains strict 1000 ms/v1 policy. Explicit `MUL_PROP_MAX_AGE_MS=6000`
 selects same-length 74-byte v2 with original TWR age, numeric estimate and state;
 all three nodes must use the same policy. Reference 34/TWR 84 bytes unchanged.
@@ -153,21 +153,26 @@ reference; later valid cycles are REUSED. Original POLL capture time is committe
 only after RESULT and never refreshed by a broadcast or failed attempt.
 
 Checkpoints:
-- CP1: the commit containing this section (hash recorded in CP2); push immediately.
-- CP2 next: localization-ready ephemeral record, deterministic motion-aging term
-  from explicit relative-speed bound (-1 UNKNOWN, 0 stationary, positive mm/s),
-  compact OBS output without expanding the serial burst or persistent RAM.
+- CP1: `db6e029` pushed.
+- CP2: the commit containing this section. Caller-owned 88-byte localization
+  record, deterministic outward-rounded motion term (-1 UNKNOWN, 0 stationary,
+  positive mm/s), compact OBS output replacing redundant paired RX/PAIR/TDOA.
 - CP3 next: end-to-end consecutive 1 Hz observations across TWR updates/loss,
   all-slot/default/continuous sanitizer and real-driver matrix, clean builds,
   RAM/stack review, architecture, commands and hardware expectations.
 
 ## Codex continuation checkpoint
 
-Starting commit `f1698c2`. CP1 tests: 180 host tests pass default strict 500 ms
-and continuous stationary 500/50/10 ms. Includes original-age publication/expiry,
-refresh, missed/malformed TWR and real-driver integration. First continuous10ms
-firmware build passes: text122552, data1072, bss/reservations15292 (20 spare).
-Relation48/role scratch128 maintained; compile-time scratch-size guard added.
-No physical hardware flashed. Next exact work is CP2 observation record/output;
-Stage4 calibration and Stage5 solver remain out of scope. Total physical
-uncertainty remains UNKNOWN, regardless of future configured motion term.
+CP1 `db6e029` pushed; CP2 is the commit containing this section. 186 host tests
+pass all continuous stationary slots, strict default policy and continuous
+500 mm/s aging configuration. OBS schema/order, NA masking and <=512-byte
+line bound checked (worst-case fixture 358 bytes); startup labels rate policy,
+propagation lifetime and motion assumption. All component/total physical
+uncertainties except the explicitly configured geometric motion term stay UNKNOWN.
+Continuous10ms build: text123536, data1072, bss/reservations15292 (20 spare).
+Record88, relation48, role scratch128; no added persistent state. Frames: RLR520,
+record builder128, print88. No physical hardware flashed. Next exact work CP3:
+end-to-end 1 Hz sequence through two five-second live TWR refreshes, bounded
+separation changes, failed/missed refresh and epochs, sanitizer/config/build
+matrix, final RAM/stack review, architecture and exact build/flash instructions.
+Stage4 calibration and Stage5 localization remain out of scope.

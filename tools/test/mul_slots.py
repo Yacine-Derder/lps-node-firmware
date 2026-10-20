@@ -49,6 +49,17 @@ File.write(ARGV[0],YAML.dump(c))'''
         if not summary or '0 TOTAL FAILURES' not in summary[0]:
             raise SystemExit(f'Missing/passing summary not found for {slot}')
         print(f'{slot} ms: {summary[0]}', flush=True)
+        observations = [line for line in output.splitlines() if line.startswith('MUL OBS:')]
+        if not observations or any(len(line)+2 > 512 for line in observations):
+            raise SystemExit('Missing OBS coverage or OBS line exceeds the USB queue')
+        for line in observations:
+            fields = [part.split('=')[0] for part in line.split()[2:]]
+            expected = 'ref fol t_ms rx gen epoch status dtu mm slot_ms delay_dtu delay_age_ms delay_state rate clock_age_ms clock power assoc motion_mm motion_dtu quality uncertainty'.split()
+            if fields != expected or not line.endswith('uncertainty=UNKNOWN'):
+                raise SystemExit('OBS schema/order changed')
+            if 'status=AVAILABLE ' not in line and 'dtu=NA mm=NA' not in line:
+                raise SystemExit('Unavailable OBS leaked numerical TDoA')
+        print(f'{slot} ms: OBS schema/NA masking/512-byte bound passed', flush=True)
         # Verify compile-time contract, independently of runtime tests.
         subprocess.run(['gcc', '-x', 'c', '-fsyntax-only', f'-DMUL_FOLLOWER_SLOT_MS={slot}',
                         'inc/mul_timing.h'], cwd=ROOT, check=True)
