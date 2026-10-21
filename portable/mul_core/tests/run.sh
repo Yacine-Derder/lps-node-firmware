@@ -10,3 +10,6 @@ cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-p
 cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-pie \
  -I. tests/test_ads.c mul_ads.c mul_core.c mul_common.c -lm -o "$work/ads"
 "$work/ads"
+cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-pie \
+ -I. tests/test_infrastructure.c mul_telemetry.c mul_beacon.c mul_time.c mul_common.c -lm -o "$work/infrastructure"
+"$work/infrastructure"
