@@ -459,3 +459,13 @@ sh tests/esp_link/run.sh
 sh tests/uwb_policy/run.sh
 python3 tests/mul_diag/run_coexist.py
 ```
+
+
+## Universal STM32 configuration
+
+The legacy build commands above remain available. For a single STM32 image with
+runtime ADS roles, IDs, persistent settings, opt-in calibration and bounded local
+telemetry, use epuck-stm32 `docs/runtime_uwb.md`. Its motor policy remains UWB-only;
+the shared core and DW1000 wire/driver behavior are unchanged. Calibration analysis
+of the five nominal-distance runs is in [ads_additive_calibration.md](ads_additive_calibration.md).
+The proposed additive offset is not a universal antenna calibration or a gate pass.

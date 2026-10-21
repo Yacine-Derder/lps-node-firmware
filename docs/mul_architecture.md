@@ -946,3 +946,17 @@ a validity flag nor a robust offline filter establishes calibration. Session-tag
 six-stamp logs and classified failed-stage counters make cross-run analysis
 explicit. Source/wire APIs remain canonical in portable/mul_core; experimental
 selection rules, evidence and calibration handoff are in docs/mul_ads_twr.md.
+
+
+STM32 universal operation keeps logical robot identity separate from radio role.
+The pinned ADS address namespace and six-timestamp wire protocol remain unchanged.
+A CRC/versioned flash journal in two independently erasable reserved F405 sectors
+keeps the previous committed configuration across interrupted saves. Desired,
+saved and applied state are distinct; explicit maintenance-only SAVE avoids flash
+stalls during ranging. The universal image enforces the existing UWB-only motor
+safety policy; motor-enabled normal operation remains a separate build profile.
+Raw nominal range is retained beside an opt-in additive derived result, and antenna
+delay edits disable software calibration until explicitly reviewed/re-enabled.
+Bounded local telemetry separates production from transport; UART/Wi-Fi forwarding
+awaits a controlled backpressure/timing integration. Operational commands and
+hardware checks live in the STM32 `docs/runtime_uwb.md` guide.

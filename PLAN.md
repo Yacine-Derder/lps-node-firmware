@@ -307,7 +307,7 @@ REPORT provide six actual40-bit markers; no guessed delayed TX stamp. New fresh
 session/transaction, bounded state/deadlines, whole-exchange retries and strict
 UWB-only safety isolation. Nominal antenna defaults are explicit/read back and
 uncalibrated. Existing Stage3E/3F/3G formats, EEPROM and normal modes remain.
-Canonical portable checkpoint ccd78acfb56ac9ea42c31b88d5db458380c67564 is pinned
+Canonical portable checkpoint 0e3b5802e04f87e2c6e5e41ae07c165ae07ea0d1 is pinned
 in STM32. ESP/dsPIC/central project are untouched this iteration.
 
 Next: [stationary ranging handoff](docs/mul_ads_twr.md), controlled measured
@@ -334,8 +334,32 @@ Session-tagged TIMES/STAT, classified active aborts/saturating failed-stage coun
 and optional ADS SPI/service timing improve diagnosis. No equation, PHY, antenna
 constant or SPI policy change. Portable pin0e3b5802e04f87e2c6e5e41ae07c165ae07ea0d1.
 
-Next: five precisely measured distances with>=500 completions each, complete paired
-captures, STOP/disarm/stream-off counter evidence, genuine UWB-disabled baseline,
+Five nominal-distance captures now exist; only the 5m run reaches >=500 audited
+valid ranges. Next: precise references, >=500 completions per distance, complete
+paired captures, STOP/disarm/stream-off evidence, genuine UWB-disabled baseline,
 UART attribution and held-out calibration checks in docs/mul_ads_twr.md. USART1
 ORE in the responder capture is demonstrated; causation/impact on UWB is not.
 Existing Stage3G gates remain open. No flashing, ESP/dsPIC edits or central-doc edit.
+
+
+## Universal STM32 runtime UWB configuration
+
+Software implemented; physical persistence/role switching/timing/accuracy gates
+remain pending. One UWB-only STM32 image selects ADS role independently of robot
+identity, addresses within the pinned protocol's 0x84..0x86 namespace, interval,
+antenna delays, optional additive calibration and bounded local telemetry.
+Versioned CRC journal reserves F405 sectors10/11; explicit SET/APPLY/SAVE separates
+current/saved/active state and confines flash stalls to maintenance. Existing
+motor-enabled normal profiles remain compile-time choices; safety cannot be
+weakened by configuration. Shared core pin and DW1000 firmware are unchanged.
+
+The five-distance audit proposes -469mm for this pair only; calibration defaults
+off, no scale fit. References are manual and uncertainty unverified; 5m median
+bias is about569mm. The 2m accumulated counters are operator-confirmed reuse,
+not independent evidence of a defect. See [additive analysis](docs/ads_additive_calibration.md).
+
+Next: user-operated same-ELF role/identity switching, reboot/interrupted-save,
+standalone/no-host, calibration and timing/backpressure comparisons in STM32
+`docs/runtime_uwb.md`. UART3/Wi-Fi forwarding is intentionally deferred; the bounded
+queue is currently USB-pulled. Existing Stage3G safety/baseline gates and held-out
+calibration validation remain open. No new TDMA/TDoA or localization implementation.
