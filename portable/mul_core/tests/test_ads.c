@@ -58,6 +58,18 @@ static void exchange(bool reverse,double rate,uint64_t a,uint64_t b) {
 }
 int main(void) {
   assert(sizeof(mulAds_t)<=128);
+  for(unsigned src=0;src<256;src++) for(unsigned dst=0;dst<256;dst++) {
+    mulAds_t state;bool distinct=src!=dst;
+    assert(mulAdsInit(&state,(uint8_t)src,(uint8_t)dst,true,1)==distinct);
+    mulAdsPacket_t packet={.source=(uint8_t)src,.destination=(uint8_t)dst,.type=mulAdsPoll,.session=1,.transaction=1},decoded;
+    uint8_t bytes[56];assert(mulAdsEncode(bytes,sizeof(bytes),&packet)==distinct);
+    if(distinct) {
+      assert(mulAdsDecode(bytes,sizeof(bytes),&decoded));
+      assert(decoded.source==src && decoded.destination==dst);
+      bytes[6]=1;assert(!mulAdsDecode(bytes,sizeof(bytes),&decoded));bytes[6]=0;
+      bytes[19]^=1;assert(!mulAdsDecode(bytes,sizeof(bytes),&decoded));
+    }
+  }
   for(unsigned reverse=0;reverse<2;reverse++) for(int ppm=-500;ppm<=500;ppm+=50)
     exchange(reverse,1.0+ppm/1e6,MUL_TIMESTAMP_MASK-100000000, UINT64_C(0x8765432100));
   for(propagation=-213;propagation<=213;propagation+=213) exchange(false,1,100000,90000000);

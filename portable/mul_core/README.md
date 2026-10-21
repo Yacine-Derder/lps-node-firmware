@@ -171,3 +171,13 @@ TIMES before a math abort. `MUL_ADS_TRACE_TIMES=0` disables six-stamp logging
 (default1); keep it enabled for research captures. DWM optional MUL_TIMING_TRACE
 now also supports ADS, reporting MULH TIME after startup. Maxima do not identify
 the instant of a UART overrun or establish interrupt WCET.
+
+
+ADS-TWR addressing: the complete source/destination extended address is
+`ID:00:00:00:00:00:CF:BC`, with ID any byte 0x00..0xFF. No ID is reserved;
+0xFF here is not the all-FF broadcast MAC. Source must differ from destination.
+Deployments must provision unique IDs; the protocol does not discover collisions.
+This widening applies only to ADS; legacy observation/diagnostic source policies,
+wire length/version and timestamp arithmetic remain unchanged. Existing ADS
+adapters still select their configured local/peer; old restricted firmware must
+be updated to communicate with peers outside its former allowlist.

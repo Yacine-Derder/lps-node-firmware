@@ -2,11 +2,17 @@
 #include "mul_ads.h"
 #include <math.h>
 #include <string.h>
-static bool id(uint8_t v) { return v>=0x84 && v<=0x86; }
+/* ADS IDs occupy one octet of an extended MAC, including 00 and FF.
+ * Preserve legacy diagnostic source policy; validate ADS suffix independently. */
+static bool address(const uint8_t *v) {
+  if(v[6]!=0xcf || v[7]!=0xbc) return false;
+  for(unsigned i=1;i<6;i++) if(v[i]) return false;
+  return true;
+}
 static void put(uint8_t *p,uint64_t v,unsigned n) { for(unsigned i=0;i<n;i++) p[i]=(uint8_t)(v>>(8*i)); }
 static uint64_t get(const uint8_t *p,unsigned n) { uint64_t v=0; for(unsigned i=0;i<n;i++) v|=(uint64_t)p[i]<<(8*i); return v; }
 static bool valid(const mulAdsPacket_t *p) {
-  if (!p || !id(p->source) || !id(p->destination) || p->source==p->destination ||
+  if (!p || p->source==p->destination ||
       !p->session || !p->transaction || p->type<mulAdsPoll || p->type>mulAdsReport) return false;
   for(unsigned i=0;i<3;i++) if(p->stamps[i]>MUL_TIMESTAMP_MASK || (p->type!=mulAdsReport && p->stamps[i])) return false;
   return true;
@@ -24,7 +30,7 @@ bool mulAdsDecode(const uint8_t *f,size_t n,mulAdsPacket_t *p) {
   if(!f || !p || n!=MUL_ADS_LENGTH || f[0]!=0x41 || f[1]!=0xdc || f[2]!=f[34] ||
      f[3]!=0xcf || f[4]!=0xbc || memcmp(f+21,"MUL",3) || f[25]!=MUL_ADS_VERSION ||
      f[53]!=40 || f[54]!=MUL_CORE_DTU || f[55]!=0xa5 ||
-     !mulCoreSourceValid(f+5) || !mulCoreSourceValid(f+13)) return false;
+     !address(f+5) || !address(f+13)) return false;
   mulAdsPacket_t d={.source=f[13],.destination=f[5],.type=f[24],.session=get(f+26,8),.transaction=(uint32_t)get(f+34,4)};
   for(unsigned i=0;i<3;i++) d.stamps[i]=mulDecodeTimestamp(f+38+5*i);
   if(!valid(&d)) return false;
@@ -47,7 +53,7 @@ bool mulAdsCalculate(const uint64_t t[6],double *tof,double *ratio) {
   *tof=value; *ratio=r; return true;
 }
 bool mulAdsInit(mulAds_t *s,uint8_t local,uint8_t peer,bool initiator,uint64_t session) {
-  if(!s || !id(local) || !id(peer) || local==peer || !session) return false;
+  if(!s || local==peer || !session) return false;
   memset(s,0,sizeof(*s)); s->local=local; s->peer=peer; s->initiator=initiator; s->session=session; return true;
 }
 bool mulAdsRangeValid(double tof) { return isfinite(tof) && tof>=0; }
