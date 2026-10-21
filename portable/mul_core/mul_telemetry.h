@@ -4,8 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#define MUL_TLM_BYTES 128u
-#define MUL_TLM_LINE 262u /* UWB1 + space + 256 hex + NUL; newline owned by transport */
+#define MUL_TLM_BYTES 152u
+#define MUL_TLM_LINE 310u /* UWB2 + 304 hex + NUL; newline owned by transport */
 enum {mulTlmSummary=1,mulTlmRange,mulTlmEvent,mulTlmObservation,mulTlmPeer};
 enum {mulTlmRawValid=1,mulTlmCalibration=2,mulTlmCalValid=4,mulTlmStampValid=8,mulTlmTx=16};
 typedef struct {
@@ -16,6 +16,7 @@ typedef struct {
  uint32_t attempts,completed,aborted,rejected,invalid;
  uint16_t depth,highWater;
  uint32_t dropped,uartErrors,spiCycles,serviceCycles,gapCycles,clockHz;
+ uint32_t radioErrors,timeouts,txDropped,modelVersion;uint64_t remoteEpoch;
  uint64_t stamps[6]; /* ADS: t1..t6; event/observation: local marker, advertised previous TX */
 } mulTelemetry_t;
 uint16_t mulTelemetryCrc(const uint8_t *p,size_t n);

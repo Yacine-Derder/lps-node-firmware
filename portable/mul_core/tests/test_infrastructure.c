@@ -8,8 +8,8 @@ int main(void){
  assert(mulTelemetryCrc((const uint8_t *)"123456789",9)==0x29b1);
  mulTelemetry_t r={.type=mulTlmRange,.node=0,.peer=255,.radio=2,.mode=1,.role=1,.epoch=UINT64_MAX,.exchange=1,.rawMm=INT32_MIN,.calMm=INT32_MAX,.flags=31,.stamps={MUL_TIMESTAMP_MASK,1,2,3,4,5}},d;
  char line[MUL_TLM_LINE];assert(mulTelemetryEncode(line,sizeof(line),&r));assert(mulTelemetryDecode(line,&d));assert(d.rawMm==INT32_MIN&&d.calMm==INT32_MAX&&d.epoch==UINT64_MAX&&d.stamps[0]==MUL_TIMESTAMP_MASK);
- for(unsigned i=0;i<261;i++){char old=line[i];line[i]='?';assert(!mulTelemetryDecode(line,&d));line[i]=old;}
- for(unsigned i=0;i<261;i++){char old=line[i];line[i]=0;assert(!mulTelemetryDecode(line,&d));line[i]=old;}
+ for(unsigned i=0;i<309;i++){char old=line[i];line[i]='?';assert(!mulTelemetryDecode(line,&d));line[i]=old;}
+ for(unsigned i=0;i<309;i++){char old=line[i];line[i]=0;assert(!mulTelemetryDecode(line,&d));line[i]=old;}
  mulBeacon_t b={.source=255,.radio=2,.epoch=123,.sequence=0,.previousSequence=UINT32_MAX,.previousTx=MUL_TIMESTAMP_MASK,.markerValid=true},bd;uint8_t f[56];
  assert(mulBeaconEncode(f,sizeof(f),&b));assert(mulBeaconDecode(f,sizeof(f),&bd)&&bd.epoch==123&&bd.previousTx==MUL_TIMESTAMP_MASK);
  for(unsigned i=0;i<56;i++){f[i]^=0x80;if(i!=13&&i<28)assert(!mulBeaconDecode(f,sizeof(f),&bd));f[i]^=0x80;}
