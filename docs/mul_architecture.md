@@ -932,11 +932,12 @@ packets unchanged. POLL/RESPONSE/FINAL are followed by a timestamp REPORT so all
 six inputs are measured at hardware completion/reception, without predicting
 FINAL TX. Initiator computes standard mixed-clock ADS ToF; physical antenna
 reference equivalence is uncalibrated. Explicit fresh sessions and transactions
-bound stale-message acceptance. Single-pair task-level adapters own immediate
-TX/automatic RX and abort/retry, while STM32 requires UWB-only motor/ESP isolation.
+bound stale-message acceptance. Task-level adapters own immediate TX/automatic RX and abort/retry. STM32 enforces
+UWB-only motor safety; optional ESP telemetry remains lower-priority transport.
 Wire/state/arithmetic contracts are in portable/mul_core/README.md; current
 experiment/build/limitations are in [the ADS guide](mul_ads_twr.md). This does
-not implement localization, multi-robot scheduling or online calibration.
+not implement localization or online calibration. The STM32 extension below adds
+controlled multi-peer scheduling without changing the DW1000 adapter.
 
 
 ADS completed-exchange accounting now remains distinct from physical-range
@@ -961,6 +962,57 @@ The universal image enforces the existing UWB-only motor
 safety policy; motor-enabled normal operation remains a separate build profile.
 Raw nominal range is retained beside an opt-in additive derived result, and antenna
 delay edits disable software calibration until explicitly reviewed/re-enabled.
-Bounded local telemetry separates production from transport; UART/Wi-Fi forwarding
-awaits a controlled backpressure/timing integration. Operational commands and
-hardware checks live in the STM32 `docs/runtime_uwb.md` guide.
+Bounded telemetry separates radio production from optional UART3/Wi-Fi forwarding.
+Separate optional queues, expiry and control priority constrain interference;
+physical timing/coexistence remains an experimental gate. Operational commands
+and hardware checks live in the STM32 `docs/uwb_network.md` guide.
+
+
+## Untethered multi-peer and timing foundation
+
+Canonical `portable/mul_core` now also defines CRC-versioned telemetry, explicit
+node/radio/epoch timestamp domains, bounded40-bit intervals, apparent arrival-clock
+fits and a56-byte type0x75 previous-completed-TX beacon. It has no driver/RTOS/logging
+or allocation dependency. STM32 and ESP32 import verified immutable snapshots;
+legacy DW1000 modes, EEPROM and existing packet formats remain unchanged.
+DW1000 `dwGetTransmitTimestamp` and DWM3000 `dwt_readtxtimestamp` expose measured
+antenna-referenced TX markers. Raw DW1000 RX and DWM3000 compatible RX APIs avoid
+an extra empirical platform bias correction; hardware antenna calibration remains
+physical work. New beacons never advertise a predicted future TX. Unknown remote
+ADS epochs/radio identity remain explicitly unknown in telemetry.
+
+Eight caller-owned STM32 ADS states retain peer-specific transactions/session
+ordering. Only one state uses the radio at a time. Cyclic due-peer selection,
+a100ms start guard and per-stage100ms deadlines bound local work and prevent
+one absent peer from monopolizing service. This assumes one coordinated initiator
+per collision domain, not a decentralized collision-free MAC. The original pair's
+additive correction remains primary-only. Flash schema2 consumes reserved space
+without changing journal length/commit semantics; schema1 loads with calibration
+preserved and Wi-Fi off. No automatic migration write is needed.
+
+Experimental STM32 beacon/listen modes use the same proven PHY/radio owner.
+A listener's paired observation associates a cached RX with the transmitter's
+later-reported actual TX of that exact sequence. Epochs prevent numeric clock
+mixing. The affine source-TX→target-arrival offset includes propagation; motion
+can bias apparent skew. Neither one-way offset nor propagation is separately
+observable without geometry/two-way information. The offline tool refuses TDoA
+between independent RX clocks unless supplied external, epoch-specific common-
+reference mappings and uncertainty. No global clock or position solution follows
+from packet decode or a converged apparent fit.
+
+## Existing Bitcraze TDoA assumptions retained
+
+`src/uwb_tdoa_anchor2.c` assigns eight indexed TDMA slots (~2.1ms in native units;
+source overview rounds to2ms). Anchor0 establishes the frame; others acquire it
+from anchor0 packets. Payload carries eight sequence numbers, eight32-bit TX/RX
+timestamps in the sending anchor's clock and inter-anchor distances. Observers
+use these relations and clock correction; these are not eight global timestamps.
+
+`src/uwb_tdoa_anchor3.c` assumes a largely static anchor system, randomizes TX
+times, tracks neighboring clocks and estimates inter-anchor distance. Type0x30
+header contains sequence,32-bit TX and remote-count, followed by per-neighbor
+ID/sequence/RX32 and optional distance16. Adaptive20..50Hz anchor rates keep its
+32-bit timestamp wrap (~67ms) manageable. It is not synchronized TDMA and its
+static-geometry assumptions cannot be imported silently into moving robots.
+These proven modules remain intact; the new epoch/40-bit0x75 codec is a separate
+experimental acquisition format, not a replacement or wire-compatible variant.

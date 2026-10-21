@@ -359,11 +359,9 @@ off, no scale fit. References are manual and uncertainty unverified; 5m median
 bias is about569mm. The 2m accumulated counters are operator-confirmed reuse,
 not independent evidence of a defect. See [additive analysis](docs/ads_additive_calibration.md).
 
-Next: user-operated same-ELF role/identity switching, reboot/interrupted-save,
-standalone/no-host, calibration and timing/backpressure comparisons in STM32
-`docs/runtime_uwb.md`. UART3/Wi-Fi forwarding is intentionally deferred; the bounded
-queue is currently USB-pulled. Existing Stage3G safety/baseline gates and held-out
-calibration validation remain open. No new TDMA/TDoA or localization implementation.
+Next: physical acceptance of runtime persistence and the untethered multi-node
+extension below. Existing Stage3G safety/baseline gates and held-out calibration
+validation remain open. No software result closes those gates.
 
 
 Runtime configuration correction: human-readable case-insensitive commands,
@@ -371,7 +369,7 @@ HELP/SHOW and automatic durability replace the pending APPLY/SAVE workflow.
 Factory radio-OFF settings use 0x00/0x01; existing schema-v1 records load unchanged.
 ADS codec now supports IDs 0x00..0xFF with unchanged four-message format and strict
 full extended-address suffix; legacy diagnostic/TDoA policies remain unchanged.
-Portable checkpoint 17adbf0cad88c24d752d01ba3eeaa83c44df36c6 is pinned in STM32.
+The current canonical portable checkpoint is recorded by each vendor UPSTREAM.json.
 
 Next hardware check: same Universal ELF on custom boards 0x10/0x11, opposite roles,
 uncalibrated; verify each SET confirmation, power-cycle persistence, sustained
@@ -380,3 +378,29 @@ software with radio stopped but STOP/STREAM0 unconfirmed; the supplied hardware
 error alone cannot identify its exact missing acknowledgment. See STM32 guide
 for actionable rejection reasons, rollback/power-cut tests and timing limitations.
 No hardware validation or stage closure is claimed by these software changes.
+
+
+## Untethered multi-robot milestone
+
+Implemented/software tested; physical acceptance pending. Phases:
+
+- Shared timing/telemetry: versioned CRC records, clock domains/epochs and native
+  timestamp/wrap/apparent-rate primitives; legacy DW1000 behavior preserved.
+- Untethered capture: optional bounded STM32 UART3→existing ESP32 bridge→Wi-Fi,
+  read-only multi-robot JSONL collector, expiry/drop/timing/error diagnostics.
+- Multi-peer ADS: eight persistent peers, isolated state, deterministic fair local
+  scheduling, peer statistics and primary-only existing pair calibration.
+- Acquisition: meaningful STM32 beacon/listen TX/RX, previous actual TX metadata,
+  paired observations and apparent arrival-clock models. Offline TDoA requires
+  external common-clock mappings; no global synchronization/position claim.
+- Integration: sanitizer/fault-injection, actual adapter simulations, safety/UART,
+  STM32/ESP32/LPS builds and existing Unity tests. No hardware flashed or operated.
+
+Next user campaign: STM32 `docs/uwb_network.md` provides exact configuration,
+collector/offline commands and twelve ordered checks. Start with the proven
+stationary two-board ADS pair, Wi-Fi off, preserving calibration. Then compare
+Wi-Fi idle/active, multi-peer loss/rejoin, beacon captures and STOP/watchdogs.
+Distributed collision-free multi-initiator scheduling, moving-node propagation
+separation, common-reference physical calibration and position estimation remain
+unimplemented. Keep one coordinated initiator per collision domain. Software
+completion does not close previous hardware gates or establish RF accuracy.
