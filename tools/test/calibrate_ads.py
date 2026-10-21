@@ -128,7 +128,7 @@ def main(argv=None):
                     reference_uncertainty_m=args.reference_uncertainty_m,
                     requires_unchanged_antenna_delays=True,
                     inputs=[{k:v for k,v in r.items() if k!='accepted'} for r in results],
-                    review_commands=[f'CFG SET correction_mm {mm}', 'CFG SET calibration 1', 'CFG APPLY'],
+                    review_commands=[f'CFG SET correction_mm {mm}', 'CFG SET calibration on'],
                     note='Review commands opt in only after independent validation. Nothing is applied or saved.')
     args.proposal.write_text(json.dumps(proposal, indent=2, sort_keys=True)+'\n')
     args.report.write_text(build_report(results, correction, mm, args.reference_uncertainty_m, args.max_range_m))

@@ -346,10 +346,11 @@ Existing Stage3G gates remain open. No flashing, ESP/dsPIC edits or central-doc 
 
 Software implemented; physical persistence/role switching/timing/accuracy gates
 remain pending. One UWB-only STM32 image selects ADS role independently of robot
-identity, addresses within the pinned protocol's 0x84..0x86 namespace, interval,
+identity, addresses across the complete 8-bit ADS namespace, interval,
 antenna delays, optional additive calibration and bounded local telemetry.
-Versioned CRC journal reserves F405 sectors10/11; explicit SET/APPLY/SAVE separates
-current/saved/active state and confines flash stalls to maintenance. Existing
+Versioned CRC journal reserves F405 sectors10/11; validated SET automatically
+quiesces/preflights radio, commits/verifies settings and resumes. Safety/console
+rejections make no configuration change; identical values perform no write. Existing
 motor-enabled normal profiles remain compile-time choices; safety cannot be
 weakened by configuration. Shared core pin and DW1000 firmware are unchanged.
 
@@ -363,3 +364,19 @@ standalone/no-host, calibration and timing/backpressure comparisons in STM32
 `docs/runtime_uwb.md`. UART3/Wi-Fi forwarding is intentionally deferred; the bounded
 queue is currently USB-pulled. Existing Stage3G safety/baseline gates and held-out
 calibration validation remain open. No new TDMA/TDoA or localization implementation.
+
+
+Runtime configuration correction: human-readable case-insensitive commands,
+HELP/SHOW and automatic durability replace the pending APPLY/SAVE workflow.
+Factory radio-OFF settings use 0x00/0x01; existing schema-v1 records load unchanged.
+ADS codec now supports IDs 0x00..0xFF with unchanged four-message format and strict
+full extended-address suffix; legacy diagnostic/TDoA policies remain unchanged.
+Portable checkpoint 17adbf0cad88c24d752d01ba3eeaa83c44df36c6 is pinned in STM32.
+
+Next hardware check: same Universal ELF on custom boards 0x10/0x11, opposite roles,
+uncalibrated; verify each SET confirmation, power-cycle persistence, sustained
+six-stamp ranging and STOP/STREAM0 safety. The former SAVE guard is reproduced in
+software with radio stopped but STOP/STREAM0 unconfirmed; the supplied hardware
+error alone cannot identify its exact missing acknowledgment. See STM32 guide
+for actionable rejection reasons, rollback/power-cut tests and timing limitations.
+No hardware validation or stage closure is claimed by these software changes.

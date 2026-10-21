@@ -949,11 +949,15 @@ selection rules, evidence and calibration handoff are in docs/mul_ads_twr.md.
 
 
 STM32 universal operation keeps logical robot identity separate from radio role.
-The pinned ADS address namespace and six-timestamp wire protocol remain unchanged.
+ADS accepts any byte ID in its existing extended-address namespace; the four-message
+format, six timestamps and legacy diagnostic source policy remain unchanged.
 A CRC/versioned flash journal in two independently erasable reserved F405 sectors
-keeps the previous committed configuration across interrupted saves. Desired,
-saved and applied state are distinct; explicit maintenance-only SAVE avoids flash
-stalls during ranging. The universal image enforces the existing UWB-only motor
+keeps the previous committed configuration across interrupted saves. Each normal
+update validates before quiescing UWB, preflights radio initialization,
+commits/verifies the append-only record while TX/RX are off, then resumes radio.
+This avoids a pending APPLY/SAVE workflow while keeping flash stalls outside
+ranging transactions and rejecting unsafe robot states before mutation.
+The universal image enforces the existing UWB-only motor
 safety policy; motor-enabled normal operation remains a separate build profile.
 Raw nominal range is retained beside an opt-in additive derived result, and antenna
 delay edits disable software calibration until explicitly reviewed/re-enabled.
