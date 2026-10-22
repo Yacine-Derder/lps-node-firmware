@@ -197,6 +197,11 @@ void uwbInit()
   algorithm = &phyInteropAlgorithm;
   phyInteropConfigure(dwm);
 #endif
+#if MUL_HYBRID_CH5
+  // DWM3000 cannot receive channel2. Opt-in changes PHY only for custom modes;
+  // never select a diagnostic algorithm or alter their TDMA/packet/EEPROM state.
+  if(config.mode==5||config.mode==6)phyInteropConfigure(dwm);
+#endif
   dwCommitConfiguration(dwm);
   // Original modes retain their software antenna compensation and zero registers.
   // Configure only ALRs, after the last full commit, without changing PHY/EEPROM.
