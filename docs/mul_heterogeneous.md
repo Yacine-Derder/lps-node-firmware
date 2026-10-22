@@ -92,3 +92,24 @@ and scoped SPI/UART hardening tested (STM32 dca615e). D: shared-core offline rep
 and guarded generic2D solver implemented/tested. E: integration/profile regression
 and hardware handoff. These are software checkpoints; no flashing or physical
 experiments were performed. PLAN.md records current remaining work.
+
+## Passive reception investigation (2026-10-22)
+
+User hardware output establishes reception/association and successful ALR TWR,
+not passive reconstruction or ranging accuracy. `twr_reject` previously merged
+missing reference, wrong sequence/window, missing/out-of-order components, changed
+prefix, timestamp/arithmetic failures and late captures. Parser failures were in
+another aggregate. A successful ALR exchange does not prove the RLR heard it.
+The PHY helper disables hardware frame filtering; directed destinations alone
+are not excluded by the configured receiver. The RLR already consumes the
+follower's transported relation independently of its passive five-frame TWR audit.
+Thus zero audited exchanges does not itself explain `clock=0` on associated pairs.
+
+Shared diagnostics now distinguish these conditions and count each decoded TWR
+type and transported available relations. Validation, packet bytes, timing and
+ALR scheduling are unchanged. Deterministic tests pass complete exchanges and
+identify lost/reordered packets, prefix changes, absent reference, late capture,
+wrong address, malformed length and invalid relation. No physical root cause can
+be assigned from the supplied aggregate counters. STM32's handoff specifies a
+small on-demand USB capture to resolve that evidence gap before configuration
+refactoring; no protocol extension or relaxed validation is justified yet.
