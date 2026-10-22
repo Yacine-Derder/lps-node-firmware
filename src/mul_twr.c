@@ -323,7 +323,7 @@ bool mulTwrDelay(const mulTwr_t *twr, const mulClock_t *clock, mulClockDelay_t *
   *delay = (mulClockDelay_t){.epoch=twr->epoch, .oneWayDtu=twr->tof, .units=mulClockDelayReferenceDtu,
     .measuredMs=twr->measuredMs, .referenceSequence=twr->estimateId, .maxAgeMs=MUL_PROP_MAX_AGE_MS,
     .valid=true, .measurementBoundDtu=MUL_CLOCK_BOUND_UNKNOWN, .motionBoundDtuPerMs=MUL_CLOCK_BOUND_UNKNOWN};
-  memcpy(delay->reference, addresses[0], 8); memcpy(delay->follower, addresses[1], 8);
+  memcpy(delay->reference, mulDefaultNetwork.addresses[0], 8); memcpy(delay->follower, mulDefaultNetwork.addresses[1], 8);
   return delay->epoch == clock->epoch;
 }
 

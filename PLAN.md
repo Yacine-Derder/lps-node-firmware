@@ -440,3 +440,21 @@ receiver-rate observability in motion and measured2D localization remain open.
 More independent geometry/measurements are needed before current-network2D
 position output is identifiable. Previous hardware gates remain open. No hardware
 was flashed/armed/moved; the central project document was not edited.
+
+
+## Heterogeneous checkpoint C/D follow-up
+
+The user has authorized proceeding with C/D while preserving ordinary hybrid
+NO_RATE. Checkpoint A's original capture-age/relation defect is physically accepted
+from the user's STM retest; metric moving TDoA remains unvalidated. Checkpoint B
+feasibility, explicit-bounds prototype and synthetic full-wire geometry tests are
+recorded in STM PLAN.md and ESP docs/uwb_mobile.md.
+
+C foundation adds explicit per-context reference/follower rosters in the portable
+core, with legacy-default wrappers and unchanged wire/timing/math. Sanitized
+swapped/custom network tests cover publication, geometry, NO_RATE, passive TWR and
+cross-network isolation for500/50/10ms. All195 Unity tests and the default channel2 firmware build pass.
+Platform storage, migration, all adapter
+call paths and USB integration remain to implement/test before C is complete.
+D command compatibility matrix and aliases remain pending; no new interface claim.
+No hardware is flashed and physical custom-roster validation remains outstanding.
