@@ -404,3 +404,14 @@ Distributed collision-free multi-initiator scheduling, moving-node propagation
 separation, common-reference physical calibration and position estimation remain
 unimplemented. Keep one coordinated initiator per collision domain. Software
 completion does not close previous hardware gates or establish RF accuracy.
+
+## Heterogeneous custom-TDMA RLR integration
+
+Checkpoint A complete: current custom84/85 ALRs and passive RLR confirmed as the
+reference; see docs/mul_heterogeneous.md. Preserve hardware TDMA and inter-ALR TWR;
+no active RLR ranging or scheduler replacement. Channel2 is incompatible with
+DWM3000, requiring an explicit custom-mode channel5 profile. Two-ALR TDoA alone
+cannot determine unconstrained2D position; receiver rate remains unknown unless
+justified by an explicit policy. Next B: shared original codecs/math and passive
+DWM3000 adapter; C: telemetry; D: offline replay/geometry-aware solver; E: full
+regressions/builds and hardware instructions. No physical validation is claimed.
