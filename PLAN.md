@@ -465,5 +465,8 @@ three spacings. A USB ingress follow-up replaces the demonstrably lossy10-byte
 queue with single-packet endpoint backpressure and connection-generation resets.
 All207 Unity tests pass, including three actual USB tests under ASan/UBSan.
 C is implemented/software tested; custom-roster physical validation is pending. See docs/mul_heterogeneous.md for exact commands, builds and limitations.
-D command compatibility matrix and aliases remain pending; no new interface claim.
+D starts with docs/mul_commands.md: explicit common vocabulary, capability
+matrix, RF-enable separation, legacy framing and validation contract. The matrix
+is planned, not yet implemented. Lowercase aliases, owner-controlled RF and their
+regressions remain to implement. Preserve NO_RATE and strictly passive RLR.
 No hardware is flashed and physical custom-roster validation remains outstanding.
