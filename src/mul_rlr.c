@@ -13,13 +13,19 @@
 #include <stdio.h>
 #include <string.h>
 
-// Fixed slots keyed by the full identities in mulAlrRoleForAddress(). No dynamic
+// Fixed slots keyed by the full identities in mulNetworkRole(rlrNetwork,). No dynamic
 // allocation. Each observation preserves the source and receiver clock domains.
-static mulObservation_t rlrObservations[MUL_ALR_COUNT];
+#define rlrObservations mulRoleIo.observations
 static mulAssociation_t rlrAssociation;
+static const mulNetwork_t *rlrNetwork;
+static bool rlrEnabled;
 
 static void mulRlrInit(uwbConfig_t *config, dwDevice_t *dev)
 {
+  rlrNetwork=config->mulConfigured?&config->mulNetwork:&mulDefaultNetwork;
+  memset(&mulRoleIo,0,sizeof(mulRoleIo));
+  rlrEnabled=mulNetworkValid(rlrNetwork)&&mulNetworkRole(rlrNetwork,config->address)==mulAlrUnsupported;
+  if(!rlrEnabled){dwIdle(dev);printf("MUL RLR: invalid/self roster; idle\r\n");return;}
   memset(&mulRoleScratch,0,sizeof(mulRoleScratch));
   mulClockReset(&mulRoleScratch.rlr.rate);
   mulObservationInit(rlrObservations,config->address);
@@ -32,13 +38,14 @@ static void mulRlrInit(uwbConfig_t *config, dwDevice_t *dev)
 
 static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
 {
+  if(!rlrEnabled)return MAX_TIMEOUT;
   mulTestPacket_t packet;
   uint64_t arrival = 0;
   mulRelation_t relation={0};
   uint32_t captureAgeMs=UINT32_MAX;
-  bool valid=event==eventPacketReceived && mulRxReadBroadcast(dev,&packet,&arrival,&relation);
+  bool valid=event==eventPacketReceived && mulRxReadBroadcastNetwork(rlrNetwork,dev,&packet,&arrival,&relation);
   mulPowerRx_t rx={0};
-  if (valid && mulAlrRoleForAddress(packet.source) != mulAlrUnsupported) rx=mulPowerCapture(dev,arrival);
+  if (valid && mulNetworkRole(rlrNetwork,packet.source) != mulAlrUnsupported) rx=mulPowerCapture(dev,arrival);
   if (valid && (relation.available || relation.version==2)) {
     dwTime_t hardware={.full=0}; dwGetSystemTimestamp(dev,&hardware);
     int64_t elapsed=mulTimestampDifference(hardware.full,arrival);
@@ -48,12 +55,12 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
   uint32_t now=(uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS);
   mulAssociationExpire(&rlrAssociation,rlrObservations,now);
   if (valid) {
-    mulAlrRole_t role=mulAlrRoleForAddress(packet.source);
+    mulAlrRole_t role=mulNetworkRole(rlrNetwork,packet.source);
     if (role != mulAlrUnsupported) {
       mulSequenceResult_t result;
       mulPair_t pair;
       bool hadFollower=rlrObservations[1].source.hasSequence;
-      bool associated=mulAssociate(&rlrAssociation,rlrObservations,&packet,&rx,now,&result,&pair);
+      bool associated=mulAssociateNetwork(rlrNetwork,&rlrAssociation,rlrObservations,&packet,&rx,now,&result,&pair);
       mulObservation_t *observation=&rlrObservations[role];
       mulSourceState_t *state=&observation->source;
       if (role==mulAlrFollower && result!=mulSequenceDuplicate && result!=mulSequenceOld) {
@@ -68,7 +75,7 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       if (role==mulAlrReference && result!=mulSequenceDuplicate && result!=mulSequenceOld) {
         if (result==mulSequenceFirst) mulClockReset(&mulRoleScratch.rlr.rate);
         // Reuse skew ONLY, never the arrival mapping/intercept at the RLR.
-        mulClockObserve(&mulRoleScratch.rlr.rate,&packet,arrival,now,true);
+        mulClockObserveNetwork(rlrNetwork,&mulRoleScratch.rlr.rate,&packet,arrival,now,true);
       }
       if (!associated && result != mulSequenceDuplicate && result != mulSequenceOld) {
         printf("MUL RLR: RX src=0x%02X seq=%" PRIu32
@@ -86,7 +93,7 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       if (associated) {
         pair.follower.remoteEpochKnown=observation->remoteEpochKnown;
         mulLocalization_t observation;
-        mulLocalizationObserve(&observation,&pair,&relation,&mulRoleScratch.rlr.rate,
+        mulLocalizationObserveNetwork(rlrNetwork,&observation,&pair,&relation,&mulRoleScratch.rlr.rate,
           now,captureAgeMs,MUL_EXPERIMENTAL_STATIONARY_RLR_RATE!=0);
         mulLocalizationPrint(&observation);
       }

@@ -1037,3 +1037,22 @@ Inter-ALR TWR constrains anchor synchronization/propagation, not an RLR distance
 Two anchors supply one hyperbola, so that network does not identify an unconstrained
 2D position; dependent equations or extra RLR listeners do not fix that geometry.
 Details and compatibility matrix: [heterogeneous guide](mul_heterogeneous.md).
+
+
+## Configured legacy TDMA roster
+
+Reference/follower are protocol roles, independent of the local node ID. The
+portable core accepts an explicit ordered two-participant roster and retains
+legacy84/85 wrappers; receiver contexts own their roster, with no mutable global
+routing. MAC source/destination identities bind clock domains and directed TWR;
+new on-air role bytes are unnecessary when all participants are configured alike.
+This does not extend the scheduler or remove two-anchor observability limitations.
+
+DW1000 stores the role/roster in an additive fixed-size TLV and freezes a legacy
+inferred role before editing its address. The role's own endpoint follows that
+address; remote identity is explicit. EEPROM changes apply at restart. Failed
+readback is uncertain durability, and a damaged existing image is retained with
+normal RF idle rather than silently reset. Existing legacy EEPROM is not a
+power-cut journal. Mode-exclusive ALR/RLR IO shares RAM to fit the16KB target
+without reducing stack or buffer reservations. Platform integration/commands and
+physical acceptance are tracked in PLAN.md and docs/mul_heterogeneous.md.

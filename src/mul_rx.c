@@ -44,7 +44,7 @@ void mulRxInit(dwDevice_t *dev)
   mulRxRearm(dev);
 }
 
-bool mulRxReadBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localRx,mulRelation_t *relation)
+bool mulRxReadBroadcastNetwork(const mulNetwork_t *network,dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localRx,mulRelation_t *relation)
 {
   uint8_t frame[MUL_RELATION_FRAME_LENGTH];
   mulRelation_t ignored;
@@ -53,7 +53,7 @@ bool mulRxReadBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localR
     return false;
   }
   dwGetData(dev, frame, length);
-  if (!mulBroadcastDecode(frame,length,packet,relation ? relation : &ignored)) {
+  if (!mulBroadcastDecodeNetwork(network,frame,length,packet,relation ? relation : &ignored)) {
     return false;
   }
   dwTime_t arrival = {.full = 0};
@@ -65,4 +65,8 @@ bool mulRxReadBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localR
 bool mulRxRead(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localRx)
 {
   return mulRxReadBroadcast(dev,packet,localRx,NULL);
+}
+
+bool mulRxReadBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localRx,mulRelation_t *relation) {
+ return mulRxReadBroadcastNetwork(NULL,dev,packet,localRx,relation);
 }

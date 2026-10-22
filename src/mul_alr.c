@@ -25,9 +25,10 @@
 // Match Decawave dwt_starttx()'s delayed-start check. libdw1000 returns void.
 #define MUL_TX_ERROR_STATUS UINT16_C(0x0408)
 
+static const mulNetwork_t *alrNetwork;
 static uint8_t source[MUL_ADDRESS_LENGTH];
 // dwSetData() reads length + 2 bytes when hardware FCS is enabled.
-static uint8_t txFrame[MUL_RELATION_FRAME_LENGTH + 2];
+#define txFrame mulRoleIo.alr.frame
 static uint32_t nextSequence;
 static uint32_t pendingSequence;
 static uint64_t nextRawTx;
@@ -38,7 +39,7 @@ static mulAlrRole_t alrRole = mulAlrUnsupported;
 static mulSourceState_t followerReference;
 static bool referenceAcquired;
 static TickType_t lastReferenceTick;
-static mulClock_t followerClock;
+#define followerClock mulRoleIo.alr.clock
 #define ranging mulRoleScratch.twr
 static bool followerSeen;
 
@@ -105,11 +106,14 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   memcpy(source, config->address, sizeof(source));
   nextSequence = 0;
   txPending = false;
-  alrRole = mulAlrRoleForAddress(config->address);
+  alrNetwork=config->mulConfigured?&config->mulNetwork:&mulDefaultNetwork;
+  memset(&mulRoleIo,0,sizeof(mulRoleIo));
+  alrRole=config->mulConfigured?config->mulRole:mulNetworkRole(alrNetwork,config->address);
+  if(!mulNetworkValid(alrNetwork)||mulNetworkRole(alrNetwork,source)!=alrRole)alrRole=mulAlrUnsupported;
   memset(&followerReference, 0, sizeof(followerReference));
   referenceAcquired = false;
   mulClockReset(&followerClock);
-  mulTwrInit(&ranging);
+  mulTwrInit(&ranging);mulTwrConfigureNetwork(alrNetwork);
   followerSeen = false;
   printf("MUL ALR: Mode initialized role=%s src=0x%02X slot_ms=%u\r\n",
          alrRole == mulAlrReference ? "REF" : alrRole == mulAlrFollower ? "FOLLOWER" : "UNSUPPORTED",
@@ -152,7 +156,7 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
   if (alrRole==mulAlrFollower) {
     mulClockDelay_t delay;
     bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
-    mulRelation_t relation=mulRelationPublish(&followerClock,supplied ? &delay : NULL,
+    mulRelation_t relation=mulRelationPublishNetwork(alrNetwork,&followerClock,supplied ? &delay : NULL,
       pendingTimestamp,readHardwareTime(dev),(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,ranging.powerCorrected);
     if (relation.version==2 && !supplied)
       relation.delayState=mulTwrPropagationState(&ranging,&followerClock,(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS);
@@ -321,12 +325,12 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
 
   mulTestPacket_t packet;
   uint64_t arrival = 0;
-  bool valid = event == eventPacketReceived && mulRxRead(dev, &packet, &arrival);
+  bool valid = event == eventPacketReceived && mulRxReadBroadcastNetwork(alrNetwork,dev,&packet,&arrival,NULL);
   bool fresh = false;
   bool acquiredNow = false;
   bool armed = false;
   mulClockResult_t clockResult=mulClockIgnored;
-  if (valid && mulAlrRoleForAddress(packet.source) == mulAlrReference) {
+  if (valid && mulNetworkRole(alrNetwork,packet.source) == mulAlrReference) {
     // Preserve Stage 3A.1's restart policy after loss, without accepting replays
     // of the last sequence. Epoch identification is deliberately not added here.
     if (!referenceAcquired && followerReference.hasSequence &&
@@ -341,7 +345,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       lastReferenceTick = now;
       // Build metadata from THIS reference observation before encoding TX.
       // Bounded integer estimation does not steer the hardware slot.
-      clockResult=mulClockObserve(&followerClock,&packet,arrival,(uint32_t)now*portTICK_PERIOD_MS,true);
+      clockResult=mulClockObserveNetwork(alrNetwork,&followerClock,&packet,arrival,(uint32_t)now*portTICK_PERIOD_MS,true);
       if (clockResult==mulClockDiscontinuity || acquiredNow) {
         mulTwrCancel(&ranging,dev,"clock_epoch",true); ranging.attempted=false;
       }
@@ -354,25 +358,25 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     mulRxRearm(dev);
   }
   if (lostNow) {
-    printf("MUL ALR: REF_LOST src=0x84 state=SEARCHING\r\n");
-    printf("MUL ALR: CLOCK src=0x84 samples=0 state=SEARCHING\r\n");
-    printf("MUL ALR: MAP src=0x84 state=INVALID sync=UNCALIBRATED bound_ns=UNKNOWN\r\n");
+    printf("MUL ALR: REF_LOST src=0x%02X state=SEARCHING\r\n",alrNetwork->addresses[0][0]);
+    printf("MUL ALR: CLOCK src=0x%02X samples=0 state=SEARCHING\r\n",alrNetwork->addresses[0][0]);
+    printf("MUL ALR: MAP src=0x%02X state=INVALID sync=UNCALIBRATED bound_ns=UNKNOWN\r\n",alrNetwork->addresses[0][0]);
   }
   if (fresh) {
     // All logging stays after the hardware slot is armed/re-armed.
     if (acquiredNow) {
-      printf("MUL ALR: REF_ACQUIRED src=0x84 state=ACQUIRED\r\n");
+      printf("MUL ALR: REF_ACQUIRED src=0x%02X state=ACQUIRED\r\n",alrNetwork->addresses[0][0]);
     }
-    printf("MUL ALR: REF_RX src=0x84 seq=%" PRIu32
+    printf("MUL ALR: REF_RX src=0x%02X seq=%" PRIu32
            " tx=0x%02X%08" PRIX32 " rx=0x%02X%08" PRIX32
            " state=%s slot_ms=%u\r\n",
-           packet.sequence, (unsigned int)(packet.txTimestamp >> 32),
+           alrNetwork->addresses[0][0],packet.sequence, (unsigned int)(packet.txTimestamp >> 32),
            (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
            armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED", (unsigned int)MUL_FOLLOWER_SLOT_MS);
     int32_t ppb = followerClock.skewPpb;
     uint32_t magnitude = (uint32_t)(ppb < 0 ? -ppb : ppb);
-    printf("MUL ALR: CLOCK src=0x84 seq=%" PRIu32 " skew_ppm=%s%" PRIu32 ".%03" PRIu32
-           " samples=%" PRIu32 " state=%s result=%s\r\n", packet.sequence,
+    printf("MUL ALR: CLOCK src=0x%02X seq=%" PRIu32 " skew_ppm=%s%" PRIu32 ".%03" PRIu32
+           " samples=%" PRIu32 " state=%s result=%s\r\n",alrNetwork->addresses[0][0],packet.sequence,
            ppb < 0 ? "-" : "+", magnitude / 1000, magnitude % 1000, followerClock.samples,
            followerClock.status == mulClockValid ? "VALID" : "WARMUP",
            clockResult == mulClockDiscontinuity ? "RESET" :
@@ -381,9 +385,9 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     uint32_t nowMs = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
     bool mapValid = mulClockMapRefToFollower(&followerClock, packet.txTimestamp, nowMs, &mapping);
     mulClockMapStatus_t mapState = mulClockMapStatus(&followerClock, nowMs);
-    printf("MUL ALR: MAP src=0x84 seq=%" PRIu32 " slope_ppm=%s%" PRIu32 ".%03" PRIu32
+    printf("MUL ALR: MAP src=0x%02X seq=%" PRIu32 " slope_ppm=%s%" PRIu32 ".%03" PRIu32
            " state=%s sync=UNCALIBRATED age_ms=%" PRIu32
-           " horizon_ms=%u bound_ns=UNKNOWN\r\n", packet.sequence,
+           " horizon_ms=%u bound_ns=UNKNOWN\r\n",alrNetwork->addresses[0][0],packet.sequence,
            ppb < 0 ? "-" : "+", magnitude / 1000, magnitude % 1000,
            mapValid ? "VALID" : mapState == mulClockMapStale ? "STALE" :
            mapState == mulClockMapWarmup ? "WARMUP" : "INVALID",
@@ -431,7 +435,7 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       if (event == eventPacketReceived) {
         mulTestPacket_t packet;
         uint64_t arrival;
-        if (mulRxRead(dev, &packet, &arrival) && mulAlrRoleForAddress(packet.source) == mulAlrFollower) {
+        if (mulRxReadBroadcastNetwork(alrNetwork,dev,&packet,&arrival,NULL) && mulNetworkRole(alrNetwork,packet.source) == mulAlrFollower) {
           int64_t phase = mulTimestampDifference(arrival, pendingTimestamp);
           if (phase >= (int64_t)(MUL_SLOT_MIN_DTU) && phase <= (int64_t)(MUL_SLOT_PRESENCE_MAX_MS*MUL_DTU_PER_MS))
             followerSeen = true;

@@ -8,6 +8,10 @@
 
 #include "../portable/mul_core/mul_legacy_twr.c"
 
+/* One physical radio owner; configuration changes only during stopped init.
+ * The portable codec/receiver keeps explicit context ownership. */
+static const mulNetwork_t *twrNetwork=&mulDefaultNetwork;
+void mulTwrConfigureNetwork(const mulNetwork_t *network) { twrNetwork=network?network:&mulDefaultNetwork; }
 static bool evaluate(mulTwr_t *twr)
 {
   uint32_t raw,corrected;
@@ -37,7 +41,7 @@ static void clearErrors(dwDevice_t *dev)
   dwSpiWrite(dev, SYS_STATUS, 3, errors, sizeof(errors));
 }
 
-void mulTwrInit(mulTwr_t *twr) { memset(twr, 0, sizeof(*twr)); }
+void mulTwrInit(mulTwr_t *twr) { memset(twr, 0, sizeof(*twr));mulTwrConfigureNetwork(NULL); }
 
 bool mulTwrDue(uint32_t sequence) { return sequence != 0 && sequence % 5 == 0; }
 
@@ -101,7 +105,7 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   memcpy(packet.stamps, twr->stamps, sizeof(packet.stamps));
   memcpy(packet.power, twr->power, sizeof(packet.power));
   uint8_t frame[MUL_TWR_FRAME_LENGTH+2] = {0}; // libdw1000 reads two FCS reserve bytes.
-  mulTwrEncode(frame, &packet);
+  if(!mulTwrEncodeNetwork(twrNetwork,frame,&packet))return false;
   dwSetData(dev, frame, MUL_TWR_FRAME_LENGTH);
   if (mulTimestampDifference(raw.full, hardwareNow(dev)) < (int64_t)(5*MUL_TWR_DTU_PER_MS)) {
     mulTwrCancel(twr, dev, "late_setup", false);
@@ -152,9 +156,9 @@ static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
   // Vacuum speed of light 299792458 m/s; display integer millimetres, not an accuracy claim.
   uint32_t mm = (uint32_t)(((uint64_t)twr->candidateTof*UINT64_C(299792458000) + UINT64_C(31948800000)) /
                          UINT64_C(63897600000));
-  printf("MUL TWR: id=%" PRIu32 " role=%s ref=0x84 fol=0x85 result=OK tof_dtu=%" PRIu32
+  printf("MUL TWR: id=%" PRIu32 " role=%s ref=0x%02X fol=0x%02X result=OK tof_dtu=%" PRIu32
          " distance_m=%" PRIu32 ".%03" PRIu32 " power=%s raw_mm=%" PRIu32 " uncertainty=UNKNOWN\r\n",
-         twr->id, role == mulAlrReference ? "INIT" : "RESP", (uint32_t)twr->candidateTof, mm/1000, mm%1000, twr->candidatePowerCorrected ? "APPLIED" : "UNAVAILABLE",
+         twr->id, role == mulAlrReference ? "INIT" : "RESP",twrNetwork->addresses[0][0],twrNetwork->addresses[1][0], (uint32_t)twr->candidateTof, mm/1000, mm%1000, twr->candidatePowerCorrected ? "APPLIED" : "UNAVAILABLE",
          (uint32_t)(((uint64_t)twr->rawTof*UINT64_C(299792458000)+UINT64_C(31948800000))/UINT64_C(63897600000)));
 }
 
@@ -211,7 +215,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   bool valid = dwGetDataLength(dev) == sizeof(frame);
   if (valid) {
     dwGetData(dev, frame, sizeof(frame));
-    valid = mulTwrDecode(frame, sizeof(frame), &packet) && sender(packet.type) != role && packet.id == sequence;
+    valid = mulTwrDecodeNetwork(twrNetwork,frame, sizeof(frame), &packet) && sender(packet.type) != role && packet.id == sequence;
   }
   if (!valid) {
     if (twr->active) mulTwrCancel(twr, dev, "packet", true); else mulRxRearm(dev);
@@ -323,7 +327,7 @@ bool mulTwrDelay(const mulTwr_t *twr, const mulClock_t *clock, mulClockDelay_t *
   *delay = (mulClockDelay_t){.epoch=twr->epoch, .oneWayDtu=twr->tof, .units=mulClockDelayReferenceDtu,
     .measuredMs=twr->measuredMs, .referenceSequence=twr->estimateId, .maxAgeMs=MUL_PROP_MAX_AGE_MS,
     .valid=true, .measurementBoundDtu=MUL_CLOCK_BOUND_UNKNOWN, .motionBoundDtuPerMs=MUL_CLOCK_BOUND_UNKNOWN};
-  memcpy(delay->reference, mulDefaultNetwork.addresses[0], 8); memcpy(delay->follower, mulDefaultNetwork.addresses[1], 8);
+  memcpy(delay->reference, twrNetwork->addresses[0], 8); memcpy(delay->follower, twrNetwork->addresses[1], 8);
   return delay->epoch == clock->epoch;
 }
 
@@ -339,15 +343,15 @@ void mulTwrSync(mulTwr_t *twr, const mulClock_t *clock, uint32_t nowMs, bool for
 {
   mulClockDelay_t delay;
   bool supplied = mulTwrDelay(twr, clock, &delay);
-  mulClockDelayStatus_t status = mulClockDelayStatus(clock, supplied ? &delay : NULL, nowMs);
+  mulClockDelayStatus_t status = mulClockDelayStatusNetwork(twrNetwork,clock, supplied ? &delay : NULL, nowMs);
   mulClockCorrectedMapping_t mapped;
-  bool available = mulClockMapRefToFollowerSimultaneous(clock, clock->referenceTx,
+  bool available = mulClockMapRefToFollowerSimultaneousNetwork(twrNetwork,clock, clock->referenceTx,
     supplied ? &delay : NULL, nowMs, &mapped);
   mulClockMapStatus_t mapStatus = mulClockMapStatus(clock, nowMs);
   if (force || twr->syncDirty || available != twr->syncAvailable) {
-    printf("MUL ALR: SYNC src=0x84 map=%s delay=%s correction=%s delay_age_ms=%" PRIu32
+    printf("MUL ALR: SYNC src=0x%02X map=%s delay=%s correction=%s delay_age_ms=%" PRIu32
            " physical_bound=UNKNOWN\r\n",
-      mapStatus == mulClockMapValid ? "VALID" : mapStatus == mulClockMapWarmup ? "WARMUP" :
+      twrNetwork->addresses[0][0],mapStatus == mulClockMapValid ? "VALID" : mapStatus == mulClockMapWarmup ? "WARMUP" :
       mapStatus == mulClockMapStale ? "STALE" : "INVALID",
       status == mulClockDelayValid ? "VALID" : status == mulClockDelayStale ? "STALE" : "INVALID",
       available ? "AVAILABLE" : "UNAVAILABLE", supplied ? nowMs-delay.measuredMs : 0);

@@ -727,19 +727,20 @@ void test_mulTwrSuccessfulRefreshCommitsNewAcquisitionTimeAndIdentifier(void) {
 
 // Three virtual nodes use the real role handlers and wire frames. Only the
 // mode-exclusive scratch is swapped as each node runs; no production hooks.
+static mulRoleIo_t receiverIo;
 static void receiveRlr(mulRoleScratch_t *receiver,const uint8_t *frame,unsigned int length,uint64_t stamp) {
-  mulRoleScratch_t follower=mulRoleScratch; mulRoleScratch=*receiver;
+  mulRoleScratch_t follower=mulRoleScratch;mulRoleIo_t followerIo=mulRoleIo;mulRoleIo=receiverIo; mulRoleScratch=*receiver;
   memcpy(radios[2].rx,frame,length); radios[2].rxLength=length; radios[2].arrival=stamp;
   radios[2].receiving=false; mulRlrAlgorithm.onEvent(&radios[2].device,eventPacketReceived);
-  *receiver=mulRoleScratch; mulRoleScratch=follower;
+  *receiver=mulRoleScratch;receiverIo=mulRoleIo;mulRoleIo=followerIo; mulRoleScratch=follower;
   TEST_ASSERT_TRUE(radios[2].receiving); TEST_ASSERT_EQUAL_UINT(0,radios[2].sends);
 }
 static void continuousCycle(bool moving) {
   scenario(5000,426); modeFollower(); nextSequence=900; // Independent counters.
-  mulRoleScratch_t follower=mulRoleScratch;
+  mulRoleScratch_t follower=mulRoleScratch;mulRoleIo_t followerIo=mulRoleIo;
   uwbConfig_t receiverConfig={.address={0x86,0,0,0,0,0,0xcf,0xbc}};
   mulRlrAlgorithm.init(&receiverConfig,&radios[2].device);
-  mulRoleScratch_t receiver=mulRoleScratch; mulRoleScratch=follower;
+  mulRoleScratch_t receiver=mulRoleScratch;receiverIo=mulRoleIo;mulRoleIo=followerIo; mulRoleScratch=follower;
   uint32_t previousAge=0,previousMotion=0;
   for (uint32_t sequence=6;sequence<=23;sequence++) {
     int64_t when=(int64_t)(sequence-5)*SEC;

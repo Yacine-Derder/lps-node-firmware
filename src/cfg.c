@@ -54,6 +54,7 @@ typedef struct {
 } __attribute__((packed)) CfgHeader;
 
 static CfgHeader * cfgHeader = (CfgHeader*) buffer;
+static bool mulStorageUncertain;
 
 static int tlvFindType(TlvArea *tlv, ConfigField type) {
   uint16_t pos = 0;
@@ -154,21 +155,40 @@ static bool write_defaults(void) {
   }
 }
 
+static void idleConfiguration(void) {
+  memset(buffer,0,sizeof(buffer));buffer[0]=MAGIC;buffer[1]=1;buffer[3]=6;
+  buffer[5]=cfgAddress;buffer[6]=1;buffer[7]=0;
+  buffer[8]=cfgMode;buffer[9]=1;buffer[10]=255;write_crc();
+}
+
 void cfgInit(void) {
+  mulStorageUncertain=true;
   if (readData()) {
     cfgHeader = (CfgHeader*) buffer;
     tlv.data = &buffer[SIZE_HEADER];
     if (check_content()) {
+      mulStorageUncertain=false;
       printf("CONFIG\t: EEPROM configuration read and verified\r\n");
     } else {
+      if(buffer[0]==MAGIC) {
+        /* A torn legacy page write must not silently erase unrelated settings.
+         * Preserve EEPROM for recovery and select the existing idle algorithm. */
+        idleConfiguration();
+        printf("CONFIG: invalid EEPROM retained; radio idle; explicit recovery required\r\n");
+        return;
+      }
       printf("CONFIG\t: Writing default EEPROM configuration\r\n");
+      mulStorageUncertain=false; // Explicit uninitialized/invalid-magic factory path.
       if (write_defaults()) {
+        mulStorageUncertain=false;
       } else {
+        mulStorageUncertain=true;
         printf("CONFIG\t: Error when writing default configuration\r\n");
       }
     }
   } else {
-    printf("CONFIG\t: Could not read data from EEPROM\r\n");
+    tlv.data=&buffer[SIZE_HEADER];idleConfiguration();
+    printf("CONFIG: EEPROM unreadable; radio idle; data retained\r\n");
   }
 }
 
@@ -190,6 +210,7 @@ bool cfgReadU8(ConfigField field, uint8_t * value) {
 }
 
 bool cfgWriteU8(ConfigField field, uint8_t value) {
+    if(mulStorageUncertain)return false;
     int pos = tlvFindType(&tlv, field);
 
     if (pos > -1) {
@@ -220,6 +241,7 @@ bool cfgReadU32(ConfigField field, uint32_t * value) {
 }
 
 bool cfgWriteU32(ConfigField field, uint32_t value) {
+    if(mulStorageUncertain)return false;
     int pos = tlvFindType(&tlv, field);
 
     if (pos > -1) {
@@ -260,6 +282,7 @@ bool cfgFieldSize(ConfigField field, uint8_t * size) {
 }
 
 bool cfgWriteU8list(ConfigField field, uint8_t list[], uint8_t length) {
+    if(mulStorageUncertain)return false;
     int pos = tlvFindType(&tlv, field);
 
     if (pos > -1) {
@@ -298,6 +321,7 @@ bool cfgReadFP32list(ConfigField field, float list[], uint8_t length) {
 }
 
 bool cfgWriteFP32list(ConfigField field, float list[], uint8_t length) {
+    if(mulStorageUncertain)return false;
     int pos = tlvFindType(&tlv, field);
 
     if (pos > -1) {
@@ -333,4 +357,56 @@ void cfgSetBinaryMode(bool enable)
 bool cfgIsBinaryMode()
 {
   return binaryMode;
+}
+
+
+/* Bounded additive TLV update. Existing field IDs/layout and unrelated bytes
+ * remain untouched. Existing EEPROM checksum is retained; this is not a new
+ * power-fail journal. Report write/readback failures rather than false success. */
+static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length) {
+  if(mulStorageUncertain)return false;
+  uint8_t previous[NUMBER_OF_BYTES_READ];memcpy(previous,buffer,sizeof(previous));
+  int at=tlvFindType(&tlv,field);
+  if(at>=0) {if(tlv.data[at+1]!=length)return false;if(!memcmp(tlv.data+at+2,data,length))return true;}
+  else {
+    if(SIZE_HEADER+cfgHeader->tlvSize+2+length+SIZE_TAIL>=NUMBER_OF_BYTES_READ)return false;
+    at=cfgHeader->tlvSize;tlv.data[at]=field;tlv.data[at+1]=length;cfgHeader->tlvSize+=2+length;
+  }
+  memcpy(tlv.data+at+2,data,length);write_crc();
+  uint8_t expected[NUMBER_OF_BYTES_READ];memcpy(expected,buffer,sizeof(expected));
+  bool ok=eepromWrite(0,buffer,sizeof(buffer));HAL_Delay(10);
+  if(ok)ok=readData()&&!memcmp(expected,buffer,sizeof(buffer));
+  if(!ok){memcpy(buffer,previous,sizeof(buffer));mulStorageUncertain=true;}
+  return ok;
+}
+bool cfgMulRead(uint8_t node,uint8_t *role,uint8_t *reference,uint8_t *follower) {
+  if(mulStorageUncertain)return false;
+  uint8_t size,values[3]={node==0x84?0:node==0x85?1:2,0x84,0x85};
+  if(cfgFieldSize(cfgMulNetwork,&size)) {
+    if(size!=3||!cfgReadU8list(cfgMulNetwork,values,3))return false;
+  }
+  if(values[0]>2)return false;
+  if(values[0]==0)values[1]=node;
+  if(values[0]==1)values[2]=node;
+  mulNetwork_t network;if(!mulNetworkInit(&network,values[1],values[2]))return false;
+  *role=values[0];*reference=values[1];*follower=values[2];return true;
+}
+bool cfgMulWrite(uint8_t role,uint8_t reference,uint8_t follower) {
+  uint8_t node=0;if(!cfgReadU8(cfgAddress,&node)||role>2)return false;
+  if((role==0&&reference!=node)||(role==1&&follower!=node))return false;
+  mulNetwork_t network;if(!mulNetworkInit(&network,reference,follower))return false;
+  uint8_t values[3]={role,reference,follower};return mulStore(cfgMulNetwork,values,3);
+}
+bool cfgMulChangeAddress(uint8_t address) {
+  uint8_t old=0,role,reference,follower,mode=0,size;
+  if(!cfgReadU8(cfgAddress,&old)||!cfgMulRead(old,&role,&reference,&follower))return false;
+  cfgReadU8(cfgMode,&mode);
+  uint8_t ref=role==0?address:reference,fol=role==1?address:follower;
+  mulNetwork_t network;
+  if(mode>=MODE_MUL_ALR&&(!mulNetworkInit(&network,ref,fol)||
+     (mode==MODE_MUL_RLR&&(address==ref||address==fol))))return false;
+  /* Freeze a legacy-derived role BEFORE changing its address. A failed second
+   * write is reported on failure; legacy EEPROM has no power-cut journal. */
+  if(!cfgFieldSize(cfgMulNetwork,&size)&&!cfgMulWrite(role,reference,follower))return false;
+  return mulStore(cfgAddress,&address,1);
 }

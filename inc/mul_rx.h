@@ -19,6 +19,7 @@ bool mulAntennaValid(dwDevice_t *dev);
 void mulRxInit(dwDevice_t *dev);
 void mulRxRearm(dwDevice_t *dev);
 bool mulRxReadBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localRx,mulRelation_t *relation);
+bool mulRxReadBroadcastNetwork(const mulNetwork_t *network,dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *localRx,mulRelation_t *relation);
 bool mulRxRead(dwDevice_t *dev, mulTestPacket_t *packet, uint64_t *localRx);
 
 #endif // MUL_RX_H

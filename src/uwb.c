@@ -118,6 +118,13 @@ void uwbInit()
   // Reading and setting node configuration
   cfgReadU8(cfgAddress, &config.address[0]);
   cfgReadU8(cfgMode, &config.mode);
+  uint8_t mulRole=2,reference=0x84,follower=0x85;
+  config.mulConfigured=true;config.mulRole=mulAlrUnsupported;
+  memset(&config.mulNetwork,0,sizeof(config.mulNetwork));
+  if(cfgMulRead(config.address[0],&mulRole,&reference,&follower)&&
+     mulNetworkInit(&config.mulNetwork,reference,follower)) {
+    if(mulRole<2)config.mulRole=(mulAlrRole_t)mulRole;
+  } else printf("MUL CONFIG: invalid roster; MUL disabled, EEPROM retained\r\n");
   cfgFieldSize(cfgAnchorlist, &config.anchorListSize);
   if (config.anchorListSize <= MAX_ANCHORS) {
     cfgReadU8list(cfgAnchorlist, config.anchors, config.anchorListSize);

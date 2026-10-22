@@ -41,6 +41,7 @@ bool mulTwrDecode(const uint8_t *frame, size_t length, mulTwrPacket_t *packet);
 bool mulTwrCalculate(const uint64_t stamps[6], uint32_t *tofReferenceDtu);
 bool mulTwrResults(const uint64_t stamps[6], const mulPower_t power[3],
   uint32_t *raw, uint32_t *corrected); // UINT32_MAX corrected means unavailable.
+void mulTwrConfigureNetwork(const mulNetwork_t *network);
 void mulTwrInit(mulTwr_t *twr);
 void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool invalidateDelay);
 void mulTwrFlush(mulTwr_t *twr);

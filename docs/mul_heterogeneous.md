@@ -113,3 +113,94 @@ wrong address, malformed length and invalid relation. No physical root cause can
 be assigned from the supplied aggregate counters. STM32's handoff specifies a
 small on-demand USB capture to resolve that evidence gap before configuration
 refactoring; no protocol extension or relaxed validation is justified yet.
+
+
+## Checkpoint C: independent DW1000 roles and IDs
+
+The default remains reference0x84/follower0x85. An explicit ordered roster now
+reaches every shared clock/relation/association/TWR boundary. Legacy core APIs
+use that default; Network APIs use caller-owned rosters, and each portable hybrid
+receiver copies its own roster. Invalid explicit rosters never fall back silently.
+The original two slots, directed TWR, packet lengths and antenna timing are intact.
+No new on-air role bytes or automatic network discovery are introduced.
+
+DW1000 persistent configuration adds TLV field9, length3: local role0 reference /
+1 follower /2 disabled, reference ID, follower ID. Existing fields0..8, header,
+checksum and EEPROM allocation remain unchanged. On boot, absence derives the
+legacy role from the old local ID without writing. The first address edit saves
+that inferred role first; later address edits retain it. A role's own roster
+endpoint follows its local ID; the opposite endpoint remains independently set.
+Thus reference0x42 and follower0x23 are supported, including swapped84/85 roles.
+Mode6 remains passive regardless of any stored ALR-role selection. Unknown/invalid
+ALR bindings stay idle. RLR identity must differ from both source clock identities.
+
+Until checkpoint D's unified interface is integrated, the additive bounded line
+entry starts with `:` and ends with newline; existing immediate single-character
+menus and aliases remain available. Commands are case-insensitive:
+
+```text
+:mul show
+:mul address 0x42
+:mul role ref
+:mul setup ref 0x42 0x23
+:mul setup follower 0x42 0x23
+:mul reference 0x42
+:mul follower 0x23
+```
+
+Each board's own address must match its role's setup endpoint. `role` changes keep
+the same two participants where possible (swapping their roles); `address` changes
+the local endpoint while retaining role. `setup` sets the complete coherent roster
+and can repair a malformed roster TLV of the correct size; it does not erase other
+fields. `show` reports saved values, not a running-state change. Successful writes
+are immediate and verified, but take effect after restart, with no recompile or
+reflash. Mode selection still uses the original menu in this C integration.
+Choose distinct IDs0..254 for ALRs;255 is reserved by this roster policy.
+For a default RLR, use mode6 and an address distinct from both ALRs, and configure
+both endpoints before restarting into the new network. All participants must agree
+on the roster and slot build. Do not downgrade one board in a custom-role network.
+
+New writes enforce fixed TLV length/capacity and verify the complete EEPROM image;
+no-op writes avoid wear. A write/readback error marks durability uncertain and
+blocks further configuration writes until a successful reinitialization/restart.
+An error does not prove the new bytes were not committed; inspect saved state.
+On boot, a checksum-invalid existing image or unreadable EEPROM is retained and
+normal firmware selects the existing idle algorithm instead of silently overwriting
+calibration/settings with factory defaults. Factory/explicit reset behavior for
+an uninitialized image remains available. The legacy EEPROM has no two-bank
+power-cut journal: this does not claim atomic recovery from a damaged hardware
+page write. Deliberate configuration reset remains destructive as before.
+
+Local duplicate/self/broadcast bindings, spoofed full identities and wrong directed
+TWR endpoints are rejected. Undetected physical duplicate nodes or an unseen remote
+configuration cannot be globally ruled out without network discovery; no such
+capability is claimed. Existing frame/rejection diagnostics remain the evidence.
+
+RAM on the16KB DW1000 is nearly full. Existing ALR TX/clock buffers and passive RLR
+observations now share mode-exclusive storage; their sizes and all thread/IRQ stack
+reservations are unchanged. Adapter roster pointers refer to the stable boot
+configuration. The multi-radio test simulator saves/restores this per-board IO
+alongside the existing scratch union. It does not model two modes on one board.
+
+Validation:203 Unity tests plus sanitized shared-core tests pass. New cases cover
+legacy read-only migration, persistence across address/role changes/reboot, exact
+preservation of TX settings, capacity/malformed/write/readback failures, corrupt /
+unreadable EEPROM retention, CRLF/fragmented/oversized console input, swapped-role
+hardware scheduling and passive self/invalid guards. Default channel2 and opt-in
+channel5 builds at500/50/10ms are checked. No devices are flashed; physical custom
+roster interoperability is pending. STM32 persistence and capture/replay integration
+remain part of checkpoint C; D's full command matrix/aliases remain pending.
+
+Build from this repository, with the matching slot on every participant:
+
+```sh
+make clean
+make -j4 EXTRA_CFLAGS="-DMUL_HYBRID_CH5=1 -DMUL_FOLLOWER_SLOT_MS=500 -DMUL_PROP_MAX_AGE_MS=6000"
+```
+
+The same image serves either DW1000 ALR role; EEPROM selects the role/address.
+ELF: `/home/derder/Documents/lps-node-firmware/bin/lps-node-firmware.elf`;
+DFU: the adjacent `lps-node-firmware.dfu`. Validation copies for500/50/10ms are
+`bin/mul-c-ch5-500.elf` / `.dfu` (replace500 with50 or10). The ordinary build restored
+at `bin/lps-node-firmware.elf` is channel2; use the named channel5 copy or rebuild
+explicitly for a later operator-run mixed-radio test. Do not flash automatically.

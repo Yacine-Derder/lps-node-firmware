@@ -39,6 +39,7 @@
 #include "button.h"
 
 #include "cfg.h"
+#include "mul_console.h"
 #include "eeprom.h"
 
 #include "usb_device.h"
@@ -398,6 +399,7 @@ static void handleMenuPower(char ch, MenuState* menuState) {
 }
 
 static void handleSerialInput(char ch) {
+  if(mulConsoleByte(ch))return;
   static MenuState menuState = {
     .configChanged = true,
     .currentMenu = mainMenu,
@@ -454,7 +456,7 @@ static void restConfig() {
 
 static void changeAddress(uint8_t addr) {
   printf("Updating address to 0x%02X\r\n", addr);
-  cfgWriteU8(cfgAddress, addr);
+  if(!cfgMulChangeAddress(addr)){printf("ERR address/role conflict or EEPROM write failed\r\n");return;}
   if (cfgReadU8(cfgAddress, &addr)) {
     printf("Device address: 0x%X\r\n", addr);
   } else {
@@ -602,6 +604,7 @@ static void help() {
   printf("d   - reset configuration\r\n");
   printf("u   - enter BSL (DFU mode)\r\n");
   printf("h   - This help\r\n");
+  printf(":mul show - persistent MUL role/roster commands (newline)\r\n");
   printf("---- For machine only\r\n");
   printf("b   - Switch to binary mode (sniffer only)\r\n");
 }

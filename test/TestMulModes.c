@@ -364,6 +364,7 @@ void test_mulAlrCompletionDeltaUsesPacketBytesInsteadOfSchedulingCache(void) {
 }
 
 void test_mulRlrRearmsAfterValidMalformedAndUnrelatedPackets(void) {
+  config.address[0]=0x86; // Receiver is a distinct clock identity.
   mulRlrAlgorithm.init(&config, &dev);
   TEST_ASSERT_TRUE(receiving);
   receiving = false; // hardware stops RX before delivering the event
@@ -386,6 +387,7 @@ void test_mulRlrRearmsAfterValidMalformedAndUnrelatedPackets(void) {
 }
 
 void test_mulRlrRearmsOnTimeoutsAndReceiveFailuresWithoutTransmitting(void) {
+  config.address[0]=0x86; // Receiver is a distinct clock identity.
   mulRlrAlgorithm.init(&config, &dev);
   const uwbEvent_t events[] = {eventTimeout, eventReceiveTimeout, eventReceiveFailed, eventPacketSent};
   for (unsigned int i = 0; i < sizeof(events) / sizeof(events[0]); i++) {
@@ -544,6 +546,7 @@ void test_mulUnsupportedAddressNeverTransmitsOrStartsReceive(void) {
 }
 
 void test_mulRlrMaintainsIndependentFullIdentitySourceState(void) {
+  config.address[0]=0x86; // Receiver is a distinct clock identity.
   mulRlrAlgorithm.init(&config, &dev);
   uint8_t first[8] = {0x84,0,0,0,0,0,0xcf,0xbc};
   const uint8_t second[8] = {0x85,0,0,0,0,0,0xcf,0xbc};
@@ -574,6 +577,7 @@ void test_mulRlrMaintainsIndependentFullIdentitySourceState(void) {
 }
 
 void test_mulRlrRebasesOnlyTheStaleSourceAfterReferenceRestart(void) {
+  config.address[0]=0x86; // Receiver is a distinct clock identity.
   mulRlrAlgorithm.init(&config, &dev);
   const uint8_t first[8] = {0x84,0,0,0,0,0,0xcf,0xbc};
   const uint8_t second[8] = {0x85,0,0,0,0,0,0xcf,0xbc};
@@ -822,6 +826,7 @@ void test_mulRlrReceivesInterleavedReferenceAndActualFollowerPackets(void) {
   mulTestPacket_t follower;
   TEST_ASSERT_TRUE(decodeCaptured(&follower));
   finishFollowerSlot();
+  config.address[0]=0x86; // Receiver is a distinct clock identity.
   mulRlrAlgorithm.init(&config, &dev);
   uint64_t refRx = MUL_TIMESTAMP_MASK - 100*DTU_PER_MS;
   uint64_t followerRx = mulTimestampMask(refRx + MUL_FOLLOWER_SLOT_DTU);
@@ -994,4 +999,28 @@ void test_mulRlrStationaryRateUsesReferenceCadenceAndFreshCurrentMetadata(void) 
   mulRelation_t changed={.epoch=11,.referenceSequence=27};
   testTick=7100+MUL_FOLLOWER_SLOT_MS; deliverRelation(907,(7*PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU),(7*PERIOD_DTU+MUL_FOLLOWER_SLOT_DTU),&changed);
   TEST_ASSERT_TRUE(mulRoleScratch.rlr.rate.status!=mulClockValid);
+}
+
+void test_mulExplicitRolesFollowConfigurationRatherThanLegacyAddress(void) {
+ config.mulConfigured=true;TEST_ASSERT_TRUE(mulNetworkInit(&config.mulNetwork,0x85,0x84));
+ config.mulRole=mulAlrReference;config.address[0]=0x85;mulAlrAlgorithm.init(&config,&dev);
+ TEST_ASSERT_EQUAL_INT(mulAlrReference,alrRole);elapseAndTimeout(0);
+ mulTestPacket_t packet;mulRelation_t relation;TEST_ASSERT_TRUE(mulDecodeTestPacket(capturedTxFrame,34,&packet));TEST_ASSERT_EQUAL(0x85,packet.source[0]);
+ completeTx(0);
+ config.mulRole=mulAlrFollower;config.address[0]=0x84;mulAlrAlgorithm.init(&config,&dev);
+ unsigned prior=txCount;
+ for(unsigned i=0;i<7;i++) {
+  testTick=10000+i*1000;hardwareNow=mulTimestampMask(i*PERIOD_DTU+DTU_PER_MS);
+  deliver(config.mulNetwork.addresses[0],100+i,i*PERIOD_DTU,i*PERIOD_DTU,true);
+  TEST_ASSERT_TRUE(txPending);TEST_ASSERT_TRUE(mulBroadcastDecodeNetwork(&config.mulNetwork,capturedTxFrame,74,&packet,&relation));
+  TEST_ASSERT_EQUAL(0x84,packet.source[0]);finishFollowerSlot();
+ }
+ TEST_ASSERT_EQUAL(prior+7,txCount);TEST_ASSERT_EQUAL_INT(mulClockValid,followerClock.status);
+}
+void test_mulInvalidExplicitRosterAndReceiverSelfIdentityStayIdle(void) {
+ config.mulConfigured=true;config.mulRole=mulAlrReference;memset(&config.mulNetwork,0,sizeof(config.mulNetwork));
+ mulAlrAlgorithm.init(&config,&dev);mulAlrAlgorithm.onEvent(&dev,eventTimeout);TEST_ASSERT_EQUAL(0,txCount);
+ TEST_ASSERT_TRUE(mulNetworkInit(&config.mulNetwork,0x84,0x85));config.address[0]=0x84;
+ mulRlrAlgorithm.init(&config,&dev);TEST_ASSERT_FALSE(rlrEnabled);TEST_ASSERT_FALSE(receiving);
+ mulRlrAlgorithm.onEvent(&dev,eventPacketReceived);TEST_ASSERT_EQUAL(0,txCount);
 }
