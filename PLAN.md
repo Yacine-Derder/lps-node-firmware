@@ -415,3 +415,14 @@ cannot determine unconstrained2D position; receiver rate remains unknown unless
 justified by an explicit policy. Next B: shared original codecs/math and passive
 DWM3000 adapter; C: telemetry; D: offline replay/geometry-aware solver; E: full
 regressions/builds and hardware instructions. No physical validation is claimed.
+
+B/C software checkpoint: shared original receiver/codec/math committed at6aa9c2e;
+DWM3000 passive adapter a514ee4 compiles and passes real adapter tests for raw
+frames, no-TX behavior, original rate policy, CRC/error precedence, persistence,
+calibration and safety. UWB3 raw-frame telemetry preserves v1/v2 compatibility
+within the existing line bound. Universal SPI interrupt-mask risk identified;
+scoped UART-preemption/timeout hardening and fault recovery tests are in STM32.
+User's deleted2026-10-22 capture summary is preserved in STM32 docs/hybrid_uwb.md;
+not independently reanalyzed, neither UART symptom declared resolved. Next D/E:
+finish shared-core host replay, guarded generic2D solver, full-profile regressions,
+compatibility matrix and exact hardware checks. Hardware remains pending.
