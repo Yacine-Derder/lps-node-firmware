@@ -45,6 +45,7 @@ static void command(void) {
  puts(ok?"MUL SAVED; restart to activate":"ERR roster/capacity or EEPROM unconfirmed; restart and inspect before retry");return;
 syntax:puts("MUL: :mul show | address id | role ref/follower/disabled | reference id | follower id | setup role ref_id follower_id");
 }
+void mulConsoleReset(void) {collecting=overflow=skipLf=false;used=0;}
 bool mulConsoleByte(char ch) {
  if(skipLf){skipLf=false;if(ch=='\n')return true;}
  if(!collecting){if(ch!=':')return false;collecting=true;used=0;overflow=false;return true;}

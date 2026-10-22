@@ -13,6 +13,8 @@ static int initPtr = 0;
 
 static bool isInit = false;
 
+uint32_t usbcommReceiveGeneration(void) {return CDC_ReceiveGeneration();}
+
 int usbcommRead(char* buffer, size_t len)
 {
   return CDC_Read(buffer, len);

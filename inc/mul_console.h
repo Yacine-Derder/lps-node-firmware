@@ -4,5 +4,6 @@
 #include <stdbool.h>
 /* Additive ':' line entry leaves the original immediate character menu intact.
  * Fragmented/oversized lines are consumed, never replayed as legacy commands. */
+void mulConsoleReset(void);
 bool mulConsoleByte(char ch);
 #endif

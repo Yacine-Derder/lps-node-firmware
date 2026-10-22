@@ -37,6 +37,8 @@
 #include "task.h"
 #include "semphr.h"
 #include "queue.h"
+#include "usbd_conf.h"
+#include <string.h>
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
   * @{
@@ -97,19 +99,20 @@ USBD_HandleTypeDef  *hUsbDevice_0;
 
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
-#define RX_Q_SIZE 10
 #define TX_Q_SIZE 512
 #define Q_ITEM_SIZE (sizeof(uint8_t))
 
-static QueueHandle_t rxq;
-static StaticQueue_t rxqBuffer;
-static uint8_t rxqStorage[ RX_Q_SIZE * Q_ITEM_SIZE ];
+/* One hardware OUT packet stays in the existing64-byte application buffer.
+ * Do not rearm until the task consumes it: USB NAK/retry supplies backpressure. */
+static volatile uint8_t rxLength,rxOffset;
+static volatile uint32_t rxGeneration;
+static bool rxDtr;
 
 static QueueHandle_t txq;
 static StaticQueue_t txqBuffer;
 static uint8_t txqStorage[ TX_Q_SIZE * Q_ITEM_SIZE ];
 
-static bool usbInit = false;
+static volatile bool usbInit = false;
 
 static SemaphoreHandle_t startTransfers = NULL;
 static StaticSemaphore_t startTransfersBuffer;
@@ -152,7 +155,7 @@ static int8_t CDC_Init_FS(void)
   USBD_CDC_SetRxBuffer(hUsbDevice_0, UserRxBufferFS);
 
   txq = xQueueCreateStatic(TX_Q_SIZE, Q_ITEM_SIZE, txqStorage, &txqBuffer);
-  rxq = xQueueCreateStatic(RX_Q_SIZE, Q_ITEM_SIZE, rxqStorage, &rxqBuffer);
+  rxLength=rxOffset=0;rxDtr=false;rxGeneration++;
 
   startTransfers = xSemaphoreCreateBinaryStatic(&startTransfersBuffer);
 
@@ -169,6 +172,7 @@ static int8_t CDC_Init_FS(void)
   */
 static int8_t CDC_DeInit_FS(void)
 {
+  usbInit=false;rxLength=rxOffset=0;rxDtr=false;rxGeneration++;hUsbDevice_0=NULL;
   /* USER CODE BEGIN 4 */
   return (USBD_OK);
   /* USER CODE END 4 */
@@ -232,9 +236,14 @@ static int8_t CDC_Control_FS  (uint8_t cmd, uint8_t* pbuf, uint16_t length)
 
     break;
 
-  case CDC_SET_CONTROL_LINE_STATE:
-
+  case CDC_SET_CONTROL_LINE_STATE: {
+    bool connected=USBD_IsSerialConnected();
+    if(connected!=rxDtr) {
+      bool pending=rxLength!=0;rxDtr=connected;rxLength=rxOffset=0;rxGeneration++;
+      if(pending&&usbInit)USBD_CDC_ReceivePacket(hUsbDevice_0);
+    }
     break;
+  }
 
   case CDC_SEND_BREAK:
 
@@ -265,10 +274,14 @@ static int8_t CDC_Control_FS  (uint8_t cmd, uint8_t* pbuf, uint16_t length)
   */
 static int8_t CDC_Receive_FS (uint8_t* Buf, uint32_t *Len)
 {
-  for (int i=0; i<*Len; i++) {
-    xQueueSend(rxq, &Buf[i], 0);
+  if(!usbInit||!Len||!Buf)return USBD_FAIL;
+  if(*Len>APP_RX_DATA_SIZE||rxLength) {
+    /* Invalid producer state must not concatenate a partial command. */
+    rxLength=rxOffset=0;rxGeneration++;USBD_CDC_ReceivePacket(hUsbDevice_0);return USBD_FAIL;
   }
-  USBD_CDC_ReceivePacket(hUsbDevice_0);
+  if(Buf!=UserRxBufferFS)memcpy(UserRxBufferFS,Buf,*Len);
+  rxOffset=0;rxLength=(uint8_t)*Len;
+  if(!rxLength)USBD_CDC_ReceivePacket(hUsbDevice_0); // Empty OUT packet still needs rearm.
 
   return (USBD_OK);
 }
@@ -350,15 +363,17 @@ int CDC_Write(char* buffer, int len)
   return i;
 }
 
+uint32_t CDC_ReceiveGeneration(void) {return rxGeneration;}
 int CDC_Read(char *buffer, int len) {
-  int i = 0;
-
-  if (!usbInit)
-    return 0;
-
-  while (i<len && (xQueueReceive(rxq, &buffer[i], 0) == pdTRUE)) {
-    i++;
+  if(!buffer||len<=0)return 0;
+  int n=0;
+  /* Bound this region by one existing64-byte packet. Prevent deinit/OUT IRQs
+   * from replacing/resetting the packet while copying and rearming. No waits. */
+  taskENTER_CRITICAL();
+  if(usbInit&&rxOffset<rxLength) {
+    n=rxLength-rxOffset;if(n>len)n=len;
+    memcpy(buffer,UserRxBufferFS+rxOffset,(size_t)n);rxOffset+=(uint8_t)n;
+    if(rxOffset==rxLength){rxLength=rxOffset=0;USBD_CDC_ReceivePacket(hUsbDevice_0);}
   }
-
-  return i;
+  taskEXIT_CRITICAL();return n;
 }

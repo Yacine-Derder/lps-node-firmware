@@ -182,7 +182,7 @@ reservations are unchanged. Adapter roster pointers refer to the stable boot
 configuration. The multi-radio test simulator saves/restores this per-board IO
 alongside the existing scratch union. It does not model two modes on one board.
 
-Validation:204 Unity tests plus sanitized shared-core tests pass. New cases cover
+Validation:207 Unity tests plus sanitized shared-core tests pass. New cases cover
 legacy read-only migration, persistence across address/role changes/reboot, exact
 preservation of TX settings, capacity/malformed/write/readback failures, corrupt /
 unreadable EEPROM retention, CRLF/fragmented/oversized console input, swapped-role
@@ -204,3 +204,27 @@ DFU: the adjacent `lps-node-firmware.dfu`. Validation copies for500/50/10ms are
 `bin/mul-c-ch5-500.elf` / `.dfu` (replace500 with50 or10). The ordinary build restored
 at `bin/lps-node-firmware.elf` is channel2; use the named channel5 copy or rebuild
 explicitly for a later operator-run mixed-radio test. Do not flash automatically.
+
+
+C USB ingress follow-up: code inspection and actual-callback tests reproduce a
+DW1000-specific command transport fault: the old10-byte RX queue discarded the
+rest of a normal USB OUT packet before the main loop could read it. A long
+terminal-submitted configuration command could therefore lose its ending/newline.
+This does not establish a cause for the separate STM32 UART/CFG SHOW reports.
+
+RX now retains one packet in the existing64-byte application buffer and rearms
+OUT only after it is drained; the USB host supplies NAK/retry backpressure. No
+new RX queue or buffer is allocated; the obsolete queue is removed. Reads are
+nonblocking and bounded by64 bytes. A bounded critical section protects packet
+copy/publication/rearm against USB deinit; it contains no wait or SPI operation.
+TX and all radio/robot timing policies remain unchanged. Init/deinit, DTR session
+changes and invalid packet states advance a receive generation; the main loop
+discards partial line state across those boundaries. Original character menus,
+CRLF and binary output remain available.
+
+The actual USB callbacks→CDC_Read→MUL parser→EEPROM are tested together with full
+64-byte packets, bulk/fragmented/multiple commands, oversize line discard, partial
+reads, empty packets, close/reopen and invalid lengths. All207 Unity tests pass;
+the three actual USB tests also pass AddressSanitizer/UBSan. The four firmware
+profiles are rebuilt, with unchanged64-byte USB buffers and existing stack sizes.
+This is software validation; USB behavior/IRQ latency on hardware is unmeasured.

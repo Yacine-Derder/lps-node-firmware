@@ -53,6 +53,7 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len);
 int CDC_Write(char* buffer, int len);
 int CDC_WriteBlocking(char *buffer, int len);
 int CDC_Read(char *buffer, int len);
+uint32_t CDC_ReceiveGeneration(void);
 
 #ifdef __cplusplus
 }
