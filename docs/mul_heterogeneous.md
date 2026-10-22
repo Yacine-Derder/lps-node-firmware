@@ -164,7 +164,7 @@ New writes enforce fixed TLV length/capacity and verify the complete EEPROM imag
 no-op writes avoid wear. A write/readback error marks durability uncertain and
 blocks further configuration writes until a successful reinitialization/restart.
 An error does not prove the new bytes were not committed; inspect saved state.
-On boot, a checksum-invalid existing image or unreadable EEPROM is retained and
+On boot, a checksum-invalid existing image or unreadable EEPROM is retained (including checksum-valid truncated TLVs) and
 normal firmware selects the existing idle algorithm instead of silently overwriting
 calibration/settings with factory defaults. Factory/explicit reset behavior for
 an uninitialized image remains available. The legacy EEPROM has no two-bank
@@ -182,7 +182,7 @@ reservations are unchanged. Adapter roster pointers refer to the stable boot
 configuration. The multi-radio test simulator saves/restores this per-board IO
 alongside the existing scratch union. It does not model two modes on one board.
 
-Validation:203 Unity tests plus sanitized shared-core tests pass. New cases cover
+Validation:204 Unity tests plus sanitized shared-core tests pass. New cases cover
 legacy read-only migration, persistence across address/role changes/reboot, exact
 preservation of TX settings, capacity/malformed/write/readback failures, corrupt /
 unreadable EEPROM retention, CRLF/fragmented/oversized console input, swapped-role

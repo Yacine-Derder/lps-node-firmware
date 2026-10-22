@@ -457,7 +457,7 @@ cross-network isolation for500/50/10ms. All195 Unity tests and the default chann
 DW1000 adapter integration now threads the roster through RX, TX/TWR, clock,
 relation publication and passive observations. Additive role TLV migration and
 bounded :mul commands preserve unrelated settings; corrupt/unreadable EEPROM is
-retained with normal RF idle.203 Unity tests and channel2 plus channel5 timing
+retained with normal RF idle.204 Unity tests and channel2 plus channel5 timing
 builds validate this software checkpoint. The two roles share the same image.
 STM32 persistent roster and both capture/replay integrations remain before C is
 complete. See docs/mul_heterogeneous.md for exact commands, builds and limitations.

@@ -121,6 +121,12 @@ static bool check_magic(void) {
 
 static bool check_content(void) {
   if (check_magic() && cfgHeader->tlvSize < (NUMBER_OF_BYTES_READ - SIZE_HEADER -SIZE_TAIL)) {
+    uint16_t pos=0;
+    while(pos<cfgHeader->tlvSize) {
+      uint16_t remaining=cfgHeader->tlvSize-pos;
+      if(remaining<2||tlv.data[pos+1]>remaining-2)return false;
+      pos+=2+tlv.data[pos+1];
+    }
     return check_crc();
   }
   printf("CONFIG\t: EEPROM magic not found!\r\n");

@@ -64,3 +64,10 @@ void test_unreadableExistingConfigurationSelectsIdleWithoutWriting(void) {
  badRead=true;unsigned before=writes;cfgInit();TEST_ASSERT_EQUAL(before,writes);
  uint8_t mode=0;TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&mode));TEST_ASSERT_EQUAL(255,mode);
 }
+
+void test_checksumValidTruncatedTlvCannotEscapeEepromImage(void) {
+ memory[18]=255;checksum();uint8_t damaged[100];memcpy(damaged,memory,sizeof(memory));writes=0;
+ cfgInit();TEST_ASSERT_EQUAL(0,writes);TEST_ASSERT_EQUAL_MEMORY(damaged,memory,sizeof(memory));
+ uint8_t mode=0;TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&mode));TEST_ASSERT_EQUAL(255,mode);
+ uint8_t role,reference,follower;TEST_ASSERT_FALSE(cfgMulRead(0,&role,&reference,&follower));
+}
