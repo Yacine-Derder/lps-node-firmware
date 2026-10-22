@@ -200,7 +200,10 @@ void uwbInit()
 #if MUL_HYBRID_CH5
   // DWM3000 cannot receive channel2. Opt-in changes PHY only for custom modes;
   // never select a diagnostic algorithm or alter their TDMA/packet/EEPROM state.
-  if(config.mode==5||config.mode==6)phyInteropConfigure(dwm);
+  if(config.mode==5||config.mode==6) {
+    phyInteropConfigure(dwm);
+    printf("MUL PHY: HYBRID_CH5 channel=5 rate=6800 preamble=128 code=9 sfd=IEEE saved_PHY_overridden=1\r\n");
+  }
 #endif
   dwCommitConfiguration(dwm);
   // Original modes retain their software antenna compensation and zero registers.

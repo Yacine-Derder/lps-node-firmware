@@ -407,22 +407,36 @@ completion does not close previous hardware gates or establish RF accuracy.
 
 ## Heterogeneous custom-TDMA RLR integration
 
-Checkpoint A complete: current custom84/85 ALRs and passive RLR confirmed as the
-reference; see docs/mul_heterogeneous.md. Preserve hardware TDMA and inter-ALR TWR;
-no active RLR ranging or scheduler replacement. Channel2 is incompatible with
-DWM3000, requiring an explicit custom-mode channel5 profile. Two-ALR TDoA alone
-cannot determine unconstrained2D position; receiver rate remains unknown unless
-justified by an explicit policy. Next B: shared original codecs/math and passive
-DWM3000 adapter; C: telemetry; D: offline replay/geometry-aware solver; E: full
-regressions/builds and hardware instructions. No physical validation is claimed.
+Software checkpoints A–E implemented/tested; physical acceptance pending.
 
-B/C software checkpoint: shared original receiver/codec/math committed at6aa9c2e;
-DWM3000 passive adapter a514ee4 compiles and passes real adapter tests for raw
-frames, no-TX behavior, original rate policy, CRC/error precedence, persistence,
-calibration and safety. UWB3 raw-frame telemetry preserves v1/v2 compatibility
-within the existing line bound. Universal SPI interrupt-mask risk identified;
-scoped UART-preemption/timeout hardening and fault recovery tests are in STM32.
-User's deleted2026-10-22 capture summary is preserved in STM32 docs/hybrid_uwb.md;
-not independently reanalyzed, neither UART symptom declared resolved. Next D/E:
-finish shared-core host replay, guarded generic2D solver, full-profile regressions,
-compatibility matrix and exact hardware checks. Hardware remains pending.
+- A: confirmed current custom84/85 ALRs, passive RLR and650..800ms inter-ALR TWR
+  as reference (e0c9955). Stock Bitcraze TDoA and0x75 beacons are not substitutes.
+- B: original pure codecs/association/clock/TWR/downlink math shared through LPS
+  forwarding APIs; passive DWM3000 adapter (STM32 a514ee4), same slot choices.
+  Only necessary ALR change is opt-in custom-mode channel5 PHY, with default
+  channel2, EEPROM, packets and scheduling preserved.
+- C: bounded UWB3 original-frame/RX/provenance telemetry with v1/v2 compatibility
+  (ESP dce7f3d). Universal-only SPI IRQ-preemption/timeout hardening (STM32 dca615e)
+  removes a demonstrated software overrun risk without hiding UART faults.
+- D: exact shared-C offline replay and separate guarded generic fixed-anchor2D
+  solver (ESP d3a94e3), with synthetic physical-clock/wire/collector/replay and
+  localization tests. Default receiver rate stays unknown; stationary opt-in is
+  conditional. Two current ALRs cannot identify unconstrained2D position.
+- E: all-slot/profiles,195 Unity,178 MUL sanitizer tests at each500/50/10ms,
+  existing/new STM32 safety/UART/adapter tests,41 ESP Python tests and firmware
+  builds. Both vendors pin the canonical source recorded in UPSTREAM.json.
+
+Next user work: STM32 docs/hybrid_uwb.md provides exact ALR/RLR builds/configuration,
+compatible image paths, collector/replay/solver examples and seven ordered checks.
+Begin with both ALRs on matching channel5/slot500 and passive RLR, Wi-Fi off.
+Preserve the existing calibrated primary ADS peer; ADD legacy ALRs to its table.
+Then check stationary-rate observations, loss/restarts, multiple passive RLRs,
+Wi-Fi idle/forwarding, USB/Wi-Fi drop separation and STOP/watchdog behavior.
+
+The user's deleted2026-10-22 capture summary is preserved in that guide, explicitly
+historical and not independently reanalyzed. HAL bits0x8 is ORE; no evidence yet
+shows either UART symptom resolved. Physical interoperability, clock/bias quality,
+receiver-rate observability in motion and measured2D localization remain open.
+More independent geometry/measurements are needed before current-network2D
+position output is identifiable. Previous hardware gates remain open. No hardware
+was flashed/armed/moved; the central project document was not edited.

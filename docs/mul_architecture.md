@@ -1016,3 +1016,24 @@ ID/sequence/RX32 and optional distance16. Adaptive20..50Hz anchor rates keep its
 static-geometry assumptions cannot be imported silently into moving robots.
 These proven modules remain intact; the new epoch/40-bit0x75 codec is a separate
 experimental acquisition format, not a replacement or wire-compatible variant.
+
+
+## Heterogeneous reuse of the original custom TDMA network
+
+The confirmed reference is custom modes5/6, not stock TDoA2/3 or the newer0x75
+beacon acquisition format. Original pure receiver/clock/relation/TWR math is now
+canonical portable code behind the same LPS forwarding APIs. The DW1000 scheduler,
+frame layouts, identities, EEPROM and inter-ALR TWR remain unchanged. An explicit
+custom-mode-only channel5 build profile is necessary because DWM3000 lacks channel2.
+DWM3000 hybrid modes are passive; the normal mode refuses geometric TDoA without
+a justified receiver rate, while hybrid_static exposes the original stationary
+experimental assumption. Hardware antenna adjustments are applied once; DW1000
+power-bias tables are not transplanted to another radio family.
+
+UWB3 transports original frame bytes plus native RX, capture age and source/receiver
+provenance inside the existing bounded CRC envelope. Offline replay uses the same
+shared C math, separated from a generic fixed-anchor range/difference2D solver.
+Inter-ALR TWR constrains anchor synchronization/propagation, not an RLR distance.
+Two anchors supply one hyperbola, so that network does not identify an unconstrained
+2D position; dependent equations or extra RLR listeners do not fix that geometry.
+Details and compatibility matrix: [heterogeneous guide](mul_heterogeneous.md).

@@ -53,9 +53,42 @@ mixed-profile build will preserve frame bytes, slot timing, EEPROM and default
 stock/custom behavior. It must be deployed on both participating ALRs. Antenna
 delays remain per-board; DW1000 empirical power tables must not be applied to DWM3000.
 
-## Checkpoint status
+## Implementation and compatibility
 
-A complete: source/history mapped; reference confirmed; no hardware operated.
-B–E pending. Hardware interoperability/localization accuracy remain unvalidated.
-Progress and remaining work belong to PLAN.md; this guide will describe the final
-adapter, executable commands, validation and compatibility matrix as they land.
+Pure original codecs/clock/association/downlink math live in portable/mul_core;
+LPS inc/src forwarding files retain the original APIs and hardware scheduler.
+The new passive `mul_hybrid` receiver composes those functions and validates
+observed inter-ALR TWR prefixes, timing and final arithmetic; it never replies.
+DWM3000's existing radio owner selects this adapter in universal hybrid modes.
+No generic replacement MAC or independent synchronization protocol was introduced.
+
+| Capability | Implemented/software verified | Physical status |
+|---|---|---|
+|Original DW1000 modes/EEPROM/TDMA/inter-ALR TWR|Original algorithms retained;195 Unity tests;178 MUL sanitizer tests at each500/50/10ms|Existing earlier results are user-reported; new channel5 combination pending|
+|Channel5 custom-mode compatibility|Explicit MUL_HYBRID_CH5 profile; other modes/defaults unchanged; real mixed-PHY helper reused|Must program both ALRs; channel2 cannot reach DWM3000|
+|Passive DWM3000 hybrid receiver|34/74/84-byte parsing, full40-bit RX, exact original association/mapping, loss/restarts, no-TX tests|Pending|
+|Inter-ALR TWR observation|Original six-stamp/reference-unit equation, staged/prefix/time checks, no RLR-range substitution|Pending|
+|Geometric TDoA|Original conditional stationary-rate opt-in; default NO_RATE; DW1000 power correction not applied to DWM3000|Receiver rate/bias/accuracy pending|
+|Wi-Fi capture/replay|UWB3 bounded raw frames; v1/v2 compatible; exact shared C receiver replay, domains/generations retained|Historical ADS forwarding worked; new hybrid records pending|
+|2D solver|Generic fixed-anchor ranges/differences, numerical/independence/ambiguity checks, synthetic truth recovered|Current two-ALR network insufficient for unconstrained2D; no measured positions claimed|
+|UART robustness|HAL ORE traced; Universal IRQ-preemption/finite SPI timeout hardening, fault/reconnect tests|Neither reported UART symptom declared resolved|
+
+The solver does not change the on-air roster. Additional anchors/RLR ranges,
+geometry/trajectory constraints, a mobile receiver-rate solution, physical bias
+calibration and statistical anchor uncertainty remain separate work. There is no
+claim of mobile heterogeneous localization from two anchors or software tests.
+
+## Build and hardware handoff
+
+STM32 docs/hybrid_uwb.md is the complete operating guide and preserves the user's
+historical2026-10-22 deleted-capture summary. It contains exact builds, ELF paths,
+configuration, collector/replay/solver commands, software validation and an ordered
+hardware campaign. Read its rate/geometry limitations before enabling hybrid_static.
+The independently maintained central project document is untouched.
+
+A: reference discovery complete (e0c9955). B: shared receiver and passive adapter
+implemented (6aa9c2e, STM32 a514ee4). C: telemetry bridge implemented (ESP dce7f3d)
+and scoped SPI/UART hardening tested (STM32 dca615e). D: shared-core offline replay
+and guarded generic2D solver implemented/tested. E: integration/profile regression
+and hardware handoff. These are software checkpoints; no flashing or physical
+experiments were performed. PLAN.md records current remaining work.
