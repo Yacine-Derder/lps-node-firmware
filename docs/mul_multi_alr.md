@@ -116,3 +116,26 @@ relation frames80bytes, TWR frames90bytes; all fit the127-byte PHY limit.
 `mul_multi_protocol.c` performs only bounded encoding/decoding; hardware scheduling
 and receiver reconstruction are separate integration steps. Production clock and
 relation codecs are reused rather than duplicating their arithmetic.
+
+## Shared multi receiver
+
+`mul_multi_receiver` uses one reference-rate estimator, eight bounded source slots
+and seven independently validated relations/results. It associates explicit cycle
+IDs and slot identities; it does not instantiate seven legacy radio receivers.
+The original localization/downlink arithmetic is reused with an explicit expected
+slot offset; legacy APIs retain their original spacing/freshness gates.
+
+A vector closes after last_data_offset+20ms, or before advancing to a new cycle.
+Validity is frozen at each follower's capture/evaluation time: waiting for a later
+slot does not turn an earlier valid measurement stale. Missing/invalid siblings
+retain separate statuses and INT32_MIN sentinels. Reference loss invalidates only
+cycles without a reference; follower epoch changes do not reset sibling clocks.
+Out-of-order packets within capture-age bounds can complete a partial cycle;
+duplicates and old/closed-cycle packets cannot overwrite accepted results.
+A reference restart rebases only after liveness expiry and discards receiver rate.
+
+The deterministic native tests use the production codec, receiver, clock and
+localization code with independent clock skews, signed/zero geometry, missing
+reference/followers, invalid relations, reordering, bad capture age, schedule
+mismatch, reference recovery and40-bit/32-bit rollover at N=2/3/4/8. This is a
+software simulation; ALR driver/STM32 telemetry integration is still required.
