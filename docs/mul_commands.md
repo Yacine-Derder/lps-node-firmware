@@ -229,3 +229,92 @@ new broadcast types. The ESP32 UWB3 envelope remains fixed length. Software test
 cover real delayed-TX register programming at10/50/500ms, mismatch skips,
 owner-only safe transitions, EEPROM persistence/malformed fields, and unchanged
 one-second reference cadence. Physical timing/accuracy still need operator checks.
+
+### Three-robot10ms deployment and hardware acceptance
+
+Build once per radio platform; slot changes afterwards need only configuration.
+For a named mixed-radio ALR artifact, run the CH5 build above, then:
+
+```sh
+cp bin/lps-node-firmware.elf bin/runtime-slot-ch5.elf
+cp bin/lps-node-firmware.dfu bin/runtime-slot-ch5.dfu
+```
+
+On STM32:
+
+```sh
+cd ~/Documents/epuck-stm32
+cmake -S . -B build/Universal -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+  -DCMAKE_BUILD_TYPE=Release -DMUL_UNIVERSAL=ON -DMUL_UWB_ONLY=ON \
+  -DMUL_TWR_ROLE=0 -DMUL_DIAG_ROLE=0 -DPHY_INTEROP_ROLE=0 \
+  -DMUL_TIMING_TRACE=ON -DMUL_ADS_TRACE_TIMES=ON
+cmake --build build/Universal
+python3 tests/runtime_config/check_elf.py build/Universal/EPuck_STM32.elf
+```
+
+Operator-only flashing, with one intended ST-LINK target connected at a time:
+
+```sh
+# Repeat for reference132 and follower133. External EEPROM is retained.
+cd ~/Documents/lps-node-firmware
+openocd -f interface/stlink.cfg -f target/stm32f0x.cfg \
+  -c 'program bin/runtime-slot-ch5.elf verify reset exit'
+# Then connect the STM32 RLR target. Retain its configuration sectors; no mass erase.
+~/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI \
+  -c port=SWD -d ~/Documents/epuck-stm32/build/Universal/EPuck_STM32.elf -v -rst
+```
+
+The ESP32 radio-independent bridge already supporting UWB3 TDoA needs no new
+flash for runtime scheduling. Its shared-core snapshot/host tools were updated
+and its firmware rebuilt to verify compatibility. If the older telemetry-delivery
+fix is not installed, use the ESP32 flashing instructions in
+`../epuck-esp32/docs/uwb_logging.md` relative to the workspace repositories.
+
+1. Keep all three radios OFF while configuring. On each ALR enter `:off`, wait
+   for `:status` to show requested=0/running=0, then `:cfg set slot_ms 10`.
+   Inspect `:cfg show`; retain addresses0x84/0x85, reference/follower roles and
+   configured roster. On STM32 enter `off`, `cfg set slot_ms 10`, then `show`.
+   Retain0x8d, RLR, hybrid_static, enabled peers0x84/0x85 and Wi-Fi/TLM ON.
+2. Power-cycle each node and verify slot_ms10 remains. Repeat50/500 and restore10
+   to verify runtime persistence without rebuilding. Use `:on` on ALRs and `on`
+   on STM32 only after the receiver is stationary. Wait for fresh clock/TWR
+   acquisition. Ordinary hybrid remains NO_RATE by design.
+3. Save ALR USB output. Pair each follower `REF_RX rx=` with its completed
+   `TX role=FOLLOWER actual=`. Both timestamps belong to the follower: signed
+   modular40-bit `actual - rx` should be638976000..638976511DTU at10ms
+   (alignment rounding only; aborted/missing TX is not a timing sample).
+   Separately check consecutive reference completed-TX timestamps differ by
+   63897600000DTU per sequence step, about1second. Never subtract timestamps
+   from different radios directly. Look for clock acquisition and successful
+   inter-ALR TWR, with no new late-slot failures.
+4. Capture Wi-Fi for ten minutes, then repeat raw:
+
+   ```sh
+   cd ~/Documents/epuck-esp32
+   timeout --signal=INT 600s python3 tools/uwb_collect.py --robot 192.168.1.141:3333 --no-live
+   timeout --signal=INT 600s python3 tools/uwb_collect.py --robot 192.168.1.141:3333 --raw --no-live
+   ```
+
+   Logs remain under `~/Documents/uwb_logs`. Compact roster rows must report
+   slot_ms10; warm-up/unavailable TDoA must retain status/null distances, and
+   available observations must have signed numeric dd_mm with ref/fol progressing
+   about1Hz. Raw records retain the advertised frame types and native RX stamps.
+   Replay a raw capture using `python3 tools/uwb_hybrid.py RAW.jsonl --slot 10
+   --output REPLAY.jsonl` (replace file paths; output must be new).
+5. Check `hybrid status` slot_mismatch=0 and separate `tlm status` USB/Wi-Fi/UART
+   counters, plus bridge counters. Unconsumed USB drops can grow independently.
+   Wi-Fi should drain at nominal traffic; reconnect the collector and verify
+   delivery resumes. Repeat USB disconnected. Physical variation/accuracy still
+   requires measured geometry; AVAILABLE alone is not an accuracy certificate.
+6. With RF safely stopped, change only the follower to50ms while reference/RLR
+   stay10ms, then enable it: expect slot_mismatch and no follower scheduled TX.
+   Restore10 with RF stopped. Separately set only RLR to50 while ALRs stay10:
+   expect slot_mismatch, no accepted TDoA, and no reused rate. Restore10, reacquire,
+   and confirm normal delivery. Unsupported20ms must reject without changing
+   saved configuration. Do not change slots mid-flight or while moving the RLR.
+
+Native driver tests validate programming arithmetic, not actual RF timing. No
+hardware was flashed, moved or measured during implementation. LPS remains very
+close to its128KB flash/16KB RAM limits; bounded passive codec/association code
+uses size optimization without reducing stacks/queues or changing radio math.

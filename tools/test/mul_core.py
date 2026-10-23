@@ -16,7 +16,8 @@ pin=json.loads((vendor/'UPSTREAM.json').read_text())
 plan=subprocess.run(['make','-qp'],cwd=root,capture_output=True,text=True)
 assert plan.returncode in (0,1),plan.stderr
 for obj in ['src/mul_common.o','src/mul_core.o','src/mul_diag_dw.o','src/uwb.o']:
-    dependencies=next(line.split(':',1)[1].split() for line in plan.stdout.splitlines() if line.startswith(obj+':'))
+    dependencies={item for line in plan.stdout.splitlines() if line.startswith(obj+':')
+                  and 'CFLAGS' not in line for item in line.split(':',1)[1].split()}
     for source in canonical.glob('*.[ch]'):
         assert source.relative_to(root).as_posix() in dependencies,(obj,source)
 

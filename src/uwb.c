@@ -29,6 +29,7 @@
 #include "uwb.h"
 #include "uwb_control.h"
 #include "mul_alr.h"
+#include <string.h>
 #include "mul_rlr.h"
 #include "mul_rx.h"
 

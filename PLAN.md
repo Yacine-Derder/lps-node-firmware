@@ -506,3 +506,24 @@ Physical limitations: command responsiveness, cancellation of a pending delayed 
 RF silence after acknowledged off, and reacquisition after resume need the operator
 checks in docs/mul_commands.md. EEPROM power loss, stack/timing margins, custom
 rosters, residual UART/PHY/TWR faults and metric accuracy remain unvalidated here.
+
+## Persistent hybrid delay — software complete, hardware acceptance pending
+
+One build per platform now supports10/50/500ms through persistent `slot_ms`.
+ALR changes require acknowledged RF OFF; the radio owner applies them on resume.
+STM32 uses its existing stopped-radio transaction and schema5 journal migration.
+New configurations default10ms; old unstored timing migrates to500ms without
+rewriting peer/calibration/roster settings. Both ALRs and RLR must be explicitly
+set to10ms for the next experiment. Compact broadcast schedule tags detect
+mismatch without changing frame lengths or the1Hz cadence/TWR window.
+
+Validated:221 native tests and199 MUL ASan/UBSan tests per10/50/500ms build;
+single-executable runtime slot selection in real-driver and shared receiver tests;
+STM32 runtime/persistence/mismatch/telemetry and UART/console/frequency suites;
+76 ESP Python tests plus C transport tests; canonical/vendor byte agreement;
+LPS default and CH5, STM32 Universal and ESP32-S3 builds. Build/linker bounds pass.
+LPS has very little flash/RAM margin; bounded passive/codec code uses -Os while
+hardware drivers, TX scheduler and clock estimation remain -O3. No buffers or
+stacks were reduced. No hardware was flashed or operated. Operator deployment,
+actual same-clock10ms timing, sustained Wi-Fi capture and mismatch/reboot checks
+are specified in docs/mul_commands.md. Multi-ALR scheduling remains out of scope.

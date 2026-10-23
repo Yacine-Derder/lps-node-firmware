@@ -196,3 +196,9 @@ void test_malformedSlotTlvFailsClosedWithoutErasingOtherFields(void) {
  TEST_ASSERT_FALSE(cfgMulSlotRead(&slot));uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlCanEnable());
  binding(0x84,0,0x84,0x85);
 }
+void test_freshEepromUses10msAndOldEepromMigrationDoesNotWrite(void) {
+ memset(memory,255,sizeof(memory));cfgInit();uint16_t slot=0;
+ TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(10,slot);
+ unsigned before=writes;cfgInit();TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(10,slot);TEST_ASSERT_EQUAL(before,writes);
+ legacy(0x84);TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(500,slot);TEST_ASSERT_EQUAL(0,writes);
+}

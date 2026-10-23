@@ -67,11 +67,13 @@ File.write(ARGV[0],YAML.dump(c))'''
             total = 0
             for test in sorted((ROOT / 'test').glob('TestMul*.c')):
                 # Same explicit dependency convention as the existing Rake suite.
-                headers = re.findall(r'^#include "(mul_\w+)\.h"', test.read_text(), re.M)
+                headers = re.findall(r'^#include "(\w+)\.h"', test.read_text(), re.M)
                 sources = [str(ROOT / 'src' / (h + '.c')) for h in headers if (ROOT / 'src' / (h + '.c')).exists()]
                 binary = work / f'{test.stem}-{slot}'
                 includes = ['inc', 'inc/f0', 'test', 'vendor/unity/src', 'lib/freertos/inc',
-                            'hal/stm32f0xx/Inc', 'vendor/libdw1000/inc']
+                            'hal/stm32f0xx/Inc', 'vendor/libdw1000/inc',
+                            'Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc',
+                            'Middlewares/ST/STM32_USB_Device_Library/Core/Inc']
                 command = ['gcc', '-std=c99', '-O1', '-g', '-Wall', '-Wextra', '-Werror',
                            '-Wno-unused-parameter', '-Wno-sign-compare', '-DUNITY_SUPPORT_64',
                            '-DSTM32F072xB', '-DHSI48_VALUE=((uint32_t)48000000)',
