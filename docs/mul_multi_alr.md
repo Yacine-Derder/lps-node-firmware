@@ -160,3 +160,22 @@ mode-exclusive state is reused; stack and queue reservations are unchanged.
 Native tests exercise every follower slot for N=2/3/4/8, both complete TWR
 windows with independent clocks, cycle wrap, and first-window failure isolation.
 These are software checks, not hardware timing or accuracy validation.
+
+### Multi telemetry wire additions
+
+UWB3 type 8 is a coherent cycle vector; type 9 is optional raw multi-frame
+capture. Types 1–7 keep their existing interpretation. Both additions retain the
+152-byte binary record, CRC16 at150, and309-character text line. Common header
+bytes0..39 keep their existing meaning; uptime is receiver observation time.
+
+Type8: cycle40..43, schedule CRC44..47, revision48..51, reference RX40-bit52..56,
+slot_ms57..58, cycle_ms59..60, count61, seenMask62 and validMask63 (bit index is
+roster index), roster IDs64..71. Up to seven10-byte follower entries start72:
+int32 dd_mm, int32 dt_dtu, packed status0..2/clock bit3/rate bits4..5, reason byte9.
+Unused entries are zero. Invalid values use INT32_MIN and decode to JSON null.
+Bytes142..145 are dropped count,146 queue depth,147 high-water (both saturate255),
+148 stationary policy,149 zero. Reasons follow `mulMultiReason_t`0..9.
+
+Type9: radio frame40..129 (zero padded to90), local RX130..134, capture age135..136,
+length137 (40/80/90), spacing138..139, schedule CRC140..143, revision144..147,
+stationary policy148, zero149. It is diagnostic and lower priority than type8.
