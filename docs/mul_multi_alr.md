@@ -93,3 +93,26 @@ was rejected: it increased flash and exposed legacy naked-assembly branch limits
 Stock engines and hardware drivers retain their previous compiler optimization.
 The existing hardware delayed-TX guards remain authoritative; software arithmetic
 regressions do not establish physical response/timing performance.
+
+## Profile2 radio encoding
+
+All sizes exclude the radio's two-byte FCS. Reference frames are40bytes, follower
+relation frames80bytes, TWR frames90bytes; all fit the127-byte PHY limit.
+
+- Broadcast bytes0..33 retain the legacy MAC/MUL/sequence/TX timestamp layout.
+  Type at24 is0x30(reference) or0x31(follower); sequence is the reference cycle
+  for every slot. Byte34 is protocol version2;35 is the roster slot;36..39 is the
+  little-endian canonical schedule fingerprint. Follower relation bytes34..73
+  from the existing codec move to40..79, with unchanged units/meaning.
+- TWR retains84bytes of existing payload, with types0x18..0x1c mapping to the
+  legacy0x10..0x14 stages. Byte84 is version2,85 is selected follower slot,
+  86..89 is the same fingerprint. The deterministic cycle/window owner and full
+  MAC endpoints are validated before accepting the exchange.
+- A source must equal the configured full identity at its advertised slot.
+  Available relation referenceSequence must equal the packet cycle. Hash/version,
+  source/slot/length mismatch or unavailable synchronization cannot silently
+  create a valid TDoA. Legacy codecs reject these distinct types/lengths.
+
+`mul_multi_protocol.c` performs only bounded encoding/decoding; hardware scheduling
+and receiver reconstruction are separate integration steps. Production clock and
+relation codecs are reused rather than duplicating their arithmetic.

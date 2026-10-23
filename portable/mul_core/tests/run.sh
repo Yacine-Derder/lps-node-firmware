@@ -24,3 +24,6 @@ done
 cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-pie \
  -I. tests/test_schedule.c mul_schedule.c mul_common.c -o "$work/schedule"
 "$work/schedule"
+cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-pie -DMUL_PROP_MAX_AGE_MS=6000 \
+ -I. tests/test_multi_protocol.c mul_multi_protocol.c mul_schedule.c mul_relation.c mul_legacy_twr.c mul_clock.c mul_common.c -lm -o "$work/multi_protocol"
+"$work/multi_protocol"
