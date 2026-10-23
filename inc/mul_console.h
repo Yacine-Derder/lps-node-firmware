@@ -6,4 +6,6 @@
  * Fragmented/oversized lines are consumed, never replayed as legacy commands. */
 void mulConsoleReset(void);
 bool mulConsoleByte(char ch);
+/* One bounded reply page; false applies USB backpressure to command input. */
+bool mulConsolePoll(void);
 #endif

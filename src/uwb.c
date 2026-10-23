@@ -27,6 +27,7 @@
 #include <stm32f0xx_hal.h>
 
 #include "uwb.h"
+#include "uwb_control.h"
 #include "mul_alr.h"
 #include "mul_rlr.h"
 #include "mul_rx.h"
@@ -51,17 +52,25 @@ extern uwbAlgorithm_t uwbTdoa2Algorithm;
 extern uwbAlgorithm_t uwbTdoa3Algorithm;
 static uwbAlgorithm_t *algorithm = &dummyAlgorithm;
 
+/* Build-only experiments always replace the persisted algorithm below. Keep
+ * legacy names/IDs for the menu, but do not retain unreachable radio engines
+ * through their table pointers (particularly the larger ADS diagnostic image). */
+#if PHY_INTEROP_ROLE || MUL_DIAG_ROLE || MUL_TWR_ROLE
+#define TABLE_ALGORITHM(name) (&dummyAlgorithm)
+#else
+#define TABLE_ALGORITHM(name) (&name)
+#endif
 struct {
   uwbAlgorithm_t *algorithm;
   char *name;
 } availableAlgorithms[] = {
-  {.algorithm = &uwbTwrAnchorAlgorithm, .name = "TWR Anchor"},
-  {.algorithm = &uwbTwrTagAlgorithm,    .name = "TWR Tag"},
-  {.algorithm = &uwbSnifferAlgorithm,   .name = "Sniffer"},
-  {.algorithm = &uwbTdoa2Algorithm,     .name = "TDoA Anchor V2"},
-  {.algorithm = &uwbTdoa3Algorithm,     .name = "TDoA Anchor V3"},
-  {.algorithm = &mulAlrAlgorithm,       .name = "MUL ALR"},
-  {.algorithm = &mulRlrAlgorithm,       .name = "MUL RLR"},
+  {.algorithm = TABLE_ALGORITHM(uwbTwrAnchorAlgorithm), .name = "TWR Anchor"},
+  {.algorithm = TABLE_ALGORITHM(uwbTwrTagAlgorithm),    .name = "TWR Tag"},
+  {.algorithm = TABLE_ALGORITHM(uwbSnifferAlgorithm),   .name = "Sniffer"},
+  {.algorithm = TABLE_ALGORITHM(uwbTdoa2Algorithm),     .name = "TDoA Anchor V2"},
+  {.algorithm = TABLE_ALGORITHM(uwbTdoa3Algorithm),     .name = "TDoA Anchor V3"},
+  {.algorithm = TABLE_ALGORITHM(mulAlrAlgorithm),       .name = "MUL ALR"},
+  {.algorithm = TABLE_ALGORITHM(mulRlrAlgorithm),       .name = "MUL RLR"},
   {NULL, NULL},
 };
 
@@ -81,20 +90,20 @@ static uint32_t timeout;
 
 static void txcallback(dwDevice_t *dev)
 {
-  timeout = algorithm->onEvent(dev, eventPacketSent);
+  if(uwbControlEvent(eventPacketSent))timeout=algorithm->onEvent(dev,eventPacketSent);
 }
 
 static void rxcallback(dwDevice_t *dev)
 {
-  timeout = algorithm->onEvent(dev, eventPacketReceived);
+  if(uwbControlEvent(eventPacketReceived))timeout=algorithm->onEvent(dev,eventPacketReceived);
 }
 
 static void rxTimeoutCallback(dwDevice_t * dev) {
-  timeout = algorithm->onEvent(dev, eventReceiveTimeout);
+  if(uwbControlEvent(eventReceiveTimeout))timeout=algorithm->onEvent(dev,eventReceiveTimeout);
 }
 
 static void rxfailedcallback(dwDevice_t *dev) {
-  timeout = algorithm->onEvent(dev, eventReceiveFailed);
+  if(uwbControlEvent(eventReceiveFailed))timeout=algorithm->onEvent(dev,eventReceiveFailed);
 }
 
 
@@ -219,6 +228,7 @@ void uwbInit()
     mulAntennaConfigure(dwm);
   }
 
+  uwbControlInit(&config);
   isInit = true;
 }
 
@@ -255,17 +265,22 @@ static void uwbTask(void* parameters)
 {
   configASSERT(isInit);
 
-  algorithm->init(&config, dwm);
-
+  dwIdle(dwm);dwClearAllStatus(dwm);timeout=1;
+  uwbControlApply(dwm,algorithm);
   while(1) {
-    if (xSemaphoreTake(irqSemaphore, timeout/portTICK_PERIOD_MS)) {
-      do{
-          dwHandleInterrupt(dwm);
-      } while(checkIrq() != 0);
-    } else {
-      timeout = algorithm->onEvent(dwm, eventTimeout);
-    }
+    bool irq=xSemaphoreTake(irqSemaphore, timeout/portTICK_PERIOD_MS);
+    if(uwbControlApply(dwm,algorithm))timeout=1;
+    if(!uwbControlRunning()){timeout=MAX_TIMEOUT;continue;}
+    if(irq) {
+      do {dwHandleInterrupt(dwm);} while(checkIrq()!=0&&uwbControlRequested());
+    } else if(uwbControlEvent(eventTimeout))timeout=algorithm->onEvent(dwm,eventTimeout);
   }
+}
+
+bool uwbSetEnabled(bool enabled) {
+ if(!uwbControlRequest(enabled))return false;
+ if(irqSemaphore)xSemaphoreGive(irqSemaphore);
+ return true;
 }
 
 void uwbStart()

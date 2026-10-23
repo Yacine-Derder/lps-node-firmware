@@ -7,6 +7,8 @@
 uint32_t usbcommReceiveGeneration(void);
 int usbcommRead(char* buffer, size_t len);
 
+bool usbcommTryWrite(const char *data,unsigned len);
+
 void usbcommWrite(char const *data, int len);
 
 void usbcommSetSystemStarted(bool init);

@@ -30,6 +30,7 @@
 #include "cfg.h"
 #include "eeprom.h"
 #include "uwb.h"
+#include "task.h"
 
 typedef struct {
   uint8_t *data;
@@ -54,7 +55,17 @@ typedef struct {
 } __attribute__((packed)) CfgHeader;
 
 static CfgHeader * cfgHeader = (CfgHeader*) buffer;
-static bool mulStorageUncertain;
+static bool mulStorageUncertain, pendingRestart;
+static volatile bool writing;
+static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length);
+bool cfgPendingRestart(void) {return pendingRestart||mulStorageUncertain||writing;}
+bool cfgStorageReady(void) {return !mulStorageUncertain&&!writing;}
+bool cfgRfEnabled(bool *enabled) {
+ uint8_t size,value=1;
+ if(mulStorageUncertain||writing)return false;
+ if(cfgFieldSize(cfgRfEnable,&size)&&(size!=1||!cfgReadU8(cfgRfEnable,&value)||value>1))return false;
+ *enabled=value!=0;return true;
+}
 
 static int tlvFindType(TlvArea *tlv, ConfigField type) {
   uint16_t pos = 0;
@@ -143,9 +154,8 @@ static bool write_defaults(void) {
   buffer[4] = 0; // Length of TLV
   buffer[5] = buffer[0] + buffer[1];
   // Write the default address
-  cfgWriteU8(cfgAddress, 0);
-  cfgWriteU8(cfgMode, MODE_ANCHOR);
-  cfgWriteU8list(cfgAnchorlist, default_anchor_list, sizeof(default_anchor_list));
+  if(!cfgWriteU8(cfgAddress, 0)||!cfgWriteU8(cfgMode, MODE_ANCHOR)||
+     !cfgWriteU8list(cfgAnchorlist, default_anchor_list, sizeof(default_anchor_list)))return false;
   write_crc();
   if (!eepromWrite(0, buffer, 7))
     return false;
@@ -168,6 +178,7 @@ static void idleConfiguration(void) {
 }
 
 void cfgInit(void) {
+  pendingRestart=false;
   mulStorageUncertain=true;
   if (readData()) {
     cfgHeader = (CfgHeader*) buffer;
@@ -186,9 +197,10 @@ void cfgInit(void) {
       printf("CONFIG\t: Writing default EEPROM configuration\r\n");
       mulStorageUncertain=false; // Explicit uninitialized/invalid-magic factory path.
       if (write_defaults()) {
-        mulStorageUncertain=false;
+        mulStorageUncertain=false;pendingRestart=false;
       } else {
         mulStorageUncertain=true;
+        idleConfiguration();
         printf("CONFIG\t: Error when writing default configuration\r\n");
       }
     }
@@ -208,73 +220,39 @@ bool cfgReset(void) {
 bool cfgReadU8(ConfigField field, uint8_t * value) {
   int pos = tlvFindType(&tlv, field);
 
-  if (pos > -1) {
+  if (pos > -1 && tlv.data[pos+1]==1) {
     *value = tlv.data[pos+2];
   }
 
-  return (pos > -1);
+  return (pos > -1 && tlv.data[pos+1]==1);
 }
 
 bool cfgWriteU8(ConfigField field, uint8_t value) {
-    if(mulStorageUncertain)return false;
-    int pos = tlvFindType(&tlv, field);
-
-    if (pos > -1) {
-      tlv.data[pos+2] = value;
-    } else {
-      // Add new field at the end of the tlv
-      tlv.data[cfgHeader->tlvSize] = field;
-      tlv.data[cfgHeader->tlvSize+1] = 1;
-      tlv.data[cfgHeader->tlvSize+2] = value;
-      cfgHeader->tlvSize += 3;
-    }
-
-    write_crc();
-    eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
-    HAL_Delay(10);
-    readData();
-    return true;
+ return mulStore(field,&value,1);
 }
 
 bool cfgReadU32(ConfigField field, uint32_t * value) {
   int pos = tlvFindType(&tlv, field);
 
-  if (pos > -1) {
+  if (pos > -1 && tlv.data[pos+1]==sizeof(uint32_t)) {
     memcpy(value, &tlv.data[pos+2], sizeof(uint32_t));
   }
 
-  return (pos > -1);
+  return (pos > -1 && tlv.data[pos+1]==sizeof(uint32_t));
 }
 
 bool cfgWriteU32(ConfigField field, uint32_t value) {
-    if(mulStorageUncertain)return false;
-    int pos = tlvFindType(&tlv, field);
-
-    if (pos > -1) {
-      memcpy(&tlv.data[pos+2], &value, sizeof(uint32_t));
-    } else {
-      // Add new field at the end of the tlv
-      tlv.data[cfgHeader->tlvSize] = field;
-      tlv.data[cfgHeader->tlvSize+1] = sizeof(uint32_t);
-      memcpy(&tlv.data[cfgHeader->tlvSize+2], &value, sizeof(uint32_t));
-      cfgHeader->tlvSize += 2 + sizeof(uint32_t);
-    }
-
-    write_crc();
-    eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
-    HAL_Delay(10);
-    readData();
-    return true;
+ return mulStore(field,(const uint8_t *)&value,sizeof(value));
 }
 
 bool cfgReadU8list(ConfigField field, uint8_t list[], uint8_t length) {
   int pos = tlvFindType(&tlv, field);
 
-  if (pos > -1) {
+  if (pos > -1 && length<=tlv.data[pos+1]) {
     memcpy(list, &tlv.data[pos+2], length);
   }
 
-  return (pos > -1);
+  return (pos > -1 && length<=tlv.data[pos+1]);
 }
 
 bool cfgFieldSize(ConfigField field, uint8_t * size) {
@@ -288,26 +266,8 @@ bool cfgFieldSize(ConfigField field, uint8_t * size) {
 }
 
 bool cfgWriteU8list(ConfigField field, uint8_t list[], uint8_t length) {
-    if(mulStorageUncertain)return false;
-    int pos = tlvFindType(&tlv, field);
-
-    if (pos > -1) {
-      printf("Witing the list is not supported!!\r\n");
-      //tlv.data[pos+2] = value;
-      // TODO: The list can vary in length, we need to take care of that :-(
-    } else {
-      // Add new field at the end of the tlv
-      tlv.data[cfgHeader->tlvSize] = field;
-      tlv.data[cfgHeader->tlvSize+1] = length;
-      memcpy(&tlv.data[cfgHeader->tlvSize+2], list, length);
-      cfgHeader->tlvSize += 2 + length;
-    }
-
-    write_crc();
-    eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
-    HAL_Delay(10);
-    readData();
-    return true;
+ uint8_t size;if(cfgFieldSize(field,&size))return false;
+ return mulStore(field,list,length);
 }
 
 bool cfgReadFP32listLength(ConfigField field, uint8_t * size) {
@@ -319,38 +279,16 @@ bool cfgReadFP32listLength(ConfigField field, uint8_t * size) {
 bool cfgReadFP32list(ConfigField field, float list[], uint8_t length) {
   int pos = tlvFindType(&tlv, field);
 
-  if (pos > -1) {
+  if (pos > -1 && (unsigned)length*sizeof(float)<=tlv.data[pos+1]) {
     memcpy(list, &tlv.data[pos+2], length*sizeof(float));
   }
 
-  return (pos > -1);
+  return (pos > -1 && (unsigned)length*sizeof(float)<=tlv.data[pos+1]);
 }
 
 bool cfgWriteFP32list(ConfigField field, float list[], uint8_t length) {
-    if(mulStorageUncertain)return false;
-    int pos = tlvFindType(&tlv, field);
-
-    if (pos > -1) {
-      uint8_t lengthInMemory=0;
-      cfgReadFP32listLength(field, &lengthInMemory);
-      if (lengthInMemory != length) {
-        printf("Error: cannot write config list with different length\r\n");
-        return false;
-      }
-      memcpy(&tlv.data[pos+2], list, length*sizeof(float));
-    } else {
-      // Add new field at the end of the tlv
-      tlv.data[cfgHeader->tlvSize] = field;
-      tlv.data[cfgHeader->tlvSize+1] = length*sizeof(float);
-      memcpy(&tlv.data[cfgHeader->tlvSize+2], list, length*sizeof(float));
-      cfgHeader->tlvSize += 2 + (length*sizeof(float));
-    }
-
-    write_crc();
-    eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
-    HAL_Delay(10);
-    readData();
-    return true;
+ if(length>23)return false;
+ return mulStore(field,(const uint8_t *)list,length*sizeof(float));
 }
 
 static bool binaryMode = false;
@@ -370,37 +308,49 @@ bool cfgIsBinaryMode()
  * remain untouched. Existing EEPROM checksum is retained; this is not a new
  * power-fail journal. Report write/readback failures rather than false success. */
 static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length) {
-  if(mulStorageUncertain)return false;
+  /* LPP can write from the higher-priority UWB task. Serialize writers without
+   * holding any lock across I2C, sleeps or readback. Busy requests fail closed. */
+  taskENTER_CRITICAL();
+  bool busy=writing||mulStorageUncertain;if(!busy)writing=true;
+  taskEXIT_CRITICAL();
+  if(busy)return false;
+  bool ok=false;
   uint8_t previous[NUMBER_OF_BYTES_READ];memcpy(previous,buffer,sizeof(previous));
   int at=tlvFindType(&tlv,field);
-  if(at>=0) {if(tlv.data[at+1]!=length)return false;if(!memcmp(tlv.data+at+2,data,length))return true;}
-  else {
-    if(SIZE_HEADER+cfgHeader->tlvSize+2+length+SIZE_TAIL>=NUMBER_OF_BYTES_READ)return false;
+  if(at>=0) {
+    if(tlv.data[at+1]!=length)goto done;
+    if(!memcmp(tlv.data+at+2,data,length)){ok=true;goto done;}
+  } else {
+    if(SIZE_HEADER+cfgHeader->tlvSize+2+length+SIZE_TAIL>=NUMBER_OF_BYTES_READ)goto done;
     at=cfgHeader->tlvSize;tlv.data[at]=field;tlv.data[at+1]=length;cfgHeader->tlvSize+=2+length;
   }
   memcpy(tlv.data+at+2,data,length);write_crc();
   uint8_t expected[NUMBER_OF_BYTES_READ];memcpy(expected,buffer,sizeof(expected));
-  bool ok=eepromWrite(0,buffer,sizeof(buffer));HAL_Delay(10);
+  ok=eepromWrite(0,buffer,sizeof(buffer));HAL_Delay(10);
   if(ok)ok=readData()&&!memcmp(expected,buffer,sizeof(buffer));
   if(!ok){memcpy(buffer,previous,sizeof(buffer));mulStorageUncertain=true;}
-  return ok;
+  else if(field!=cfgRfEnable)pendingRestart=true;
+done:
+  writing=false;return ok;
 }
 bool cfgMulRead(uint8_t node,uint8_t *role,uint8_t *reference,uint8_t *follower) {
-  if(mulStorageUncertain)return false;
+  if(mulStorageUncertain||writing)return false;
   uint8_t size,values[3]={node==0x84?0:node==0x85?1:2,0x84,0x85};
   if(cfgFieldSize(cfgMulNetwork,&size)) {
     if(size!=3||!cfgReadU8list(cfgMulNetwork,values,3))return false;
   }
-  if(values[0]>2)return false;
+  if(values[0]>3)return false;
+  uint8_t mode=0;cfgReadU8(cfgMode,&mode);
+  if(values[0]==2&&mode==MODE_MUL_RLR)values[0]=3;
   if(values[0]==0)values[1]=node;
   if(values[0]==1)values[2]=node;
   mulNetwork_t network;if(!mulNetworkInit(&network,values[1],values[2]))return false;
   *role=values[0];*reference=values[1];*follower=values[2];return true;
 }
 bool cfgMulWrite(uint8_t role,uint8_t reference,uint8_t follower) {
-  uint8_t node=0;if(!cfgReadU8(cfgAddress,&node)||role>2)return false;
+  uint8_t node=0;if(!cfgReadU8(cfgAddress,&node)||role>3)return false;
   if((role==0&&reference!=node)||(role==1&&follower!=node))return false;
-  mulNetwork_t network;if(!mulNetworkInit(&network,reference,follower))return false;
+  mulNetwork_t network;if(!mulNetworkInit(&network,reference,follower)||(role==3&&(node==reference||node==follower)))return false;
   uint8_t values[3]={role,reference,follower};return mulStore(cfgMulNetwork,values,3);
 }
 bool cfgMulChangeAddress(uint8_t address) {
@@ -410,7 +360,7 @@ bool cfgMulChangeAddress(uint8_t address) {
   uint8_t ref=role==0?address:reference,fol=role==1?address:follower;
   mulNetwork_t network;
   if(mode>=MODE_MUL_ALR&&(!mulNetworkInit(&network,ref,fol)||
-     (mode==MODE_MUL_RLR&&(address==ref||address==fol))))return false;
+     ((mode==MODE_MUL_RLR||role==3)&&(address==ref||address==fol))))return false;
   /* Freeze a legacy-derived role BEFORE changing its address. A failed second
    * write is reported on failure; legacy EEPROM has no power-cut journal. */
   if(!cfgFieldSize(cfgMulNetwork,&size)&&!cfgMulWrite(role,reference,follower))return false;

@@ -35,7 +35,7 @@ HALS+=i2c_ex
 OBJS+=src/main.o
 OBJS+=src/usb_device.o src/usbd_cdc_if.o src/usbd_desc.o src/lps25h.o src/led.o src/button.o
 OBJS+=src/mul_console.o src/cfg.o src/usbcomm.o src/test_support.o src/production_test.o
-OBJS+=src/uwb.o src/uwb_twr_anchor.o src/uwb_sniffer.o src/uwb_twr_tag.o
+OBJS+=src/uwb_control.o src/uwb.o src/uwb_twr_anchor.o src/uwb_sniffer.o src/uwb_twr_tag.o
 OBJS+=src/lpp.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o
 OBJS+=src/mul_ads.o src/mul_ads_dw.o
 OBJS+=src/phy_interop_dw.o src/mul_core.o src/mul_diag_dw.o
@@ -73,6 +73,9 @@ endif
 
 # Remove un-used functions and global variables from output file
 CFLAGS += -ffunction-sections -fdata-sections
+# Console/configuration are not radio timing paths. Keep the complete command
+# interface inside128KB without reducing stacks, queues or protocol state.
+src/main.o src/mul_console.o src/cfg.o src/usbcomm.o src/uwb_control.o: CFLAGS += -Os
 LDFLAGS+=-Wl,-Map=bin/$(PROG).map,--cref,--gc-sections
 
 

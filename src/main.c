@@ -195,13 +195,17 @@ static void main_task(void *pvParameters) {
     //   }
     // }
 
+#ifndef USE_FTDI_UART
+    static uint32_t receiveGeneration;
+    uint32_t generation=usbcommReceiveGeneration();
+    if(generation!=receiveGeneration){receiveGeneration=generation;mulConsoleReset();}
+#endif
+    // One bounded response page per loop; retain USB packet while TX is full.
+    if(!mulConsolePoll())continue;
     // Accepts serial commands
 #ifdef USE_FTDI_UART
     if (HAL_UART_Receive(&huart1, (uint8_t*)&ch, 1, 0) == HAL_OK) {
 #else
-    static uint32_t receiveGeneration;
-    uint32_t generation=usbcommReceiveGeneration();
-    if(generation!=receiveGeneration){receiveGeneration=generation;mulConsoleReset();}
     if(usbcommRead(&ch, 1)) {
       uint32_t after=usbcommReceiveGeneration();
       if(after!=generation){receiveGeneration=after;mulConsoleReset();continue;}

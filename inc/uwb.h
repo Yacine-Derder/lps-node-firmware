@@ -83,6 +83,7 @@ typedef struct uwbAlgorithm_s {
 void uwbInit();
 bool uwbTest();
 void uwbStart();
+bool uwbSetEnabled(bool enabled);
 char * uwbStrError();
 struct uwbConfig_s * uwbGetConfig();
 int uwbAlgorithmCount();

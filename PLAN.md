@@ -465,8 +465,44 @@ three spacings. A USB ingress follow-up replaces the demonstrably lossy10-byte
 queue with single-packet endpoint backpressure and connection-generation resets.
 All207 Unity tests pass, including three actual USB tests under ASan/UBSan.
 C is implemented/software tested; custom-roster physical validation is pending. See docs/mul_heterogeneous.md for exact commands, builds and limitations.
-D starts with docs/mul_commands.md: explicit common vocabulary, capability
-matrix, RF-enable separation, legacy framing and validation contract. The matrix
-is planned, not yet implemented. Lowercase aliases, owner-controlled RF and their
-regressions remain to implement. Preserve NO_RATE and strictly passive RLR.
-No hardware is flashed and physical custom-roster validation remains outstanding.
+D is **implemented/software tested; physical command/RF retest pending**.
+The implemented vocabulary, capability differences, exact build flags and operator
+checks are in docs/mul_commands.md. STM32 D reference is7769a30682ce8f0d90b31245b496cc657ea8c61c;
+STM32 and ESP32 were not modified in this DW1000 task. Shared protocol/core code,
+mode IDs, wire data, TDMA/TWR, antenna values and40-bit arithmetic are unchanged.
+
+DW1000 now has :command/:console framing plus legacy :mul/character menus,
+independent RF TLV10, explicit passive role3 in TLV9, and owner-only idle/clear/
+fresh-init transitions. Pending restart, failed/uncertain storage, invalid required
+fields and explicit passive-role conflicts block on. Valid off requests suppress
+callbacks immediately and stop in the UWB owner even if EEPROM persistence fails;
+the old durable on value may still return after reboot. A failed write is never
+reported as verified. Legacy EEPROM remains non-journaled. Concurrent console/LPP
+writers fail closed without holding a lock over EEPROM waits. Help/replies reuse
+48bytes and atomic bounded TX; connection changes cancel partial/session state.
+Diag reset clears only owner event counters after off acknowledgement, retaining
+protocol identities/models. Ordinary RLR remains NO_RATE; static remains explicit
+stationary-only build policy. No new moving clock-rate estimator was added.
+
+Validation: rake unit summary passes217 tests;15 configuration/lifecycle and5
+actual USB tests also pass ASan/UBSan. Coverage includes owner-only SPI, failed and
+committed-but-unreadable off, reboot/no-op persistence, late events, invalid syntax,
+restart protection, RLR-from-TX, fresh initialization, concurrent writes, preserved
+anchor-position/power values, USB fragmentation/session recovery and bounded TX.
+Existing real-adapter TDMA/TWR, passive RLR and wrap tests remain passing.
+All13 clean REV=B/BOOTLOAD=0 firmware profiles pass: default CH2; CH5 at500/50/10;
+stationary CH5; PHY/diagnostic/ADS TX+RX; FTDI; longer range. Every initialized LOAD
+section was checked within0x08000000..0x08020000. Both linker scripts now explicitly
+check the data load image too. Only non-radio command/configuration support uses
+-Os. Override builds retain names/IDs but drop unreachable normal algorithm table
+references; normal images retain all seven engines. Final default text129024B,
+data1096B, bss15204B (includes reserved stacks); RAM headroom92B, flash image end
+0x0801FC48 (952B headroom). Existing platform/FreeRTOS/newlib warnings remain.
+Default bin/lps-node-firmware.elf/.dfu restored by a clean default build. No hardware
+was flashed or operated. The unrelated docs/mul_core.md formatting edit is retained
+and excluded. Stop after this DW1000 commit/push; no next checkpoint is authorized.
+
+Physical limitations: command responsiveness, cancellation of a pending delayed TX,
+RF silence after acknowledged off, and reacquisition after resume need the operator
+checks in docs/mul_commands.md. EEPROM power loss, stack/timing margins, custom
+rosters, residual UART/PHY/TWR faults and metric accuracy remain unvalidated here.

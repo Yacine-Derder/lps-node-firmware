@@ -349,6 +349,18 @@ static void CDC_SOF_FS(void) {
   SetupTransfer(true);
 }
 
+bool CDC_TryWrite(const char *buffer,unsigned len)
+{
+  bool ok=false;
+  if(!buffer||len>48)return false;
+  taskENTER_CRITICAL();
+  if(usbInit&&uxQueueSpacesAvailable(txq)>=len+64) {
+    ok=true;
+    for(unsigned i=0;i<len;i++)xQueueSend(txq,&buffer[i],0);
+  }
+  taskEXIT_CRITICAL();return ok;
+}
+
 int CDC_Write(char* buffer, int len)
 {
   int i;

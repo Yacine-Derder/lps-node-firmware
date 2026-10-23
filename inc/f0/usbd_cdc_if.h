@@ -39,6 +39,7 @@
 #endif
 /* Includes ------------------------------------------------------------------*/
 #include "usbd_cdc.h"
+#include <stdbool.h>
 
 /* Exported types ------------------------------------------------------------*/
 /* Exported constants --------------------------------------------------------*/
@@ -50,6 +51,7 @@ extern USBD_CDC_ItfTypeDef  USBD_Interface_fops_FS;
 uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len);
 
 // User functions
+bool CDC_TryWrite(const char *buffer,unsigned len);
 int CDC_Write(char* buffer, int len);
 int CDC_WriteBlocking(char *buffer, int len);
 int CDC_Read(char *buffer, int len);

@@ -13,6 +13,10 @@ static int initPtr = 0;
 
 static bool isInit = false;
 
+bool usbcommTryWrite(const char *data,unsigned len) {
+ return isInit&&USBD_IsSerialConnected()&&CDC_TryWrite(data,len);
+}
+
 uint32_t usbcommReceiveGeneration(void) {return CDC_ReceiveGeneration();}
 
 int usbcommRead(char* buffer, size_t len)

@@ -167,3 +167,7 @@ __isr_vector_size__ = SIZEOF(.isr_vector);
 __text_size__ = SIZEOF(.text);
 __data_size__ = SIZEOF(.data);
 __bss_size__ = SIZEOF(.bss);
+
+/* Explicit AT() load addresses are not checked against flash by GNU ld. */
+ASSERT(_sidata + SIZEOF(.data) <= ORIGIN(flash) + LENGTH(flash),
+       "Initialized data load image exceeds flash")

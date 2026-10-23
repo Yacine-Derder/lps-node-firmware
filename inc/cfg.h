@@ -40,9 +40,13 @@ typedef enum {
   cfgLowBitrate,
   cfgLongPreamble,
   cfgMulNetwork, // New three-byte TLV: local role, reference ID, follower ID.
+  cfgRfEnable, // Optional one-byte boolean; absent retains legacy enabled behavior.
 } ConfigField;
 
 void cfgInit();
+bool cfgPendingRestart(void);
+bool cfgStorageReady(void);
+bool cfgRfEnabled(bool *enabled);
 
 bool cfgReset(void);
 
@@ -68,7 +72,7 @@ bool cfgWriteFP32list(ConfigField field, float list[], uint8_t length);
 
 // Legacy EEPROM is read without writes. Missing roster derives its original
 // role once; changing address first persists that role, so role follows no ID.
-// role:0 reference,1 follower,2 disabled/passive. IDs are full canonical suffixes.
+// role:0 reference,1 follower,2 disabled/unassigned,3 explicit passive RLR. IDs are full canonical suffixes.
 bool cfgMulRead(uint8_t node,uint8_t *role,uint8_t *reference,uint8_t *follower);
 bool cfgMulWrite(uint8_t role,uint8_t reference,uint8_t follower);
 bool cfgMulChangeAddress(uint8_t address);
