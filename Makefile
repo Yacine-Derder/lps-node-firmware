@@ -57,7 +57,7 @@ OBJS+=$(foreach mod, $(USB_CDC), Middlewares/ST/STM32_USB_Device_Library/Class/C
 INCLUDES+=-Ivendor/libdw1000/inc
 OBJS+=vendor/libdw1000/src/libdw1000.o vendor/libdw1000/src/libdw1000Spi.o
 
-OBJS+=src/dwOps.o src/mul_schedule.o
+OBJS+=src/dwOps.o src/mul_schedule.o src/mul_multi_protocol.o
 
 CFLAGS+=$(PROCESSOR) $(INCLUDES) -O3 -g3 -Wall -Wno-pointer-sign -std=gnu11
 CFLAGS+=$(EXTRA_CFLAGS)
@@ -73,9 +73,9 @@ endif
 
 # Remove un-used functions and global variables from output file
 CFLAGS += -ffunction-sections -fdata-sections
-# Preserve stock engines/driver optimization. Size-optimize MUL/application
-# code to fit the generalized schedule without reducing stacks or safety queues.
-src/main.o src/cfg.o src/usbcomm.o src/uwb_control.o $(filter src/mul_%.o,$(OBJS)): CFLAGS += -Os
+# Size-optimize application code for the 128KB/16KB LPS target. Stock radio
+# engines keep their source/behavior; HAL, RTOS and libdw1000 retain -O3.
+$(filter src/%.o,$(OBJS)): CFLAGS += -Os
 LDFLAGS+=-Wl,-Map=bin/$(PROG).map,--cref,--gc-sections
 
 

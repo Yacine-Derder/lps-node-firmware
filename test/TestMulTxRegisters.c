@@ -7,6 +7,8 @@
 #include "mul_common.h"
 #include "mul_clock.h"
 #include "mul_twr.h"
+#include "mul_schedule.h"
+#include "mul_multi_protocol.h"
 #include "mul_relation.h"
 #include "mul_role_state.h"
 #include "mul_downlink.h"

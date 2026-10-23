@@ -69,7 +69,7 @@ static void command(void) {
   schedule.profile=schedule.count==2?MUL_PROFILE_LEGACY:MUL_PROFILE_MULTI;
   const char *error=mulScheduleValidate(&schedule);
   if(error){reply(error);return;}
-  reply(cfgMulScheduleWrite(node,&schedule)?"SAVED roster; multi RF adapter pending":"ERR roster/EEPROM unchanged or unconfirmed");return;
+  reply(cfgMulScheduleWrite(node,&schedule)?"SAVED roster; ON applies; mode5 only for multi":"ERR roster/EEPROM unchanged or unconfirmed");return;
  }
  if(count==2&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"show")){page=show;pageIndex=0;return;}
  if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&!strcmp(w[2],"slot_ms")) {

@@ -34,6 +34,9 @@ typedef struct {
   uint8_t powerCorrected:1;
   uint8_t candidatePowerCorrected:1;
   uint8_t invalidated:1;
+  uint8_t multiProfile:1;
+  uint8_t syncWindow:1;
+  uint8_t followerSlot:3;
 } mulTwr_t;
 
 void mulTwrEncode(uint8_t frame[MUL_TWR_FRAME_LENGTH], const mulTwrPacket_t *packet);
@@ -43,6 +46,7 @@ bool mulTwrResults(const uint64_t stamps[6], const mulPower_t power[3],
   uint32_t *raw, uint32_t *corrected); // UINT32_MAX corrected means unavailable.
 void mulTwrConfigureNetwork(const mulNetwork_t *network);
 void mulTwrInit(mulTwr_t *twr);
+bool mulTwrConfigureSchedule(mulTwr_t *twr,const mulSchedule_t *schedule,unsigned slot,unsigned window);
 void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool invalidateDelay);
 void mulTwrFlush(mulTwr_t *twr);
 bool mulTwrDue(uint32_t referenceSequence);

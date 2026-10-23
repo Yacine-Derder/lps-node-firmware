@@ -20,11 +20,17 @@ void uwbControlInit(const uwbConfig_t *c) {
  allowed=cfgStorageReady()&&identity&&network&&role!=3;
 #endif
  uint16_t slot=0;if(!cfgMulSlotRead(&slot))allowed=false;requestedSlot=slot;
- requested=allowed&&cfgRfEnabled(&enabled)&&enabled;running=false;
+ requested=uwbControlCanEnable()&&cfgRfEnabled(&enabled)&&enabled;running=false;
 }
 bool uwbControlCanEnable(void) {
  mulSchedule_t schedule;
- return allowed&&!cfgPendingRestart()&&cfgMulScheduleRead(uwbGetConfig()->address[0],&schedule)&&schedule.profile==MUL_PROFILE_LEGACY;
+ const uwbConfig_t *c=uwbGetConfig();
+ if(cfgPendingRestart()||!cfgMulScheduleRead(c->address[0],&schedule))return false;
+ uint8_t storedBytes;
+ if(schedule.profile==MUL_PROFILE_LEGACY&&!cfgFieldSize(cfgMulSchedule,&storedBytes))return allowed;
+ uint8_t mode,node;
+ return cfgStorageReady()&&cfgReadU8(cfgMode,&mode)&&mode==MODE_MUL_ALR&&c->mode==mode&&
+   cfgReadU8(cfgAddress,&node)&&node==c->address[0]&&mulScheduleIndex(&schedule,node)>=0;
 }
 bool uwbControlRequest(bool enabled) {
  if(enabled&&!uwbControlCanEnable())return false;
@@ -43,8 +49,13 @@ bool uwbControlApply(dwDevice_t *dev,uwbAlgorithm_t *algorithm) {
    uwbConfig_t *c=uwbGetConfig();
    (void)cfgMulScheduleRead(c->address[0],&c->mulSchedule);
    c->mulNetwork.slotMs=requestedSlot;
+   if(c->mode>=MODE_MUL_ALR&&c->mode<=MODE_MUL_RLR) {
+     int slot=mulScheduleIndex(&c->mulSchedule,c->address[0]);
+     if(slot>=0) {mulSchedulePair(&c->mulSchedule,slot?slot:1,&c->mulNetwork);
+       c->mulRole=c->mode==MODE_MUL_ALR?(slot?mulAlrFollower:mulAlrReference):mulAlrUnsupported;c->mulConfigured=true;}
+   }
  }
- if(uwbGetConfig()->mulSchedule.profile==MUL_PROFILE_MULTI)requested=false; // Runtime adapter milestone pending.
+ if(uwbGetConfig()->mulSchedule.profile==MUL_PROFILE_MULTI&&!uwbControlCanEnable())requested=false;
  if(requested==running)return false;
  dwIdle(dev);dwClearAllStatus(dev);running=false;
  if(requested){algorithm->init(uwbGetConfig(),dev);running=true;}

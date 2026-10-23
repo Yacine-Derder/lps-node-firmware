@@ -139,3 +139,24 @@ localization code with independent clock skews, signed/zero geometry, missing
 reference/followers, invalid relations, reordering, bad capture age, schedule
 mismatch, reference recovery and40-bit/32-bit rollover at N=2/3/4/8. This is a
 software simulation; ALR driver/STM32 telemetry integration is still required.
+
+### LPS multi radio adapter
+
+Mode 5 now selects profile 2 from a persisted roster of three through eight IDs.
+The reference uses one reusable TWR exchange context; followers retain their own
+clock and propagation correction. Data TX is hardware delayed at `index*slot_ms`
+after each freshly received reference, and carries that reference's cycle.
+Two maintenance windows prepare at 630/780 ms and poll at 650/800 ms. A failed
+first exchange is canceled before preparing the second. Missing followers are
+skipped, not replaced by a different unscheduled owner. No late immediate TX is
+allowed. Broadcast preparation at 980 ms takes priority over all ranging.
+
+Profile 1 retains its original frames and fifth-cycle TWR cadence. LPS passive
+mode 6 does not implement profile 2 and refuses to enable it; the generalized
+passive receiver is intended for STM32. Legacy configuration and observations
+continue using their original paths. Application objects use `-Os` to fit the
+128 KB flash; HAL, RTOS and libdw1000 retain their previous optimization. Existing
+mode-exclusive state is reused; stack and queue reservations are unchanged.
+Native tests exercise every follower slot for N=2/3/4/8, both complete TWR
+windows with independent clocks, cycle wrap, and first-window failure isolation.
+These are software checks, not hardware timing or accuracy validation.

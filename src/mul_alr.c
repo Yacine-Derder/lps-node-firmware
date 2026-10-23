@@ -34,14 +34,28 @@ static uint32_t pendingSequence;
 static uint64_t nextRawTx;
 static uint64_t pendingTimestamp;
 static uint64_t pendingRawTx;
-static bool txPending;
-static mulAlrRole_t alrRole = mulAlrUnsupported;
-static mulSourceState_t followerReference;
-static bool referenceAcquired;
+static struct {uint8_t tx:1,acquired:1,multi:1;} flags;
+#define referenceAcquired flags.acquired
+#define multiMode flags.multi
+static int8_t alrRole = mulAlrUnsupported;
+/* Legacy diagnostic counters and multi configuration are mode-exclusive. */
+static union {
+ mulSourceState_t legacy;
+ struct {bool hasSequence;uint32_t sequence;const mulSchedule_t *schedule;
+   uint8_t slot,served;uint64_t txTimestamp,rxTimestamp;} multi;
+} referenceState;
+#define followerReference referenceState.legacy
+#define schedule referenceState.multi.schedule
+#define localSlot referenceState.multi.slot
+#define servedWindows referenceState.multi.served
+static uint32_t refSequence(void){return multiMode?referenceState.multi.sequence:followerReference.sequence;}
+static uint64_t refRx(void){return multiMode?referenceState.multi.rxTimestamp:followerReference.rxTimestamp;}
+static uint64_t refTx(void){return multiMode?referenceState.multi.txTimestamp:followerReference.txTimestamp;}
+
 static TickType_t lastReferenceTick;
 #define followerClock mulRoleIo.alr.clock
 #define ranging mulRoleScratch.twr
-static bool followerSeen;
+static uint8_t followerSeen;
 
 #define MUL_REFERENCE_LOSS_MS MUL_SOURCE_TIMEOUT_MS
 
@@ -99,18 +113,43 @@ static uint32_t waitForNextTx(dwDevice_t *dev)
   return (uint32_t)(((uint64_t)remaining + MUL_DTU_PER_MS - 1) / MUL_DTU_PER_MS);
 }
 
+static bool readBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *arrival,unsigned *slot) {
+ if(!multiMode)return mulRxReadBroadcastNetwork(alrNetwork,dev,packet,arrival,NULL);
+ unsigned n=dwGetDataLength(dev);if(n!=MUL_MULTI_REFERENCE_BYTES&&n!=MUL_MULTI_FOLLOWER_BYTES)return false;
+ uint8_t frame[MUL_MULTI_FOLLOWER_BYTES];mulMultiBroadcast_t decoded;dwGetData(dev,frame,n);
+ if(!mulMultiBroadcastDecode(schedule,frame,n,&decoded))return false;
+ dwTime_t rx={.full=0};dwGetRawReceiveTimestamp(dev,&rx);
+ int64_t age=mulTimestampDifference(readHardwareTime(dev),rx.full);
+ if(age<0||age>(int64_t)(15*MUL_DTU_PER_MS))return false;
+ *arrival=mulTimestampMask(rx.full);*packet=decoded.packet;packet->slotMs=schedule->slotMs;
+ if(slot)*slot=decoded.slot;
+ return true;
+}
+
 static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
 {
   dwIdle(dev);
   dwReceivePermanently(dev, false);
   memcpy(source, config->address, sizeof(source));
   nextSequence = 0;
-  txPending = false;
+  flags.tx = false;
   alrNetwork=config->mulConfigured?&config->mulNetwork:&mulDefaultNetwork;
   memset(&mulRoleIo,0,sizeof(mulRoleIo));
   alrRole=config->mulConfigured?config->mulRole:mulNetworkRole(alrNetwork,config->address);
+  if(config->mulConfigured&&config->mulSchedule.profile==MUL_PROFILE_LEGACY) {
+    int index=mulScheduleIndex(&config->mulSchedule,source[0]);
+    if(index>=0){mulSchedulePair(&config->mulSchedule,1,&config->mulNetwork);alrRole=index?mulAlrFollower:mulAlrReference;}
+  }
   if(!mulNetworkValid(alrNetwork)||mulNetworkRole(alrNetwork,source)!=alrRole)alrRole=mulAlrUnsupported;
-  memset(&followerReference, 0, sizeof(followerReference));
+  memset(&referenceState,0,sizeof(referenceState));
+  multiMode=config->mulConfigured&&config->mulSchedule.profile==MUL_PROFILE_MULTI;
+  if(multiMode) {
+    schedule=&config->mulSchedule;int index=mulScheduleIndex(schedule,source[0]);
+    if(mulScheduleValidate(schedule)||index<0)alrRole=mulAlrUnsupported;
+    else {localSlot=(uint8_t)index;alrRole=index?mulAlrFollower:mulAlrReference;
+      (void)mulSchedulePair(schedule,index?index:1,&config->mulNetwork);
+      if(mulNetworkRole(alrNetwork,source)!=alrRole)alrRole=mulAlrUnsupported;}
+  }
   referenceAcquired = false;
   mulClockReset(&followerClock);
   mulTwrInit(&ranging);mulTwrConfigureNetwork(alrNetwork);
@@ -133,7 +172,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
 // and a live TX_ANTD reading; no remote timestamp is used for hardware scheduling.
 static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDelay)
 {
-  pendingSequence = nextSequence++;
+  pendingSequence = multiMode&&alrRole==mulAlrFollower?refSequence():nextSequence++;
   dwNewTransmit(dev);
   dwSetDefaults(dev);
   clearTxErrors(dev);
@@ -153,6 +192,7 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
   pendingTimestamp = mulTimestampMask(programmed.full + txAntennaDelay);
   (void)mulEncodeScheduledPacket(txFrame,source,pendingSequence,pendingTimestamp,mulNetworkSlotMs(alrNetwork));
   unsigned int length=MUL_TEST_FRAME_LENGTH;
+  if(multiMode)length=mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,0,pendingSequence,pendingTimestamp,NULL);
   if (alrRole==mulAlrFollower) {
     mulClockDelay_t delay;
     bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
@@ -161,7 +201,8 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
     if (relation.version==2 && !supplied)
       relation.delayState=mulTwrPropagationState(&ranging,&followerClock,(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS);
     mulTestPacket_t packet={.sequence=pendingSequence,.txTimestamp=pendingTimestamp,.slotMs=mulNetworkSlotMs(alrNetwork)}; memcpy(packet.source,source,8);
-    mulRelationEncode(txFrame,&packet,&relation); length=MUL_RELATION_FRAME_LENGTH;
+    if(multiMode)length=mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,localSlot,pendingSequence,pendingTimestamp,&relation);
+    else {mulRelationEncode(txFrame,&packet,&relation);length=MUL_RELATION_FRAME_LENGTH;}
   }
   dwSetData(dev, txFrame, length);
 
@@ -173,12 +214,12 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
     return false;
   }
   pendingRawTx = rawTx.full;
-  txPending = true;
+  flags.tx = true;
   dwStartTransmit(dev);
   if (dwSpiRead16(dev, SYS_STATUS, 3) & MUL_TX_ERROR_STATUS) {
     dwIdle(dev);
     clearTxErrors(dev);
-    txPending = false;
+    flags.tx = false;
     printf("MUL ALR: Delayed TX failed seq=%" PRIu32 "\r\n", pendingSequence);
     return false;
   }
@@ -208,6 +249,7 @@ static uint32_t scheduleTx(dwDevice_t *dev)
   nextRawTx = mulTimestampMask(nextRawTx + MUL_TX_PERIOD_DTU);
   mulTwrCancel(&ranging, dev, NULL, false);
   followerSeen = false;
+  if(multiMode)servedWindows=0;
   uint16_t antennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
   bool started = startDelayedTx(dev, rawTx, antennaDelay);
   mulTwrFlush(&ranging);
@@ -224,7 +266,7 @@ static void abortFollowerTx(dwDevice_t *dev)
 {
   dwIdle(dev);
   clearTxErrors(dev);
-  txPending = false;
+  flags.tx = false;
 }
 
 static uint32_t followerWait(dwDevice_t *dev)
@@ -238,7 +280,7 @@ static uint32_t followerWait(dwDevice_t *dev)
     uint32_t elapsedMs = elapsed * portTICK_PERIOD_MS;
     wait = elapsedMs >= MUL_REFERENCE_LOSS_MS ? 1 : MUL_REFERENCE_LOSS_MS - elapsedMs;
   }
-  if (txPending) {
+  if (flags.tx) {
     // The watchdog is absolute in the local hardware clock, so unrelated events
     // cannot restart or extend it. A millisecond wakeup never defines the TX time.
     int64_t remaining = mulTimestampDifference(
@@ -251,7 +293,7 @@ static uint32_t followerWait(dwDevice_t *dev)
     }
   }
   wait = mulTwrDelayWait(&ranging, nowMs, wait);
-  return mulTwrWait(&ranging, dev, followerReference.rxTimestamp, wait);
+  return mulTwrWait(&ranging, dev, refRx(), wait);
 }
 
 static bool scheduleFollowerTx(dwDevice_t *dev, uint64_t localRx)
@@ -259,15 +301,16 @@ static bool scheduleFollowerTx(dwDevice_t *dev, uint64_t localRx)
   uint16_t antennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
   // Aim for antenna-referenced TX at RX + the configured slot, in this follower's clock.
   // Subtract TX_ANTD before aligning the raw DX_TIME upwards to 512 ticks.
-  uint64_t rawTarget = mulTimestampMask(localRx + (mulNetworkSlotMs(alrNetwork)*MUL_DTU_PER_MS) - antennaDelay);
+  unsigned offset=mulNetworkSlotMs(alrNetwork)*(multiMode?localSlot:1);
+  uint64_t rawTarget = mulTimestampMask(localRx + offset*MUL_DTU_PER_MS - antennaDelay);
   dwTime_t rawTx = {.full = mulTimestampMask(
     (rawTarget + MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1))};
   int64_t lead = mulTimestampDifference(rawTx.full, readHardwareTime(dev));
   if (lead < (int64_t)MUL_TX_MIN_LEAD_DTU ||
-      lead > (int64_t)((mulNetworkSlotMs(alrNetwork)*MUL_DTU_PER_MS) + MUL_TX_ALIGNMENT)) {
+      lead > (int64_t)(offset*MUL_DTU_PER_MS + MUL_TX_ALIGNMENT)) {
     // Never move a missed slot forward, retry its sequence, or extrapolate a frame.
     printf("MUL ALR: SLOT skipped ref_seq=%" PRIu32 " reason=late_or_stale\r\n",
-           followerReference.sequence);
+           refSequence());
     return false;
   }
   return startDelayedTx(dev, rawTx, antennaDelay);
@@ -284,14 +327,14 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     mulClockReset(&followerClock);
     mulTwrCancel(&ranging, dev, "reference_lost", true);
     ranging.attempted = false;
-    if (txPending) {
+    if (flags.tx) {
       abortFollowerTx(dev);
     }
   }
 
-  if (txPending) {
+  if (flags.tx) {
     if (event == eventPacketReceived &&
-        (dwGetDataLength(dev) == MUL_TWR_FRAME_LENGTH || dwGetDataLength(dev) == 68)) {
+        (dwGetDataLength(dev) == MUL_TWR_FRAME_LENGTH || dwGetDataLength(dev)==MUL_MULTI_TWR_BYTES || dwGetDataLength(dev) == 68)) {
       return followerWait(dev); // A stale ranging IRQ must not displace an armed TDMA slot.
     }
     if (event == eventTimeout &&
@@ -303,7 +346,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       dwTime_t actual = {.full = 0};
       dwGetTransmitTimestamp(dev, &actual);
       actual.full = mulTimestampMask(actual.full);
-      txPending = false;
+      flags.tx = false;
       mulRxRearm(dev);
       logCompletedTx(actual.full);
     } else {
@@ -312,20 +355,28 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       abortFollowerTx(dev);
       mulRxRearm(dev);
       printf("MUL ALR: SLOT aborted ref_seq=%" PRIu32 " reason=%s\r\n",
-             followerReference.sequence, event == eventTimeout ? "tx_timeout" : "radio_event");
+             refSequence(), event == eventTimeout ? "tx_timeout" : "radio_event");
     }
     return followerWait(dev);
   }
 
-  if (referenceAcquired && mulTwrOnEvent(&ranging, dev, event, mulAlrFollower,
-      followerReference.sequence, followerReference.rxTimestamp, followerReference.txTimestamp,
+  bool selected=true;
+  if(multiMode&&referenceAcquired) {
+    selected=false;
+    for(unsigned window=0;window<MUL_SYNC_WINDOWS;window++)if(mulScheduleSyncOwner(schedule,refSequence(),window)==localSlot) {
+      selected=mulTwrConfigureSchedule(&ranging,schedule,localSlot,window);break;
+    }
+    if(!selected&&event==eventPacketReceived&&dwGetDataLength(dev)==MUL_MULTI_TWR_BYTES){mulRxRearm(dev);return followerWait(dev);}
+  }
+  if (referenceAcquired && selected && mulTwrOnEvent(&ranging, dev, event, mulAlrFollower,
+      refSequence(), refRx(), refTx(),
       followerClock.epoch, (uint32_t)now * portTICK_PERIOD_MS)) {
     return followerWait(dev);
   }
 
   mulTestPacket_t packet;
   uint64_t arrival = 0;
-  bool valid = event == eventPacketReceived && mulRxReadBroadcastNetwork(alrNetwork,dev,&packet,&arrival,NULL);
+  bool valid = event == eventPacketReceived && readBroadcast(dev,&packet,&arrival,NULL);
   if(valid&&!mulNetworkScheduleMatches(alrNetwork,packet.slotMs)) {
     printf("MUL ALR: slot_mismatch expected=%u advertised=%u; slot skipped\r\n",mulNetworkSlotMs(alrNetwork),packet.slotMs);
     valid=false;referenceAcquired=false;mulClockReset(&followerClock);
@@ -338,11 +389,19 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   if (valid && mulNetworkRole(alrNetwork,packet.source) == mulAlrReference) {
     // Preserve Stage 3A.1's restart policy after loss, without accepting replays
     // of the last sequence. Epoch identification is deliberately not added here.
-    if (!referenceAcquired && followerReference.hasSequence &&
-        packet.sequence != followerReference.sequence) {
-      followerReference.hasSequence = false;
+    mulSequenceResult_t result;
+    if(multiMode) {
+      if(!referenceAcquired&&referenceState.multi.hasSequence&&packet.sequence!=refSequence())referenceState.multi.hasSequence=false;
+      uint32_t delta=packet.sequence-refSequence();
+      result=!referenceState.multi.hasSequence?mulSequenceFirst:!delta?mulSequenceDuplicate:delta>=UINT32_C(0x80000000)?mulSequenceOld:mulSequenceForward;
+      if(result!=mulSequenceDuplicate&&result!=mulSequenceOld) {
+        referenceState.multi.hasSequence=true;referenceState.multi.sequence=packet.sequence;
+        referenceState.multi.rxTimestamp=arrival;referenceState.multi.txTimestamp=packet.txTimestamp;
+      }
+    }else {
+      if(!referenceAcquired&&followerReference.hasSequence&&packet.sequence!=followerReference.sequence)followerReference.hasSequence=false;
+      result=mulObservePacket(&followerReference,&packet,arrival);
     }
-    mulSequenceResult_t result = mulObservePacket(&followerReference, &packet, arrival);
     if (result != mulSequenceDuplicate && result != mulSequenceOld) {
       fresh = true;
       acquiredNow = !referenceAcquired;
@@ -401,8 +460,34 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   return followerWait(dev);
 }
 
+/* One radio, two disjoint maintenance windows. Reference reuses one TWR context;
+ * each follower keeps its own committed propagation estimate. */
+static uint32_t multiReferenceService(dwDevice_t *dev,bool start) {
+ uint32_t wait=waitForNextTx(dev);int64_t phase=mulTimestampDifference(readHardwareTime(dev),pendingTimestamp);
+ for(unsigned w=0;w<MUL_SYNC_WINDOWS;w++) {
+   unsigned owner=mulScheduleSyncOwner(schedule,pendingSequence,w);
+   if(!owner||(servedWindows&(1u<<w)))continue;
+   unsigned prep=mulScheduleSyncPollMs(w)-20;
+   if(phase>=(int64_t)(prep*MUL_DTU_PER_MS)&&start) {
+     servedWindows|=1u<<w;
+     if(ranging.active)mulTwrCancel(&ranging,dev,"window_turnaround",false);
+     if((followerSeen&(1u<<owner))&&phase<(int64_t)((mulScheduleSyncPollMs(w)-5)*MUL_DTU_PER_MS)) {
+       mulTwrInit(&ranging);mulTwrConfigureSchedule(&ranging,schedule,owner,w);
+       (void)mulSchedulePair(schedule,owner,(mulNetwork_t *)alrNetwork);
+       mulTwrStart(&ranging,dev,pendingSequence,pendingTimestamp);
+     }
+   }else {
+     int64_t remaining=(int64_t)(prep*MUL_DTU_PER_MS)-phase;
+     uint32_t ms=remaining<=0?1:(uint32_t)((remaining+MUL_DTU_PER_MS-1)/MUL_DTU_PER_MS);
+     if(ms<wait)wait=ms;
+   }
+ }
+ return mulTwrWait(&ranging,dev,pendingTimestamp,wait);
+}
+
 static uint32_t referenceWait(dwDevice_t *dev)
 {
+  if(multiMode)return multiReferenceService(dev,false);
   uint32_t wait = waitForNextTx(dev);
   if (followerSeen && mulTwrDue(pendingSequence) &&
       !(ranging.attempted && ranging.id == pendingSequence)) {
@@ -424,7 +509,7 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
     dwIdle(dev);
     return MAX_TIMEOUT;
   }
-  if (!txPending) {
+  if (!flags.tx) {
     // A delayed or stale IRQ cannot retain TWR ownership across the next mandatory
     // broadcast preparation deadline. Hardware time always wins over ranging.
     int64_t remaining = mulTimestampDifference(nextRawTx, readHardwareTime(dev));
@@ -433,6 +518,7 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       mulTwrCancel(&ranging, dev, NULL, false);
       if (event == eventTimeout) return scheduleTx(dev);
     } else {
+      if(multiMode&&event==eventTimeout)multiReferenceService(dev,true);
       if (mulTwrOnEvent(&ranging, dev, event, mulAlrReference, pendingSequence,
           pendingTimestamp, pendingTimestamp, 0, (uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS)) {
         return referenceWait(dev);
@@ -440,10 +526,16 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       if (event == eventPacketReceived) {
         mulTestPacket_t packet;
         uint64_t arrival;
-        if (mulRxReadBroadcastNetwork(alrNetwork,dev,&packet,&arrival,NULL) && mulNetworkRole(alrNetwork,packet.source) == mulAlrFollower) {
+        unsigned slot=1;
+        if (readBroadcast(dev,&packet,&arrival,&slot) && (multiMode?slot!=0:mulNetworkRole(alrNetwork,packet.source)==mulAlrFollower)) {
           int64_t phase = mulTimestampDifference(arrival, pendingTimestamp);
           if(!mulNetworkScheduleMatches(alrNetwork,packet.slotMs))
             printf("MUL ALR: slot_mismatch expected=%u advertised=%u\r\n",mulNetworkSlotMs(alrNetwork),packet.slotMs);
+          else if(multiMode) {
+            int64_t expected=(int64_t)slot*schedule->slotMs*MUL_DTU_PER_MS;
+            int64_t tolerance=(int64_t)mulSlotToleranceMs(schedule->slotMs)*MUL_DTU_PER_MS;
+            if(packet.sequence==pendingSequence&&phase>=expected-tolerance&&phase<=expected+tolerance)followerSeen|=1u<<slot;
+          }
           else if (phase >= (int64_t)(mulSlotMinDtu(mulNetworkSlotMs(alrNetwork))) && phase <= (int64_t)((mulNetworkSlotMs(alrNetwork)+2*mulSlotToleranceMs(mulNetworkSlotMs(alrNetwork)))*MUL_DTU_PER_MS))
             followerSeen = true;
         }
@@ -452,7 +544,7 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       }
       if (event == eventTimeout) {
         int64_t phase = mulTimestampDifference(readHardwareTime(dev), pendingTimestamp);
-        if (followerSeen && mulTwrDue(pendingSequence) && phase >= (int64_t)(MUL_TWR_PREPARE_MS*MUL_DTU_PER_MS) &&
+        if (!multiMode && followerSeen && mulTwrDue(pendingSequence) && phase >= (int64_t)(MUL_TWR_PREPARE_MS*MUL_DTU_PER_MS) &&
             !(ranging.attempted && ranging.id == pendingSequence)) {
           mulTwrStart(&ranging, dev, pendingSequence, pendingTimestamp);
         }
@@ -462,20 +554,20 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
   }
   switch (event) {
     case eventTimeout:
-      if (!txPending) {
+      if (!flags.tx) {
         return scheduleTx(dev);
       }
       dwIdle(dev);
       clearTxErrors(dev);
-      txPending = false;
+      flags.tx = false;
       printf("MUL ALR: TX timeout seq=%" PRIu32 "\r\n", pendingSequence);
       break;
     case eventPacketSent:
-      if (txPending) {
+      if (flags.tx) {
         dwTime_t actual = {.full = 0};
         dwGetTransmitTimestamp(dev, &actual);
         actual.full = mulTimestampMask(actual.full);
-        txPending = false;
+        flags.tx = false;
         mulRxRearm(dev);
         logCompletedTx(actual.full);
       }
@@ -484,13 +576,13 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
     case eventReceiveFailed:
       dwIdle(dev);
       clearTxErrors(dev);
-      txPending = false;
+      flags.tx = false;
       mulRxRearm(dev);
       printf("MUL ALR: RX %s outside_TWR recovery=rearm\r\n",
              event == eventReceiveTimeout ? "timeout" : "failure");
       break;
     case eventPacketReceived:
-      if (txPending) {
+      if (flags.tx) {
         return MUL_TX_COMPLETION_MS;
       }
       break;

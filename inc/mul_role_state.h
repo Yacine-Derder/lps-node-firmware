@@ -2,6 +2,7 @@
 #ifndef MUL_ROLE_STATE_H
 #define MUL_ROLE_STATE_H
 #include "mul_twr.h"
+#include "mul_multi_protocol.h"
 #include "mul_ads_dw.h"
 #include "mul_relation.h"
 #include "mul_observation.h"
@@ -19,7 +20,7 @@ typedef union {
 extern mulRoleScratch_t mulRoleScratch;
 /* Additional existing mode-exclusive IO: no stack/buffer size reduction. */
 typedef union {
-  struct {uint8_t frame[MUL_RELATION_FRAME_LENGTH+2];mulClock_t clock;} alr;
+  struct {uint8_t frame[MUL_MULTI_FOLLOWER_BYTES+2];mulClock_t clock;} alr;
   mulObservation_t observations[MUL_ALR_COUNT];
 } mulRoleIo_t;
 extern mulRoleIo_t mulRoleIo;

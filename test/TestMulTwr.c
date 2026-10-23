@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "unity.h"
 #include "mul_twr.h"
+#include "mul_schedule.h"
+#include "mul_multi_protocol.h"
 #include "mul_relation.h"
 #include "mul_role_state.h"
 #include "mul_downlink.h"
@@ -28,7 +30,7 @@ static void captureObservation(const mulLocalization_t *o) { capturedObservation
 #define SEC (1000*MS)
 typedef struct {
   dwDevice_t device;
-  uint8_t tx[MUL_TWR_FRAME_LENGTH+2], rx[MUL_TWR_FRAME_LENGTH];
+  uint8_t tx[MUL_MULTI_TWR_BYTES+2], rx[MUL_MULTI_TWR_BYTES];
   unsigned int txLength, rxLength, sends, rearms, aborts;
   uint64_t now, raw, actual, arrival;
   uint16_t antenna, rxAntenna, physicalTx, physicalRx, status, injectStatus;
@@ -46,6 +48,7 @@ static uint64_t offsets[3], origins[2];
 static uint32_t exchangeSequence;
 static TickType_t ticks;
 static bool useAlr[2];
+static const mulSchedule_t *simulationSchedule;
 static const uint8_t identities[2][8] = {{0x84,0,0,0,0,0,0xcf,0xbc},{0x85,0,0,0,0,0,0xcf,0xbc}};
 
 TickType_t xTaskGetTickCount(void) { return ticks; }
@@ -92,7 +95,7 @@ void dwSpiWrite(dwDevice_t *dev, uint8_t reg, uint32_t sub, const void *data, si
   radio(dev)->status=0;
 }
 void dwSetData(dwDevice_t *dev, uint8_t *data, unsigned int size) {
-  TEST_ASSERT_TRUE(size == MUL_TEST_FRAME_LENGTH || size == MUL_RELATION_FRAME_LENGTH || size == MUL_TWR_FRAME_LENGTH);
+  TEST_ASSERT_TRUE(size == MUL_TEST_FRAME_LENGTH || size == MUL_RELATION_FRAME_LENGTH || size == MUL_TWR_FRAME_LENGTH || size==MUL_MULTI_REFERENCE_BYTES || size==MUL_MULTI_FOLLOWER_BYTES || size==MUL_MULTI_TWR_BYTES);
   memcpy(radio(dev)->tx,data,size+2); // Same FCS reserve read as the real driver.
   radio(dev)->txLength=size;
 }
@@ -167,10 +170,12 @@ void tearDown(void) {}
 static void transfer(int from) {
   int to=1-from; FakeRadio *s=&radios[from], *r=&radios[to];
   TEST_ASSERT_TRUE(s->armed); TEST_ASSERT_TRUE(r->receiving);
-  uint8_t payload[MUL_TWR_FRAME_LENGTH]; unsigned int length=s->txLength;
-  TEST_ASSERT_EQUAL_UINT(MUL_TWR_FRAME_LENGTH,length);
+  uint8_t payload[MUL_MULTI_TWR_BYTES]; unsigned int length=s->txLength;
+  TEST_ASSERT_EQUAL_UINT(ctx(from)->multiProfile?MUL_MULTI_TWR_BYTES:MUL_TWR_FRAME_LENGTH,length);
   memcpy(payload,s->tx,length);
-  mulTwrPacket_t packet; TEST_ASSERT_TRUE(mulTwrDecode(payload,length,&packet));
+  mulTwrPacket_t packet;
+  if(ctx(from)->multiProfile) {unsigned slot;TEST_ASSERT_TRUE(mulMultiTwrDecode(simulationSchedule,ctx(from)->syncWindow,payload,length,&packet,&slot));}
+  else TEST_ASSERT_TRUE(mulTwrDecode(payload,length,&packet));
   if (s->stampError == 0) TEST_ASSERT_EQUAL_UINT64(s->actual,packet.txTimestamp);
   int64_t when=sendTime(from);
   advance(when+(int64_t)MS); s->armed=false; dispatch(from,eventPacketSent);
@@ -336,7 +341,7 @@ static void modeFollower(void) {
   for (unsigned int i=0;i<6;i++) {
     int64_t at=-(int64_t)(5-i)*SEC; advance(at+flight+MS);
     injectBroadcast(1,0,i,clockAt(0,at),clockAt(1,at+flight));
-    TEST_ASSERT_TRUE(txPending); TEST_ASSERT_FALSE(ranging.active);
+    TEST_ASSERT_TRUE(flags.tx); TEST_ASSERT_FALSE(ranging.active);
     advance(sendTime(1)+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
   }
   TEST_ASSERT_EQUAL_INT(mulClockValid,followerClock.status);
@@ -346,10 +351,10 @@ void test_mulTwrLiveFollowerIntegrationBroadcastPriorityAvailabilityAndLoss(void
   scenario(5000,2131); modeFollower();
   advance(630*MS); TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
   completeExchange(); TEST_ASSERT_TRUE(ranging.delayValid); TEST_ASSERT_TRUE(ranging.syncAvailable);
-  TEST_ASSERT_TRUE(radios[1].receiving); TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_TRUE(radios[1].receiving); TEST_ASSERT_FALSE(flags.tx);
   // Next reference broadcast remains the only source of follower scheduling.
   advance(SEC+flight+MS); injectBroadcast(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));
-  TEST_ASSERT_TRUE(txPending); TEST_ASSERT_FALSE(ranging.active);
+  TEST_ASSERT_TRUE(flags.tx); TEST_ASSERT_FALSE(ranging.active);
   mulRelation_t relation; mulTestPacket_t extended;
   TEST_ASSERT_EQUAL_UINT(MUL_RELATION_FRAME_LENGTH,radios[1].txLength);
   TEST_ASSERT_TRUE(mulBroadcastDecode(radios[1].tx,radios[1].txLength,&extended,&relation));
@@ -364,7 +369,7 @@ void test_mulTwrLiveFollowerIntegrationBroadcastPriorityAvailabilityAndLoss(void
   radios[1].rxLength=68; // Legacy TWR IRQ is still lower priority than TDMA.
   dispatch(1,eventPacketReceived);
   TEST_ASSERT_EQUAL_UINT(sends,radios[1].sends); TEST_ASSERT_EQUAL_UINT64(raw,radios[1].raw);
-  TEST_ASSERT_TRUE(txPending); TEST_ASSERT_TRUE(radios[1].armed);
+  TEST_ASSERT_TRUE(flags.tx); TEST_ASSERT_TRUE(radios[1].armed);
   TEST_ASSERT_FALSE(ranging.active);
   advance(4*SEC+MS); dispatch(1,eventTimeout);
   TEST_ASSERT_FALSE(referenceAcquired); TEST_ASSERT_FALSE(ranging.delayValid); TEST_ASSERT_FALSE(ranging.syncAvailable);
@@ -377,7 +382,7 @@ void test_mulTwrReferenceModeGatesOnFollowerAndPreservesNextBroadcast(void) {
   advance(-5*(int64_t)SEC-20*(int64_t)MS); mulAlrAlgorithm.init(&configuration,&radios[0].device);
   for (unsigned int i=0;i<6;i++) {
     if (i != 0) advance(framePhysical+(int64_t)SEC-20*(int64_t)MS);
-    dispatch(0,eventTimeout); TEST_ASSERT_TRUE(txPending);
+    dispatch(0,eventTimeout); TEST_ASSERT_TRUE(flags.tx);
     int64_t when=sendTime(0); advance(when+MS); radios[0].armed=false; dispatch(0,eventPacketSent);
     framePhysical=when; TEST_ASSERT_EQUAL_UINT32(i,pendingSequence);
     advance(when+MUL_FOLLOWER_SLOT_DTU+flight);
@@ -386,11 +391,11 @@ void test_mulTwrReferenceModeGatesOnFollowerAndPreservesNextBroadcast(void) {
   origins[0]=pendingTimestamp; origins[1]=clockAt(1,framePhysical+flight); modelAcquire();
   mulRxInit(&radios[1].device);
   advance(framePhysical+630*MS); dispatch(0,eventTimeout);
-  TEST_ASSERT_TRUE(ranging.active); TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_TRUE(ranging.active); TEST_ASSERT_FALSE(flags.tx);
   completeExchange(); TEST_ASSERT_TRUE(contexts[1].delayValid);
   TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_EQUAL_UINT32(5,pendingSequence);
   advance(framePhysical+(int64_t)SEC-20*(int64_t)MS); dispatch(0,eventTimeout);
-  TEST_ASSERT_TRUE(txPending); TEST_ASSERT_FALSE(ranging.active);
+  TEST_ASSERT_TRUE(flags.tx); TEST_ASSERT_FALSE(ranging.active);
   mulTestPacket_t next; TEST_ASSERT_TRUE(mulDecodeTestPacket(radios[0].tx,34,&next));
   TEST_ASSERT_EQUAL_UINT32(6,next.sequence);
   TEST_ASSERT_EQUAL_INT64(SEC,mulTimestampDifference(next.txTimestamp,origins[0]));
@@ -445,14 +450,14 @@ void test_mulTwrFollowerNewBroadcastPreemptsExchangeAndReacquiresAfterLoss(void)
   TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
   transfer(0); // Follower response armed, still lower priority than a new broadcast.
   int64_t when=sendTime(1); advance(when+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
-  TEST_ASSERT_TRUE(ranging.active); TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_TRUE(ranging.active); TEST_ASSERT_FALSE(flags.tx);
   advance(SEC+flight+MS); injectBroadcast(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));
-  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_TRUE(txPending); TEST_ASSERT_FALSE(ranging.delayValid);
+  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_TRUE(flags.tx); TEST_ASSERT_FALSE(ranging.delayValid);
   advance(sendTime(1)+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
   advance(4*SEC+MS); dispatch(1,eventTimeout); TEST_ASSERT_FALSE(referenceAcquired);
   uint64_t oldEpoch=followerClock.epoch;
   advance(5*SEC+flight+MS); injectBroadcast(1,0,0,clockAt(0,5*SEC),clockAt(1,5*SEC+flight));
-  TEST_ASSERT_TRUE(referenceAcquired); TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_TRUE(referenceAcquired); TEST_ASSERT_TRUE(flags.tx);
   TEST_ASSERT_EQUAL_INT(mulClockWarmup,followerClock.status);
   TEST_ASSERT_TRUE(followerClock.epoch == oldEpoch); // Loss already issued the clean epoch.
   TEST_ASSERT_FALSE(ranging.delayValid);
@@ -467,7 +472,7 @@ void test_mulTwrReferenceHardBroadcastPriorityCancelsMissingResponse(void) {
   ranging.active=true; ranging.txPending=true; ranging.id=0; ranging.stage=mulTwrPoll;
   ranging.deadline=mulTimestampMask(nextRawTx+100*MS); radios[0].armed=true;
   advance(physical+979*MS); dispatch(0,eventTimeout);
-  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_TRUE(flags.tx);
   mulTestPacket_t next; TEST_ASSERT_TRUE(mulDecodeTestPacket(radios[0].tx,34,&next));
   TEST_ASSERT_EQUAL_INT64(SEC,mulTimestampDifference(next.txTimestamp,previous));
 }
@@ -482,7 +487,7 @@ void test_mulTwrLiveFollowerDelayExpiresBetweenFiveSecondAttempts(void) {
   TEST_ASSERT_TRUE(wait < 700-MUL_FOLLOWER_SLOT_MS); // Delay expiry, not the next reference-loss watchdog.
   advance(physical+(int64_t)wait*MS); dispatch(1,eventTimeout);
   TEST_ASSERT_FALSE(ranging.syncAvailable); TEST_ASSERT_TRUE(referenceAcquired);
-  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_FALSE(txPending); TEST_ASSERT_TRUE(radios[1].receiving);
+  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_FALSE(flags.tx); TEST_ASSERT_TRUE(radios[1].receiving);
 }
 
 void test_mulTwrExchangeIdAndFollowerHardwareCounterWrap(void) {
@@ -677,7 +682,7 @@ void test_mulTwrStalledExchangeOverlappingFollowerSlotLosesToFreshBroadcast(void
   ranging.deadline=mulTimestampMask(ranging.expectedTx+50*MS);
   advance(SEC+flight+MS);
   injectBroadcast(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));
-  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_FALSE(ranging.active); TEST_ASSERT_TRUE(flags.tx);
   TEST_ASSERT_TRUE(radios[1].armed);
   TEST_ASSERT_EQUAL_UINT(MUL_RELATION_FRAME_LENGTH,radios[1].txLength);
   mulTestPacket_t packet; mulRelation_t metadata;
@@ -752,7 +757,7 @@ static void continuousCycle(bool moving) {
     receiveRlr(&receiver,reference,34,clockAt(2,when+213));
     advance(when+flight+MS);
     injectBroadcast(1,0,sequence,clockAt(0,when),clockAt(1,when+flight));
-    TEST_ASSERT_TRUE(txPending);
+    TEST_ASSERT_TRUE(flags.tx);
     uint8_t broadcast[74]; memcpy(broadcast,radios[1].tx,74);
     int64_t sent=sendTime(1); advance(sent+MS); radios[1].armed=false; dispatch(1,eventPacketSent);
     TEST_ASSERT_EQUAL_UINT64(mulDecodeTimestamp(broadcast+29),radios[1].actual);
@@ -811,4 +816,78 @@ void test_mulContinuousBoundedSeparationChangeRetainsExplicitAgingBound(void) {
 #if MUL_RELATIVE_SPEED_MM_S >= 500
   continuousCycle(true);
 #endif
+}
+
+/* Production radio adapters, independent clocks, FCS-reserve reads and real
+ * multi codecs. Repeat every follower slot rather than assuming adjacent IDs. */
+static uwbConfig_t multiConfiguration;
+static void multiConfig(unsigned count,unsigned slot,unsigned spacing) {
+ memset(&multiConfiguration,0,sizeof(multiConfiguration));
+ mulSchedule_t *spec=&multiConfiguration.mulSchedule;simulationSchedule=spec;
+ *spec=(mulSchedule_t){.revision=9,.profile=MUL_PROFILE_MULTI,.count=count,.slotMs=spacing,.periodMs=1000};
+ for(unsigned i=0;i<count;i++)spec->ids[i]=132+3*i;
+ mulNetwork_t pair;TEST_ASSERT_TRUE(mulSchedulePair(spec,slot?slot:1,&pair));
+ multiConfiguration.mulNetwork=pair;multiConfiguration.mulConfigured=true;
+ multiConfiguration.mulRole=slot?mulAlrFollower:mulAlrReference;
+ memcpy(multiConfiguration.address,pair.addresses[slot?1:0],8);
+}
+static void injectMulti(unsigned receiver,unsigned slot,uint32_t cycle,uint64_t tx,uint64_t rx) {
+ FakeRadio *r=&radios[receiver];mulRelation_t unavailable={.version=2,.maxAgeMs=MUL_PROP_MAX_AGE_MS};
+ r->rxLength=mulMultiBroadcastEncode(r->rx,sizeof(r->rx),&multiConfiguration.mulSchedule,slot,cycle,tx,slot?&unavailable:NULL);
+ TEST_ASSERT_EQUAL_UINT(slot?80:40,r->rxLength);r->arrival=rx;r->receiving=false;
+ dispatch(receiver,eventPacketReceived);
+}
+void test_mulMultiFollowerUsesReferenceCycleAndEveryConfiguredSlot(void) {
+ const unsigned counts[]={2,3,4,8}, spacings[]={10,50};
+ for(unsigned c=0;c<4;c++)for(unsigned t=0;t<2;t++)for(unsigned slot=1;slot<counts[c];slot++) {
+  setUp();multiConfig(counts[c],slot,spacings[t]);useAlr[1]=true;advance(MS);
+  mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+  uint64_t tx=clockAt(0,0),rx=clockAt(1,500);advance(MS);
+  injectMulti(1,0,UINT32_MAX,tx,rx);TEST_ASSERT_TRUE(flags.tx);
+  TEST_ASSERT_EQUAL_UINT(80,radios[1].txLength);mulMultiBroadcast_t decoded;
+  TEST_ASSERT_TRUE(mulMultiBroadcastDecode(&multiConfiguration.mulSchedule,radios[1].tx,80,&decoded));
+  TEST_ASSERT_EQUAL_UINT(slot,decoded.slot);TEST_ASSERT_EQUAL_UINT32(UINT32_MAX,decoded.packet.sequence);
+  TEST_ASSERT_INT64_WITHIN(512,(int64_t)slot*spacings[t]*MS,mulTimestampDifference(radios[1].actual,rx));
+  advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+  unsigned sends=radios[1].sends;injectMulti(1,0,UINT32_MAX,tx,rx);TEST_ASSERT_EQUAL_UINT(sends,radios[1].sends);
+  advance(SEC+MS);injectMulti(1,0,0,clockAt(0,SEC),clockAt(1,SEC+500));TEST_ASSERT_TRUE(flags.tx);
+  TEST_ASSERT_EQUAL_UINT32(0,pendingSequence);
+ }
+}
+void test_mulMultiTwrCompletesBothWindowsForAllRosterSizes(void) {
+ const unsigned counts[]={2,3,4,8};
+ for(unsigned c=0;c<4;c++)for(unsigned cycle=1;cycle<=4;cycle++)for(unsigned window=0;window<2;window++) {
+  setUp();multiConfig(counts[c],0,10);mulSchedule_t *spec=&multiConfiguration.mulSchedule;
+  unsigned owner=mulScheduleSyncOwner(spec,cycle,window);if(!owner)continue;
+  scenario(-10000,2131);exchangeSequence=cycle;
+  advance((mulScheduleSyncPollMs(window)-20)*MS);
+  TEST_ASSERT_TRUE(mulTwrConfigureSchedule(&contexts[0],spec,owner,window));
+  TEST_ASSERT_TRUE(mulTwrConfigureSchedule(&contexts[1],spec,owner,window));
+  TEST_ASSERT_TRUE(mulTwrStart(&contexts[0],&radios[0].device,cycle,origins[0]));
+  completeExchange();TEST_ASSERT_FALSE(contexts[0].active);TEST_ASSERT_TRUE(contexts[1].delayValid);
+  TEST_ASSERT_UINT32_WITHIN(1,flight,contexts[1].tof);
+  TEST_ASSERT_EQUAL_UINT(90,radios[0].txLength);
+ }
+}
+void test_mulMultiReferenceVisitsTwoOwnersDespiteFirstWindowFailure(void) {
+ setUp();multiConfig(8,0,10);useAlr[0]=true;advance(-20*(int64_t)MS);
+ mulAlrAlgorithm.init(&multiConfiguration,&radios[0].device);nextSequence=1;
+ dispatch(0,eventTimeout);int64_t origin=sendTime(0);advance(origin+MS);
+ radios[0].armed=false;dispatch(0,eventPacketSent);
+ for(unsigned slot=1;slot<8;slot++) {
+   advance(origin+slot*10*MS+MS);injectMulti(0,slot,1,clockAt(1,origin+slot*10*MS),clockAt(0,origin+slot*10*MS));
+ }
+ TEST_ASSERT_EQUAL_UINT8(0xfe,followerSeen);
+ advance(origin+630*MS);dispatch(0,eventTimeout);TEST_ASSERT_TRUE(ranging.active);
+ TEST_ASSERT_EQUAL_UINT(1,ranging.followerSlot);TEST_ASSERT_EQUAL_UINT(0,ranging.syncWindow);
+ // No response or completion IRQ: second owner still obtains its own window.
+ advance(origin+780*MS);dispatch(0,eventTimeout);TEST_ASSERT_TRUE(ranging.active);
+ TEST_ASSERT_EQUAL_UINT(2,ranging.followerSlot);TEST_ASSERT_EQUAL_UINT(1,ranging.syncWindow);
+ mulTwrPacket_t packet;unsigned slot;
+ TEST_ASSERT_TRUE(mulMultiTwrDecode(&multiConfiguration.mulSchedule,1,radios[0].tx,90,&packet,&slot));
+ TEST_ASSERT_EQUAL_UINT(2,slot);
+ advance(origin+980*MS);dispatch(0,eventTimeout);TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_FALSE(ranging.active);
+ TEST_ASSERT_EQUAL_UINT(40,radios[0].txLength);
+ TEST_ASSERT_EQUAL_UINT32(2,pendingSequence);
+ TEST_ASSERT_EQUAL_INT64(SEC,mulTimestampDifference(pendingTimestamp,clockAt(0,origin)));
 }

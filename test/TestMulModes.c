@@ -4,6 +4,8 @@
 #include "mul_common.h"
 #include "mul_clock.h"
 #include "mul_twr.h"
+#include "mul_schedule.h"
+#include "mul_multi_protocol.h"
 #include "mul_relation.h"
 #include "mul_role_state.h"
 #include "mul_downlink.h"
@@ -426,10 +428,10 @@ static uint32_t receiveReference(uint32_t sequence, uint64_t tx, uint64_t rx) {
 }
 
 static void finishFollowerSlot(void) {
-  TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_TRUE(flags.tx);
   TEST_ASSERT_FALSE(receiving);
   completeTx(0);
-  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_FALSE(flags.tx);
   TEST_ASSERT_TRUE(receiving);
 }
 
@@ -622,7 +624,7 @@ void test_mulFollowerSlotUsesLocalRxClockAndOwnTimestampAcrossWrap(void) {
   uint64_t rx = MUL_TIMESTAMP_MASK - 250 * DTU_PER_MS + 123;
   unsigned int rearmCount = rxCount;
   receiveReference(12345, UINT64_C(0x123456789a), rx);
-  TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_TRUE(flags.tx);
   TEST_ASSERT_TRUE(delayedArmed);
   TEST_ASSERT_FALSE(receiving);
   TEST_ASSERT_EQUAL_UINT(rearmCount, rxCount); // Direct RX -> TX; no intermediate RX race.
@@ -647,7 +649,7 @@ void test_mulFollowerNeverRetriesConsumedOrMissingReferenceSuperframes(void) {
   deliver(referenceAddress, 42, 1, 1000, true);
   deliver(referenceAddress, 41, 1, 2000, true);
   TEST_ASSERT_EQUAL_UINT(1, txCount);
-  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_FALSE(flags.tx);
   testTick = 1500;
   mulAlrAlgorithm.onEvent(&dev, eventTimeout);
   TEST_ASSERT_EQUAL_UINT(1, txCount); // Acquired is not permission to free-run.
@@ -668,10 +670,10 @@ void test_mulFollowerWatchdogKeepsEarlyWakeArmedThenRecoversWithoutRetry(void) {
   unsigned int rearms = rxCount;
   uint32_t early = elapseAndTimeout(100);
   TEST_ASSERT_TRUE(early < wait);
-  TEST_ASSERT_TRUE(txPending && delayedArmed);
+  TEST_ASSERT_TRUE(flags.tx && delayedArmed);
   TEST_ASSERT_EQUAL_UINT(rearms, rxCount);
   elapseAndTimeout(early); // Absolute raw target + 100 ms has now elapsed.
-  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_FALSE(flags.tx);
   TEST_ASSERT_TRUE(receiving);
   TEST_ASSERT_EQUAL_UINT(0, actualReads);
   TEST_ASSERT_EQUAL_UINT(1, txCount);
@@ -690,14 +692,14 @@ void test_mulFollowerSkipsLateReceptionAndLateSpiSetupWithoutMovingSlot(void) {
   hardwareNow = (MUL_FOLLOWER_SLOT_MS-4) * DTU_PER_MS; // Only 4 ms remain until the reference's slot.
   deliver(referenceAddress, 0, 9, 0, true);
   TEST_ASSERT_TRUE(receiving);
-  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_FALSE(flags.tx);
   TEST_ASSERT_EQUAL_UINT(0, txCount);
   deliver(referenceAddress, 0, 9, hardwareNow, true); // Duplicate cannot reschedule.
   TEST_ASSERT_EQUAL_UINT(0, txCount);
   setupDelay = MUL_FOLLOWER_SLOT_DTU;
   receiveReference(1, 9, 1000 * DTU_PER_MS);
   TEST_ASSERT_TRUE(receiving);
-  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_FALSE(flags.tx);
   TEST_ASSERT_EQUAL_UINT(0, txCount); // Post-setup guard rejected expired target.
   setupDelay = 0;
   receiveReference(2, 9, 2000 * DTU_PER_MS);
@@ -712,7 +714,7 @@ void test_mulFollowerRecoversFromBothDelayedStartErrorsWithoutRetry(void) {
   for (unsigned int i = 0; i < 2; i++) {
     txError = errors[i];
     receiveReference(2*i, 99, (2*i) * 1000 * DTU_PER_MS);
-    TEST_ASSERT_FALSE(txPending);
+    TEST_ASSERT_FALSE(flags.tx);
     TEST_ASSERT_TRUE(receiving);
     TEST_ASSERT_EQUAL_UINT(2*i+1, txCount);
     mulAlrAlgorithm.onEvent(&dev, eventPacketSent); // Stale completion is not success.
@@ -750,7 +752,7 @@ void test_mulFollowerRadioEventsCancelPendingSlotAndResumeRx(void) {
     unsigned int reads = readCount;
     rxFrame[24] = 99; // Malformed/spurious RX event cannot overwrite pending context.
     mulAlrAlgorithm.onEvent(&dev, events[i]);
-    TEST_ASSERT_FALSE(txPending);
+    TEST_ASSERT_FALSE(flags.tx);
     TEST_ASSERT_TRUE(receiving);
     TEST_ASSERT_EQUAL_UINT(reads, readCount);
     TEST_ASSERT_EQUAL_UINT(i, actualReads);
@@ -768,7 +770,7 @@ void test_mulFollowerLossAbortsPendingTxAndRequiresFreshReacquisition(void) {
   testTick = 3000; // Force liveness expiry while a hardware TX is still pending.
   mulAlrAlgorithm.onEvent(&dev, eventTimeout);
   TEST_ASSERT_FALSE(referenceAcquired);
-  TEST_ASSERT_FALSE(txPending);
+  TEST_ASSERT_FALSE(flags.tx);
   TEST_ASSERT_FALSE(delayedArmed);
   TEST_ASSERT_TRUE(receiving);
   TEST_ASSERT_EQUAL_UINT(0, actualReads);
@@ -847,7 +849,7 @@ void test_mulFollowerCanTransmitAtCounterZeroWithZeroAntennaDelay(void) {
   antennaDelay = 0;
   uint64_t rx = MUL_TIMESTAMP_MASK - MUL_FOLLOWER_SLOT_DTU + 1;
   receiveReference(0, UINT64_C(0x9876543210), rx);
-  TEST_ASSERT_TRUE(txPending);
+  TEST_ASSERT_TRUE(flags.tx);
   TEST_ASSERT_EQUAL_UINT64(0, delayedRaw);
   mulTestPacket_t packet;
   TEST_ASSERT_TRUE(decodeCaptured(&packet));
@@ -865,7 +867,7 @@ void test_mulFollowerClockConvergesWithoutChangingTdmaAndResetsOnLoss(void) {
     testTick = frame * 1000;
     uint64_t local = mulTimestampMask(localStart + frame * (PERIOD_DTU + PERIOD_DTU/200000));
     receiveReference(42 + frame, mulTimestampMask(remoteStart + frame*PERIOD_DTU), local);
-    TEST_ASSERT_TRUE(txPending);
+    TEST_ASSERT_TRUE(flags.tx);
     mulTestPacket_t outgoing;
     TEST_ASSERT_TRUE(decodeCaptured(&outgoing));
     int64_t slot = mulTimestampDifference(outgoing.txTimestamp, local);
@@ -915,7 +917,7 @@ void test_mulFollowerClockDiscontinuityDoesNotChangeRadioPolicy(void) {
   receiveReference(101, 0, PERIOD_DTU); // Forward sequence but TX clock restarted.
   TEST_ASSERT_EQUAL_INT(mulClockWarmup, followerClock.status);
   TEST_ASSERT_EQUAL_UINT32(0, followerClock.samples);
-  TEST_ASSERT_TRUE(txPending); // Estimator rejection cannot suppress a valid TDMA RX.
+  TEST_ASSERT_TRUE(flags.tx); // Estimator rejection cannot suppress a valid TDMA RX.
   TEST_ASSERT_EQUAL_INT(mulClockMapWarmup, mulClockMapStatus(&followerClock, testTick));
   finishFollowerSlot();
   for (uint32_t frame = 1; frame <= 5; frame++) {
@@ -1012,7 +1014,7 @@ void test_mulExplicitRolesFollowConfigurationRatherThanLegacyAddress(void) {
  for(unsigned i=0;i<7;i++) {
   testTick=10000+i*1000;hardwareNow=mulTimestampMask(i*PERIOD_DTU+DTU_PER_MS);
   deliver(config.mulNetwork.addresses[0],100+i,i*PERIOD_DTU,i*PERIOD_DTU,true);
-  TEST_ASSERT_TRUE(txPending);TEST_ASSERT_TRUE(mulBroadcastDecodeNetwork(&config.mulNetwork,capturedTxFrame,74,&packet,&relation));
+  TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_TRUE(mulBroadcastDecodeNetwork(&config.mulNetwork,capturedTxFrame,74,&packet,&relation));
   TEST_ASSERT_EQUAL(0x84,packet.source[0]);finishFollowerSlot();
  }
  TEST_ASSERT_EQUAL(prior+7,txCount);TEST_ASSERT_EQUAL_INT(mulClockValid,followerClock.status);

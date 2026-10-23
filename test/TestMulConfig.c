@@ -221,6 +221,11 @@ void test_multiRosterPersistenceRfOffAndInvalidTransactions(void) {
   TEST_ASSERT_FALSE(cfgMulScheduleWrite(0x42,&schedule));TEST_ASSERT_EQUAL(before,writes);
  }
  send(":cfg roster show\n");TEST_ASSERT_NOT_NULL(strstr(output,"count=8"));
- // Pending profile2 is intentionally disabled until its radio adapter is installed.
- uwbControlInit(&boot);send(":on\n");apply();TEST_ASSERT_FALSE(uwbControlRunning());
+ // Multi ALR activation derives its pair/role from the ordered roster.
+ uwbControlInit(&boot);send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());
+ TEST_ASSERT_EQUAL(MUL_PROFILE_MULTI,boot.mulSchedule.profile);
+ TEST_ASSERT_EQUAL(mulAlrReference,boot.mulRole);
+ send(":off\n");apply();
+ // LPS mode6 has no multi receiver adapter; never run the two-node RLR against it.
+ boot.mode=MODE_MUL_RLR;uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlCanEnable());
 }
