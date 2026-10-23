@@ -329,7 +329,7 @@ static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length) {
   ok=eepromWrite(0,buffer,sizeof(buffer));HAL_Delay(10);
   if(ok)ok=readData()&&!memcmp(expected,buffer,sizeof(buffer));
   if(!ok){memcpy(buffer,previous,sizeof(buffer));mulStorageUncertain=true;}
-  else if(field!=cfgRfEnable&&field!=cfgMulSlotMs)pendingRestart=true;
+  else if(field!=cfgRfEnable&&field!=cfgMulSlotMs&&field!=cfgMulSchedule)pendingRestart=true;
 done:
   writing=false;return ok;
 }
@@ -372,11 +372,39 @@ bool cfgMulChangeAddress(uint8_t address) {
 bool cfgMulSlotRead(uint16_t *slotMs) {
  uint8_t size;uint32_t value=500;
  if(!slotMs||!cfgStorageReady())return false;
+ if(cfgFieldSize(cfgMulSchedule,&size)) {
+  uint8_t bytes[MUL_SCHEDULE_BYTES];mulSchedule_t schedule;
+  if(size!=sizeof(bytes)||!cfgReadU8list(cfgMulSchedule,bytes,sizeof(bytes))||!mulScheduleDecode(bytes,&schedule))return false;
+  *slotMs=schedule.slotMs;return true;
+ }
+ if(!slotMs||!cfgStorageReady())return false;
  if(cfgFieldSize(cfgMulSlotMs,&size)&&(size!=4||!cfgReadU32(cfgMulSlotMs,&value)))return false;
  if(!mulSlotValid(value))return false;
  *slotMs=(uint16_t)value;return true;
 }
 bool cfgMulSlotWrite(uint16_t slotMs) {
  if(!mulSlotValid(slotMs))return false;
+ uint8_t size;
+ if(cfgFieldSize(cfgMulSchedule,&size)) {
+  uint8_t node;mulSchedule_t schedule;
+  if(!cfgReadU8(cfgAddress,&node)||!cfgMulScheduleRead(node,&schedule))return false;
+  schedule.slotMs=slotMs;return cfgMulScheduleWrite(node,&schedule);
+ }
  return cfgWriteU32(cfgMulSlotMs,slotMs);
+}
+
+bool cfgMulScheduleRead(uint8_t node,mulSchedule_t *schedule) {
+ uint8_t size;if(!schedule||!cfgStorageReady())return false;
+ if(cfgFieldSize(cfgMulSchedule,&size)) {
+  uint8_t bytes[MUL_SCHEDULE_BYTES];
+  return size==sizeof(bytes)&&cfgReadU8list(cfgMulSchedule,bytes,sizeof(bytes))&&mulScheduleDecode(bytes,schedule);
+ }
+ uint8_t role,ref,fol;uint16_t slot;
+ if(!cfgMulRead(node,&role,&ref,&fol)||!cfgMulSlotRead(&slot))return false;
+ mulScheduleLegacy(schedule,ref,fol,slot);return !mulScheduleValidate(schedule);
+}
+bool cfgMulScheduleWrite(uint8_t node,const mulSchedule_t *schedule) {
+ if(mulScheduleValidate(schedule)||mulScheduleIndex(schedule,node)<0)return false;
+ uint8_t bytes[MUL_SCHEDULE_BYTES];if(!mulScheduleEncode(bytes,schedule))return false;
+ return mulStore(cfgMulSchedule,bytes,sizeof(bytes));
 }

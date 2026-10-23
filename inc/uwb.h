@@ -38,6 +38,7 @@
 typedef struct uwbConfig_s {
   uint8_t mode;
   mulNetwork_t mulNetwork;
+  mulSchedule_t mulSchedule;
   mulAlrRole_t mulRole;
   bool mulConfigured;
   uint8_t address[8];

@@ -14,8 +14,8 @@
 static bool collecting,overflow,skipLf,session;
 static uint8_t used,page,pageIndex;
 static const char *message;
-/* Input and paged output reuse the existing48-byte allocation. */
-static char line[48];
+/* Up to eight hexadecimal roster IDs; output remains bounded to48 bytes. */
+static char line[56];
 enum {none,answer,help,show,status,peers,diag,cal};
 static void reply(const char *text) {message=text;page=answer;pageIndex=0;}
 static bool id(const char *s,uint8_t *value) {
@@ -36,8 +36,8 @@ static bool rfOff(void) {
  return cfgWriteU8(cfgRfEnable,0);
 }
 static void command(void) {
- char *words[6],**w=words;unsigned count=0;char *p=line;
- while(*p){while(*p==' ')p++;if(!*p)break;if(count==6)goto syntax;
+ char *words[11],**w=words;unsigned count=0;char *p=line;
+ while(*p){while(*p==' ')p++;if(!*p)break;if(count==11)goto syntax;
   words[count++]=p;while(*p&&*p!=' '){if(*p>='A'&&*p<='Z')*p+='a'-'A';p++;}if(*p)*p++=0;}
  if(!count)return;
  bool legacy=!strcmp(w[0],"mul");if(legacy){count--;w++;if(!count)goto syntax;}
@@ -57,6 +57,19 @@ static void command(void) {
    if(!cfgWriteU8(cfgRfEnable,1)){uwbSetEnabled(false);reply("RF OFF requested; EEPROM unconfirmed");return;}
    reply(uwbSetEnabled(true)?"RF ON requested":"ERR on blocked; inspect status");return;
   }
+ }
+ if(count>=3&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"roster")) {
+  mulSchedule_t schedule;
+  if(!cfgMulScheduleRead(node,&schedule)){reply("ERR invalid stored schedule");return;}
+  if(count==3&&!strcmp(w[2],"show")){page=peers;pageIndex=0;return;}
+  if(count<5||strcmp(w[2],"set")){reply("ERR cfg roster set id0 id1 [id2..id7]");return;}
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR roster requires RF OFF acknowledged");return;}
+  schedule.count=(uint8_t)(count-3);memset(schedule.ids,0,sizeof(schedule.ids));
+  for(unsigned i=0;i<schedule.count;i++)if(!id(w[3+i],&schedule.ids[i])){reply("ERR invalid roster identity");return;}
+  schedule.profile=schedule.count==2?MUL_PROFILE_LEGACY:MUL_PROFILE_MULTI;
+  const char *error=mulScheduleValidate(&schedule);
+  if(error){reply(error);return;}
+  reply(cfgMulScheduleWrite(node,&schedule)?"SAVED roster; multi RF adapter pending":"ERR roster/EEPROM unchanged or unconfirmed");return;
  }
  if(count==2&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"show")){page=show;pageIndex=0;return;}
  if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&!strcmp(w[2],"slot_ms")) {
@@ -146,12 +159,19 @@ bool mulConsolePoll(void) {
   "wifi/tlm and runtime cal unsupported",
   "Autosave; restart applies; off retains mode",
   "hybrid_static: stationary opt-in build only",
-  "cfg set slot_ms 10/50/500; requires RF OFF"};
+  "cfg set slot_ms 10/50/500; requires RF OFF",
+  "cfg roster show/set id0 id1 [..id7]"};
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255;
  bool valid=saved(&node,&role,&ref,&fol),last=true,enabled=false;
  if(page==answer)snprintf(line,sizeof(line),"%s",message);
  if(page==help){snprintf(line,sizeof(line),"%s",helps[pageIndex]);last=pageIndex+1==sizeof(helps)/sizeof(*helps);}
- if(page==show||page==peers) {
+ if(page==peers) {
+  mulSchedule_t schedule;
+  if(!cfgMulScheduleRead(node,&schedule))snprintf(line,sizeof(line),"ERR invalid schedule");
+  else if(pageIndex==0){snprintf(line,sizeof(line),"SCHEDULE profile=%u count=%u slot_ms=%u",schedule.profile,schedule.count,schedule.slotMs);last=false;}
+  else if(pageIndex<=schedule.count){unsigned slot=pageIndex-1;snprintf(line,sizeof(line),"ALR slot=%u id=0x%02X offset_ms=%u",slot,schedule.ids[slot],mulScheduleOffsetMs(&schedule,slot));last=pageIndex==schedule.count;}
+ }
+ if(page==show) {
   if(!valid)snprintf(line,sizeof(line),"ERR invalid roster; EEPROM retained");
   else if(pageIndex==0){snprintf(line,sizeof(line),"SAVED addr=0x%02X role=%s",node,roleName(role));last=false;}
   else if(pageIndex==1){snprintf(line,sizeof(line),"reference=0x%02X follower=0x%02X",ref,fol);last=page==peers;}
@@ -179,7 +199,7 @@ bool mulConsolePoll(void) {
 #else
  unsigned length=strlen(line);
  /* Leave room for CRLF without a second buffer or unbounded TX wait. */
- if(length+2>sizeof(line)){line[sizeof(line)-3]=0;length=sizeof(line)-3;}
+ if(length+2>48U){line[45]=0;length=45;}
  line[length++]='\r';line[length++]='\n';
  if(!usbcommTryWrite(line,length))return false;
 #endif

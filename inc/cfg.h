@@ -28,6 +28,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "mul_schedule.h"
 
 typedef enum {
   cfgAddress = 0,
@@ -42,6 +43,7 @@ typedef enum {
   cfgMulNetwork, // New three-byte TLV: local role, reference ID, follower ID.
   cfgRfEnable, // Optional one-byte boolean; absent retains legacy enabled behavior.
   cfgMulSlotMs, // Additive uint32 delay TLV; absent old EEPROM retains 500ms.
+  cfgMulSchedule, // Optional canonical32-byte schedule, including its CRC.
 } ConfigField;
 
 void cfgInit();
@@ -50,6 +52,8 @@ bool cfgStorageReady(void);
 bool cfgRfEnabled(bool *enabled);
 bool cfgMulSlotRead(uint16_t *slotMs);
 bool cfgMulSlotWrite(uint16_t slotMs);
+bool cfgMulScheduleRead(uint8_t node,mulSchedule_t *schedule);
+bool cfgMulScheduleWrite(uint8_t node,const mulSchedule_t *schedule);
 
 bool cfgReset(void);
 

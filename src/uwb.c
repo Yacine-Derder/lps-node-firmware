@@ -135,6 +135,12 @@ void uwbInit()
      mulNetworkInit(&config.mulNetwork,reference,follower)&&cfgMulSlotRead(&config.mulNetwork.slotMs)) {
     if(mulRole<2)config.mulRole=(mulAlrRole_t)mulRole;
   } else printf("MUL CONFIG: invalid roster; MUL disabled, EEPROM retained\r\n");
+  if(!cfgMulScheduleRead(config.address[0],&config.mulSchedule)) {
+    memset(&config.mulSchedule,0,sizeof(config.mulSchedule));config.mulRole=mulAlrUnsupported;
+  } else if(config.mulSchedule.profile==MUL_PROFILE_MULTI) {
+    int slot=mulScheduleIndex(&config.mulSchedule,config.address[0]);
+    config.mulRole=slot==0?mulAlrReference:slot>0?mulAlrFollower:mulAlrUnsupported;
+  }
   cfgFieldSize(cfgAnchorlist, &config.anchorListSize);
   if (config.anchorListSize <= MAX_ANCHORS) {
     cfgReadU8list(cfgAnchorlist, config.anchors, config.anchorListSize);

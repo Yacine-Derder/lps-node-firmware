@@ -57,7 +57,7 @@ OBJS+=$(foreach mod, $(USB_CDC), Middlewares/ST/STM32_USB_Device_Library/Class/C
 INCLUDES+=-Ivendor/libdw1000/inc
 OBJS+=vendor/libdw1000/src/libdw1000.o vendor/libdw1000/src/libdw1000Spi.o
 
-OBJS+=src/dwOps.o
+OBJS+=src/dwOps.o src/mul_schedule.o
 
 CFLAGS+=$(PROCESSOR) $(INCLUDES) -O3 -g3 -Wall -Wno-pointer-sign -std=gnu11
 CFLAGS+=$(EXTRA_CFLAGS)
@@ -73,11 +73,9 @@ endif
 
 # Remove un-used functions and global variables from output file
 CFLAGS += -ffunction-sections -fdata-sections
-# Console/configuration are not radio timing paths. Keep the complete command
-# interface inside128KB without reducing stacks, queues or protocol state.
-# Bounded codecs and passive association/localization use -Os. Transmit
-# scheduling, hardware drivers and clock estimation retain -O3.
-src/main.o src/mul_console.o src/cfg.o src/usbcomm.o src/uwb_control.o src/mul_common.o src/mul_rx.o src/mul_relation.o src/mul_localization.o src/mul_observation.o src/mul_downlink.o src/mul_rlr.o: CFLAGS += -Os
+# Preserve stock engines/driver optimization. Size-optimize MUL/application
+# code to fit the generalized schedule without reducing stacks or safety queues.
+src/main.o src/cfg.o src/usbcomm.o src/uwb_control.o $(filter src/mul_%.o,$(OBJS)): CFLAGS += -Os
 LDFLAGS+=-Wl,-Map=bin/$(PROG).map,--cref,--gc-sections
 
 

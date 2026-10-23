@@ -22,7 +22,10 @@ void uwbControlInit(const uwbConfig_t *c) {
  uint16_t slot=0;if(!cfgMulSlotRead(&slot))allowed=false;requestedSlot=slot;
  requested=allowed&&cfgRfEnabled(&enabled)&&enabled;running=false;
 }
-bool uwbControlCanEnable(void) {return allowed&&!cfgPendingRestart();}
+bool uwbControlCanEnable(void) {
+ mulSchedule_t schedule;
+ return allowed&&!cfgPendingRestart()&&cfgMulScheduleRead(uwbGetConfig()->address[0],&schedule)&&schedule.profile==MUL_PROFILE_LEGACY;
+}
 bool uwbControlRequest(bool enabled) {
  if(enabled&&!uwbControlCanEnable())return false;
  requested=enabled;return true;
@@ -36,8 +39,12 @@ bool uwbControlRunning(void) {return running;}
 bool uwbControlApply(dwDevice_t *dev,uwbAlgorithm_t *algorithm) {
  /* Slot updates are applied only by the radio owner after RF OFF has
   * completed. Reinitializing on the next ON discards all old timing models. */
- if(!running&&uwbGetConfig()->mulNetwork.slotMs!=requestedSlot)
-   uwbGetConfig()->mulNetwork.slotMs=requestedSlot;
+ if(!running) {
+   uwbConfig_t *c=uwbGetConfig();
+   (void)cfgMulScheduleRead(c->address[0],&c->mulSchedule);
+   c->mulNetwork.slotMs=requestedSlot;
+ }
+ if(uwbGetConfig()->mulSchedule.profile==MUL_PROFILE_MULTI)requested=false; // Runtime adapter milestone pending.
  if(requested==running)return false;
  dwIdle(dev);dwClearAllStatus(dev);running=false;
  if(requested){algorithm->init(uwbGetConfig(),dev);running=true;}

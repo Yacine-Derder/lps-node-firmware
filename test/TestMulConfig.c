@@ -2,6 +2,7 @@
 #include "unity.h"
 #include "cfg.h"
 #include "mul_common.h"
+#include "mul_schedule.h"
 #include "mul_console.h"
 #include "uwb_control.h"
 #include <string.h>
@@ -201,4 +202,25 @@ void test_freshEepromUses10msAndOldEepromMigrationDoesNotWrite(void) {
  TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(10,slot);
  unsigned before=writes;cfgInit();TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(10,slot);TEST_ASSERT_EQUAL(before,writes);
  legacy(0x84);TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(500,slot);TEST_ASSERT_EQUAL(0,writes);
+}
+
+void test_multiRosterPersistenceRfOffAndInvalidTransactions(void) {
+ mulSchedule_t schedule;TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&schedule));
+ TEST_ASSERT_EQUAL(MUL_PROFILE_LEGACY,schedule.profile);TEST_ASSERT_EQUAL(500,schedule.slotMs);
+ unsigned before=writes;send(":cfg roster set 0x84 0x85 0x86\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");apply();send(":cfg set slot_ms 10\n");
+ const unsigned counts[]={2,3,4,8};
+ for(unsigned n=0;n<4;n++) {
+  TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&schedule));schedule.count=counts[n];
+  schedule.profile=schedule.count==2?MUL_PROFILE_LEGACY:MUL_PROFILE_MULTI;
+  memset(schedule.ids,0,sizeof(schedule.ids));for(unsigned i=0;i<schedule.count;i++)schedule.ids[i]=0x84+i;
+  TEST_ASSERT_TRUE(cfgMulScheduleWrite(0x84,&schedule));before=writes;cfgInit();
+  mulSchedule_t restored;TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&restored));TEST_ASSERT_EQUAL(before,writes);
+  TEST_ASSERT_EQUAL_MEMORY(&schedule,&restored,sizeof(schedule));
+  mulSchedule_t bad=schedule;bad.ids[1]=bad.ids[0];TEST_ASSERT_FALSE(cfgMulScheduleWrite(0x84,&bad));TEST_ASSERT_EQUAL(before,writes);
+  TEST_ASSERT_FALSE(cfgMulScheduleWrite(0x42,&schedule));TEST_ASSERT_EQUAL(before,writes);
+ }
+ send(":cfg roster show\n");TEST_ASSERT_NOT_NULL(strstr(output,"count=8"));
+ // Pending profile2 is intentionally disabled until its radio adapter is installed.
+ uwbControlInit(&boot);send(":on\n");apply();TEST_ASSERT_FALSE(uwbControlRunning());
 }

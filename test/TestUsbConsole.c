@@ -3,6 +3,7 @@
 #include "unity.h"
 #include "cfg.h"
 #include "mul_common.h"
+#include "mul_schedule.h"
 #include "mul_console.h"
 #include "uwb_control.h"
 #include "../src/usbd_cdc_if.c"

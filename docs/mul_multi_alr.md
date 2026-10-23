@@ -75,3 +75,21 @@ it, with an explicit configuration rejection rather than silent truncation.
 Physical deployment is deferred until software implementation/testing is complete.
 The final handoff must distinguish implemented, simulated and hardware-unverified
 behavior and include exact reproducible build/configuration/acceptance commands.
+
+## Persistence checkpoint
+
+The shared32-byte schedule is an additive EEPROM TLV on LPS; absence derives
+profile1 from the unchanged saved reference/follower/slot. Its own CRC supplements
+the existing EEPROM checksum. Local ALR identity must be present in the roster.
+The legacy EEPROM update remains write/readback verified and fail-closed, not a
+new power-fail journal. Profile2 RF enable is deliberately blocked until the
+corresponding radio adapter milestone is implemented; stored rosters can be
+prepared/rebooted safely in the meantime. `:cfg roster show` and
+`:cfg roster set 0x84 0x85 0x86` require acknowledged RF OFF for edits.
+
+LPS MUL/application compilation uses -Os to retain all stock engines and the
+existing safety queues/stacks inside128KB/16KB. A whole-program LTO experiment
+was rejected: it increased flash and exposed legacy naked-assembly branch limits.
+Stock engines and hardware drivers retain their previous compiler optimization.
+The existing hardware delayed-TX guards remain authoritative; software arithmetic
+regressions do not establish physical response/timing performance.
