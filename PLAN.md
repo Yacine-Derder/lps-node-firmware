@@ -12,6 +12,21 @@ See [AGENTS.md](AGENTS.md) for operating rules and
 [the architecture](docs/mul_architecture.md) for durable technical decisions.
 Source code remains authoritative for what is actually implemented.
 
+## Current multi-ALR milestone
+
+**Implemented/software tested; manual hardware acceptance pending.** Persistent
+ordered2..8-ID schedules, reference-relative hardware TDMA, collision-free
+round-robin TWR, independent STM32 partial-cycle reconstruction, bounded vector
+telemetry, ESP priority forwarding and self-describing Python JSONL are connected.
+The validated two-ALR protocol remains the default for two-ID rosters. The user's
+current10ms baseline reportedly achieves about5–7cm single-measurement RMSE; no
+new physical accuracy is asserted. Historical checkpoints below describe earlier
+stages and do not restrict this explicitly authorized multi-ALR milestone.
+
+See [multi architecture](docs/mul_multi_alr.md) for limits/wire formats and
+[handoff/deployment](docs/mul_multi_handoff.md) for builds, tests and exact manual
+next steps. Hardware programming/operation was excluded and was not performed.
+
 ## Status meanings
 
 - **Not started:** planned work without a completed implementation.

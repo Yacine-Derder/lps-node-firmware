@@ -229,3 +229,20 @@ void test_multiRosterPersistenceRfOffAndInvalidTransactions(void) {
  // LPS mode6 has no multi receiver adapter; never run the two-node RLR against it.
  boot.mode=MODE_MUL_RLR;uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlCanEnable());
 }
+
+void test_multiScheduleScalarCliAndShadowBindingGuards(void) {
+ unsigned before=writes;send(":cfg set schedule_revision 9\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");apply();send(":cfg set slot_ms 10\n:cfg roster set 0x84 0x85 0x86\n");
+ send(":cfg set schedule_revision 4294967295\n");mulSchedule_t spec;
+ TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&spec));TEST_ASSERT_EQUAL_UINT32(UINT32_MAX,spec.revision);
+ before=writes;
+ send(":cfg set schedule_revision 4294967296\n:cfg set schedule_revision 0\n:cfg set cycle_ms 500\n:cfg set profile legacy\n:reference 0x42\n:role follower\n:addr 0x42\n");
+ TEST_ASSERT_EQUAL(before,writes);cfgInit();TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&spec));
+ TEST_ASSERT_EQUAL_UINT32(UINT32_MAX,spec.revision);TEST_ASSERT_EQUAL(3,spec.count);
+ send(":cfg roster set 0x85 0x84\n:cfg set profile multi\n:cfg set cycle_ms 1000\n:cfg set schedule_revision 9\n:on\n");apply();
+ TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(mulAlrFollower,boot.mulRole);
+ TEST_ASSERT_EQUAL(0x85,boot.mulNetwork.addresses[0][0]);TEST_ASSERT_EQUAL(0x84,boot.mulNetwork.addresses[1][0]);
+ TEST_ASSERT_EQUAL(2,boot.mulSchedule.count);TEST_ASSERT_EQUAL(MUL_PROFILE_MULTI,boot.mulSchedule.profile);
+ send(":off\n");apply();send(":cfg set profile legacy\n:on\n");apply();
+ TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(MUL_PROFILE_LEGACY,boot.mulSchedule.profile);
+}

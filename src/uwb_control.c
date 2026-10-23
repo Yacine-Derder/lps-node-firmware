@@ -26,6 +26,10 @@ bool uwbControlCanEnable(void) {
  mulSchedule_t schedule;
  const uwbConfig_t *c=uwbGetConfig();
  if(cfgPendingRestart()||!cfgMulScheduleRead(c->address[0],&schedule))return false;
+#if PHY_INTEROP_ROLE || MUL_DIAG_ROLE || MUL_TWR_ROLE
+ if(schedule.profile==MUL_PROFILE_MULTI)return false;
+#endif
+ if(c->mode<MODE_MUL_ALR)return allowed;
  uint8_t storedBytes;
  if(schedule.profile==MUL_PROFILE_LEGACY&&!cfgFieldSize(cfgMulSchedule,&storedBytes))return allowed;
  uint8_t mode,node;

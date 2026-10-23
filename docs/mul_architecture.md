@@ -5,6 +5,18 @@ See [the roadmap](../PLAN.md) for milestone status and
 [AGENTS.md](../AGENTS.md) for repository operating rules.
 The code defines implemented behavior; planned extensions below are not firmware features.
 
+## Configurable multi-ALR extension
+
+The current implementation extends the preserved legacy two-node path with a
+separate schedule-bound multi protocol. An ordered persistent roster assigns one
+logical reference and up to seven independent followers, with bounded partial
+vectors on STM32. Two nonoverlapping maintenance windows serialize propagation
+refresh without duplicating the radio state machine per follower. Existing
+hardware timestamp conventions and signed TDoA math remain shared. See
+[multi-ALR architecture and byte-level formats](mul_multi_alr.md) and
+[software evidence/manual deployment](mul_multi_handoff.md). Only the1Hz cycle
+is supported currently; profile2 requires consistent6s correction policy builds.
+
 ## Hardware and portability
 
 - ALRs are WaveRover robots equipped with Bitcraze DW1000 LPS nodes.

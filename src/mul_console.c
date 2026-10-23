@@ -26,9 +26,21 @@ static bool id(const char *s,uint8_t *value) {
   n=n*base+d;}
  *value=n;return true;
 }
+static bool revision(const char *s,uint32_t *value) {
+ uint32_t n=0;if(!*s)return false;
+ for(;*s;s++){unsigned d=(unsigned)(*s-'0');if(d>9||n>(UINT32_MAX-d)/10)return false;n=n*10+d;}
+ if(!n)return false;
+ *value=n;return true;
+}
 static const char *roleName(uint8_t role) {return role==0?"ref":role==1?"follower":role==3?"rlr":"disabled";}
 static bool saved(uint8_t *node,uint8_t *role,uint8_t *ref,uint8_t *fol) {
- return cfgReadU8(cfgAddress,node)&&cfgMulRead(*node,role,ref,fol);
+ if(!cfgReadU8(cfgAddress,node)||!cfgMulRead(*node,role,ref,fol))return false;
+ uint8_t bytes;if(cfgFieldSize(cfgMulSchedule,&bytes)) {
+  mulSchedule_t spec;if(!cfgMulScheduleRead(*node,&spec))return false;
+  *ref=spec.ids[0];*fol=spec.ids[1];int slot=mulScheduleIndex(&spec,*node);
+  if(slot>=0)*role=slot?1:0;
+ }
+ return true;
 }
 static void result(bool ok) {reply(ok?"SAVED; restart to activate":"ERR EEPROM/roster unconfirmed; inspect reboot");}
 static bool rfOff(void) {
@@ -72,6 +84,20 @@ static void command(void) {
   reply(cfgMulScheduleWrite(node,&schedule)?"SAVED roster; ON applies; mode5 only for multi":"ERR roster/EEPROM unchanged or unconfirmed");return;
  }
  if(count==2&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"show")){page=show;pageIndex=0;return;}
+ if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&
+    (!strcmp(w[2],"profile")||!strcmp(w[2],"schedule_revision")||!strcmp(w[2],"cycle_ms"))) {
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR schedule requires RF OFF acknowledged");return;}
+  mulSchedule_t spec;if(!cfgMulScheduleRead(node,&spec)){reply("ERR invalid stored schedule");return;}
+  if(!strcmp(w[2],"profile")) {
+   if(!strcmp(w[3],"legacy"))spec.profile=MUL_PROFILE_LEGACY;
+   else if(!strcmp(w[3],"multi"))spec.profile=MUL_PROFILE_MULTI;
+   else {reply("ERR profile: legacy/multi");return;}
+  }else if(!strcmp(w[2],"cycle_ms")) {
+   if(strcmp(w[3],"1000")){reply("ERR cycle_ms: 1000 supported");return;}spec.periodMs=1000;
+  }else if(!revision(w[3],&spec.revision)){reply("ERR revision: 1..4294967295");return;}
+  const char *error=mulScheduleValidate(&spec);if(error){reply(error);return;}
+  reply(cfgMulScheduleWrite(node,&spec)?"SAVED schedule; ON applies":"ERR schedule/EEPROM unconfirmed");return;
+ }
  if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&!strcmp(w[2],"slot_ms")) {
   uint16_t slot=!strcmp(w[3],"10")?10:!strcmp(w[3],"50")?50:!strcmp(w[3],"500")?500:0;
   if(!slot){reply("ERR slot_ms: 10, 50 or 500");return;}
@@ -103,8 +129,21 @@ static void command(void) {
   if(value==255||(role==3&&value!=6)){reply("ERR mode/role; static requires opt-in build");return;}
   result(cfgWriteU8(cfgMode,value));return;
  }
+ /* An explicit ordered roster owns reference/follower assignment. Old aliases
+  * must not successfully mutate a shadow pair while leaving this roster active. */
+ uint8_t rosterBytes;
+ if(cfgFieldSize(cfgMulSchedule,&rosterBytes)&&
+    (!strcmp(w[0],"reference")||!strcmp(w[0],"follower")||
+     (legacy&&!strcmp(w[0],"setup"))||
+     (count==2&&!strcmp(w[0],"role")&&(!strcmp(w[1],"ref")||!strcmp(w[1],"follower"))))) {
+  reply("ERR explicit roster: use cfg roster set");return;
+ }
  if(count==2&&(!strcmp(w[0],"addr")||!strcmp(w[0],"address"))) {
   if(!id(w[1],&value))goto syntax;
+  mulSchedule_t spec;
+  if(cfgFieldSize(cfgMulSchedule,&rosterBytes)&&(!cfgMulScheduleRead(node,&spec)||mulScheduleIndex(&spec,value)<0)) {
+   reply("ERR address absent from explicit roster");return;
+  }
   result(cfgMulChangeAddress(value));return;
  }
  uint8_t oldRole=role;
@@ -160,7 +199,10 @@ bool mulConsolePoll(void) {
   "Autosave; restart applies; off retains mode",
   "hybrid_static: stationary opt-in build only",
   "cfg set slot_ms 10/50/500; requires RF OFF",
-  "cfg roster show/set id0 id1 [..id7]"};
+  "cfg roster show/set id0 id1 [..id7]",
+  "cfg set profile legacy/multi; RF OFF",
+  "cfg set cycle_ms 1000; RF OFF",
+  "cfg set schedule_revision 1..4294967295"};
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255;
  bool valid=saved(&node,&role,&ref,&fol),last=true,enabled=false;
  if(page==answer)snprintf(line,sizeof(line),"%s",message);
@@ -169,7 +211,9 @@ bool mulConsolePoll(void) {
   mulSchedule_t schedule;
   if(!cfgMulScheduleRead(node,&schedule))snprintf(line,sizeof(line),"ERR invalid schedule");
   else if(pageIndex==0){snprintf(line,sizeof(line),"SCHEDULE profile=%u count=%u slot_ms=%u",schedule.profile,schedule.count,schedule.slotMs);last=false;}
-  else if(pageIndex<=schedule.count){unsigned slot=pageIndex-1;snprintf(line,sizeof(line),"ALR slot=%u id=0x%02X offset_ms=%u",slot,schedule.ids[slot],mulScheduleOffsetMs(&schedule,slot));last=pageIndex==schedule.count;}
+  else if(pageIndex==1){snprintf(line,sizeof(line),"SCHEDULE cycle_ms=%u rev=%lu",schedule.periodMs,(unsigned long)schedule.revision);last=false;}
+  else if(pageIndex==2){snprintf(line,sizeof(line),"SCHEDULE hash=%08lX ref=0x%02X",(unsigned long)mulScheduleFingerprint(&schedule),schedule.ids[0]);last=false;}
+  else if(pageIndex<=schedule.count+2){unsigned slot=pageIndex-3;snprintf(line,sizeof(line),"ALR slot=%u id=0x%02X offset_ms=%u",slot,schedule.ids[slot],mulScheduleOffsetMs(&schedule,slot));last=pageIndex==schedule.count+2;}
  }
  if(page==show) {
   if(!valid)snprintf(line,sizeof(line),"ERR invalid roster; EEPROM retained");

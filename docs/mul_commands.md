@@ -318,3 +318,41 @@ Native driver tests validate programming arithmetic, not actual RF timing. No
 hardware was flashed, moved or measured during implementation. LPS remains very
 close to its128KB flash/16KB RAM limits; bounded passive codec/association code
 uses size optimization without reducing stacks/queues or changing radio math.
+
+
+## Persistent multi-ALR schedules
+
+Mode5 supports an ordered roster of2..8 canonical8-bit ALR IDs. First ID is
+reference; local identity derives the follower slot. With RF OFF acknowledged:
+
+```
+:off
+:status
+:cfg set slot_ms 10
+:cfg roster set 0x84 0x85 0x86
+:cfg set cycle_ms 1000
+:cfg set schedule_revision 1
+:cfg roster show
+:on
+```
+
+Only enable after every participant has the identical roster/timing/revision.
+Roster show includes profile, count, period, revision, fingerprint and every
+slot offset. Three through eight IDs select multi profile2; two IDs select the
+legacy profile1. `:cfg set profile multi` explicitly permits the new protocol with
+two IDs. `:cfg set profile legacy` requires exactly two IDs. No reboot is needed
+for stopped-radio schedule changes, but address/mode edits retain their existing
+restart requirement. `:cfg set slot_ms` accepts10/50/500, subject to the data-window
+guard;500ms cannot accommodate more than two ALRs. Period is currently1000ms.
+`cfg` commands above also work inside the existing console session without `:`.
+
+An explicit roster owns role/endpoints. Old `reference`, `follower`, ALR role
+aliases and `:mul setup` are rejected until using roster commands instead. Address
+changes must select an ID already in the explicit roster. Standalone/passive role
+selection retains its existing stop/restart semantics. LPS mode6 cannot receive
+profile2; the STM32 RLR supplies that implementation. Diagnostic override builds
+cannot activate a multi schedule.
+
+The multi deployment image must use `MUL_PROP_MAX_AGE_MS=6000` on ALR and receiver,
+so the round-robin synchronization schedule can refresh all seven followers.
+See [the architecture](mul_multi_alr.md) and [manual deployment/handoff](mul_multi_handoff.md).
