@@ -154,7 +154,7 @@ static bool write_defaults(void) {
   buffer[4] = 0; // Length of TLV
   buffer[5] = buffer[0] + buffer[1];
   // Write the default address
-  if(!cfgWriteU8(cfgAddress, 0)||!cfgWriteU8(cfgMode, MODE_ANCHOR)||
+  if(!cfgWriteU8(cfgAddress, 0)||!cfgWriteU8(cfgMode, MODE_ANCHOR)||!cfgWriteU32(cfgMulSlotMs,10)||
      !cfgWriteU8list(cfgAnchorlist, default_anchor_list, sizeof(default_anchor_list)))return false;
   write_crc();
   if (!eepromWrite(0, buffer, 7))
@@ -329,7 +329,7 @@ static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length) {
   ok=eepromWrite(0,buffer,sizeof(buffer));HAL_Delay(10);
   if(ok)ok=readData()&&!memcmp(expected,buffer,sizeof(buffer));
   if(!ok){memcpy(buffer,previous,sizeof(buffer));mulStorageUncertain=true;}
-  else if(field!=cfgRfEnable)pendingRestart=true;
+  else if(field!=cfgRfEnable&&field!=cfgMulSlotMs)pendingRestart=true;
 done:
   writing=false;return ok;
 }
@@ -365,4 +365,18 @@ bool cfgMulChangeAddress(uint8_t address) {
    * write is reported on failure; legacy EEPROM has no power-cut journal. */
   if(!cfgFieldSize(cfgMulNetwork,&size)&&!cfgMulWrite(role,reference,follower))return false;
   return mulStore(cfgAddress,&address,1);
+}
+
+/* Old EEPROMs had no slot field: retain the previous 500ms deployment until
+ * the operator explicitly coordinates a change. Fresh factory images use10. */
+bool cfgMulSlotRead(uint16_t *slotMs) {
+ uint8_t size;uint32_t value=500;
+ if(!slotMs||!cfgStorageReady())return false;
+ if(cfgFieldSize(cfgMulSlotMs,&size)&&(size!=4||!cfgReadU32(cfgMulSlotMs,&value)))return false;
+ if(!mulSlotValid(value))return false;
+ *slotMs=(uint16_t)value;return true;
+}
+bool cfgMulSlotWrite(uint16_t slotMs) {
+ if(!mulSlotValid(slotMs))return false;
+ return cfgWriteU32(cfgMulSlotMs,slotMs);
 }

@@ -29,7 +29,8 @@ void test_mulRelationRejectsLengthsVersionsFlagsAndStaleContracts(void) {
   for (unsigned int i=0;i<100;i++) if (i!=sizeof(frame)) { TEST_ASSERT_FALSE(mulBroadcastDecode(frame,i,&p,&r)); }
   const unsigned int corrupt[]={0,1,2,3,5,20,24,34,35,70,73};
   for (unsigned int i=0;i<sizeof(corrupt)/sizeof(corrupt[0]);i++) {
-    frame[corrupt[i]]^=0x80; TEST_ASSERT_FALSE(mulBroadcastDecode(frame,sizeof(frame),&p,&r)); frame[corrupt[i]]^=0x80;
+    uint8_t bit=corrupt[i]==24?0x20:0x80;
+    frame[corrupt[i]]^=bit; TEST_ASSERT_FALSE(mulBroadcastDecode(frame,sizeof(frame),&p,&r)); frame[corrupt[i]]^=bit;
   }
   relation.delayAgeMs=1001; mulRelationEncode(frame,&packet,&relation);
   TEST_ASSERT_FALSE(mulBroadcastDecode(frame,sizeof(frame),&p,&r));

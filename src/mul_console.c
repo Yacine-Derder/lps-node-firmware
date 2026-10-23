@@ -58,6 +58,15 @@ static void command(void) {
    reply(uwbSetEnabled(true)?"RF ON requested":"ERR on blocked; inspect status");return;
   }
  }
+ if(count==2&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"show")){page=show;pageIndex=0;return;}
+ if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&!strcmp(w[2],"slot_ms")) {
+  uint16_t slot=!strcmp(w[3],"10")?10:!strcmp(w[3],"50")?50:!strcmp(w[3],"500")?500:0;
+  if(!slot){reply("ERR slot_ms: 10, 50 or 500");return;}
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR slot_ms requires RF OFF acknowledged");return;}
+  if(!uwbControlCanEnable()){reply("ERR slot_ms blocked: restart/config required");return;}
+  if(!cfgMulSlotWrite(slot)){reply("ERR slot EEPROM unconfirmed; RF remains off");return;}
+  reply(uwbControlRequestSlot(slot)?"SAVED slot_ms; ON activates; no restart":"ERR slot activation; RF remains off");return;
+ }
  if(count==2&&!strcmp(w[0],"peer")&&!strcmp(w[1],"list")){page=peers;pageIndex=0;return;}
  if(count==2&&!strcmp(w[0],"cal")&&!strcmp(w[1],"show")){page=cal;pageIndex=0;return;}
  if(count==2&&!strcmp(w[0],"diag")&&!strcmp(w[1],"reset")) {
@@ -136,7 +145,8 @@ bool mulConsolePoll(void) {
   "cal show; diag [reset]; :mul aliases retained",
   "wifi/tlm and runtime cal unsupported",
   "Autosave; restart applies; off retains mode",
-  "hybrid_static: stationary opt-in build only"};
+  "hybrid_static: stationary opt-in build only",
+  "cfg set slot_ms 10/50/500; requires RF OFF"};
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255;
  bool valid=saved(&node,&role,&ref,&fol),last=true,enabled=false;
  if(page==answer)snprintf(line,sizeof(line),"%s",message);
@@ -145,6 +155,7 @@ bool mulConsolePoll(void) {
   if(!valid)snprintf(line,sizeof(line),"ERR invalid roster; EEPROM retained");
   else if(pageIndex==0){snprintf(line,sizeof(line),"SAVED addr=0x%02X role=%s",node,roleName(role));last=false;}
   else if(pageIndex==1){snprintf(line,sizeof(line),"reference=0x%02X follower=0x%02X",ref,fol);last=page==peers;}
+  else if(pageIndex==2){uint16_t slot=0;bool ok=cfgMulSlotRead(&slot);snprintf(line,sizeof(line),"SAVED slot_ms=%u verified=%u",slot,ok);last=false;}
   else {cfgReadU8(cfgMode,&mode);bool ok=cfgRfEnabled(&enabled);
    snprintf(line,sizeof(line),"mode=%u rf=%u verified=%u restart=%u",mode,enabled,ok,cfgPendingRestart());}
  }
@@ -152,6 +163,7 @@ bool mulConsolePoll(void) {
   const uwbConfig_t *c=uwbGetConfig();
   if(pageIndex==0){snprintf(line,sizeof(line),"BOOT mode=%u addr=0x%02X alr_role=%d",c->mode,c->address[0],c->mulRole);last=false;}
   else if(pageIndex==1){snprintf(line,sizeof(line),"OVERRIDE phy=%u diag=%u ads=%u",PHY_INTEROP_ROLE,MUL_DIAG_ROLE,MUL_TWR_ROLE);last=false;}
+  else if(pageIndex==2){snprintf(line,sizeof(line),"ACTIVE slot_ms=%u",mulNetworkSlotMs(&c->mulNetwork));last=false;}
   else snprintf(line,sizeof(line),"RF requested=%u running=%u restart=%u",uwbControlRequested(),uwbControlRunning(),cfgPendingRestart());
  }
  if(page==diag) {

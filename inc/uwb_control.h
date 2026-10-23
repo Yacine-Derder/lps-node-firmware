@@ -5,6 +5,7 @@
 /* Requests carry no SPI operations. Only the existing radio owner applies them. */
 void uwbControlInit(const uwbConfig_t *config);
 bool uwbControlCanEnable(void);
+bool uwbControlRequestSlot(uint16_t slotMs);
 bool uwbControlRequest(bool enabled);
 bool uwbControlRequested(void);
 bool uwbControlRunning(void);

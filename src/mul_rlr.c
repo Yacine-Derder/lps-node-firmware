@@ -31,7 +31,7 @@ static void mulRlrInit(uwbConfig_t *config, dwDevice_t *dev)
   mulObservationInit(rlrObservations,config->address);
   memset(&rlrAssociation,0,sizeof(rlrAssociation));
   printf("MUL RLR: Mode initialized slot_ms=%u rate_unit=ppb rate_policy=%s prop_max_age_ms=%u motion_mm_s=%d\r\n",
-    (unsigned int)MUL_FOLLOWER_SLOT_MS,MUL_EXPERIMENTAL_STATIONARY_RLR_RATE ? "STATIC_EXPERIMENTAL" : "UNAVAILABLE",
+    (unsigned int)mulNetworkSlotMs(rlrNetwork),MUL_EXPERIMENTAL_STATIONARY_RLR_RATE ? "STATIC_EXPERIMENTAL" : "UNAVAILABLE",
     (unsigned int)MUL_PROP_MAX_AGE_MS,(int)MUL_RELATIVE_SPEED_MM_S);
   mulRxInit(dev);
 }
@@ -53,7 +53,11 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
   }
   mulRxRearm(dev); // Freeze timestamp AND power diagnostics before re-arming.
   uint32_t now=(uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS);
-  mulAssociationExpire(&rlrAssociation,rlrObservations,now);
+  mulAssociationExpireNetwork(rlrNetwork,&rlrAssociation,rlrObservations,now);
+  if(valid&&!mulNetworkScheduleMatches(rlrNetwork,packet.slotMs)) {
+    printf("MUL RLR: slot_mismatch expected=%u advertised=%u\r\n",mulNetworkSlotMs(rlrNetwork),packet.slotMs);
+    valid=false;rlrAssociation.pending=false;mulClockReset(&mulRoleScratch.rlr.rate);
+  }
   if (valid) {
     mulAlrRole_t role=mulNetworkRole(rlrNetwork,packet.source);
     if (role != mulAlrUnsupported) {
@@ -99,7 +103,7 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       }
     }
   }
-  if (rlrAssociation.pending) return MUL_PAIR_MAX_AGE_MS+1-(now-rlrObservations[0].acceptedMs);
+  if (rlrAssociation.pending) return mulNetworkPairMaxAgeMs(rlrNetwork)+1-(now-rlrObservations[0].acceptedMs);
   return MAX_TIMEOUT;
 }
 

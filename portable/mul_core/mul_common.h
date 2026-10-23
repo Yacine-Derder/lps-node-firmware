@@ -65,15 +65,13 @@ typedef struct {
  uint8_t addresses[MUL_ALR_COUNT][MUL_ADDRESS_LENGTH];
  uint16_t slotMs; // 0: legacy API fallback; nonzero: require schedule advertisement.
 } mulNetwork_t;
-static inline bool mulSlotValid(uint32_t ms) {return ms==10||ms==50||ms==500;}
-static inline uint16_t mulNetworkSlotMs(const mulNetwork_t *n) {return n&&n->slotMs?n->slotMs:MUL_FOLLOWER_SLOT_MS;}
-static inline uint16_t mulSlotToleranceMs(uint16_t ms) {return ms/10<2?2:ms/10;}
-static inline int64_t mulSlotMinDtu(uint16_t ms) {return (ms-mulSlotToleranceMs(ms))*INT64_C(63897600);}
-static inline int64_t mulSlotMaxDtu(uint16_t ms) {return (ms+mulSlotToleranceMs(ms))*INT64_C(63897600);}
-static inline uint32_t mulNetworkPairMaxAgeMs(const mulNetwork_t *n) {return mulNetworkSlotMs(n)+200u;}
-static inline bool mulNetworkScheduleMatches(const mulNetwork_t *n,uint16_t advertised) {
- return advertised ? advertised==mulNetworkSlotMs(n) : !n||!n->slotMs;
-}
+bool mulSlotValid(uint32_t ms);
+uint16_t mulNetworkSlotMs(const mulNetwork_t *n);
+uint16_t mulSlotToleranceMs(uint16_t ms);
+int64_t mulSlotMinDtu(uint16_t ms);
+int64_t mulSlotMaxDtu(uint16_t ms);
+uint32_t mulNetworkPairMaxAgeMs(const mulNetwork_t *n);
+bool mulNetworkScheduleMatches(const mulNetwork_t *n,uint16_t advertised);
 extern const mulNetwork_t mulDefaultNetwork;
 bool mulNetworkInit(mulNetwork_t *network,uint8_t reference,uint8_t follower);
 bool mulNetworkValid(const mulNetwork_t *network);

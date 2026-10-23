@@ -405,3 +405,24 @@ void test_mulRelationRealDriverPublishesFreshTxBoundOriginsThenExpiresAcrossWrap
     TEST_ASSERT_EQUAL_UINT(RX_MODE,radio.deviceMode);
   }
 }
+
+void test_mulRuntimeSlotsControlActualDelayedTxAndMismatchSkips(void) {
+ const unsigned slots[]={10,50,500};
+ for(unsigned i=0;i<3;i++) {
+  setUp();nodeConfig.address[0]=0x85;nodeConfig.mulConfigured=true;nodeConfig.mulRole=mulAlrFollower;
+  TEST_ASSERT_TRUE(mulNetworkInit(&nodeConfig.mulNetwork,0x84,0x85));nodeConfig.mulNetwork.slotMs=slots[i];
+  mulAlrAlgorithm.init(&nodeConfig,&radio);
+  uint64_t rx=UINT64_C(0xfedcba9876);
+  TEST_ASSERT_TRUE(mulEncodeScheduledPacket(registers[RX_BUFFER],nodeConfig.mulNetwork.addresses[0],42,123456,slots[(i+1)%3]));
+  registers[RX_FINFO][0]=MUL_TEST_FRAME_LENGTH+2;mulEncodeTimestamp(registers[RX_TIME],rx);
+  systemTime=mulTimestampMask(rx+2*UINT64_C(63897600));registers[SYS_STATUS][1]=1<<(RXFCG_BIT-8);dwHandleInterrupt(&radio);
+  TEST_ASSERT_FALSE(started);
+  TEST_ASSERT_TRUE(mulEncodeScheduledPacket(registers[RX_BUFFER],nodeConfig.mulNetwork.addresses[0],43,123456,slots[i]));
+  registers[SYS_STATUS][1]=1<<(RXFCG_BIT-8);dwHandleInterrupt(&radio);TEST_ASSERT_TRUE(started);
+  mulTestPacket_t packet;mulRelation_t relation;
+  TEST_ASSERT_TRUE(mulBroadcastDecode(transmitted,MUL_RELATION_FRAME_LENGTH,&packet,&relation));
+  TEST_ASSERT_EQUAL(slots[i],packet.slotMs);
+  int64_t actual=mulTimestampDifference(packet.txTimestamp,rx),target=slots[i]*INT64_C(63897600);
+  TEST_ASSERT_TRUE(actual>=target&&actual<target+512);
+ }
+}

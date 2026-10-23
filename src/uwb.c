@@ -131,7 +131,7 @@ void uwbInit()
   config.mulConfigured=true;config.mulRole=mulAlrUnsupported;
   memset(&config.mulNetwork,0,sizeof(config.mulNetwork));
   if(cfgMulRead(config.address[0],&mulRole,&reference,&follower)&&
-     mulNetworkInit(&config.mulNetwork,reference,follower)) {
+     mulNetworkInit(&config.mulNetwork,reference,follower)&&cfgMulSlotRead(&config.mulNetwork.slotMs)) {
     if(mulRole<2)config.mulRole=(mulAlrRole_t)mulRole;
   } else printf("MUL CONFIG: invalid roster; MUL disabled, EEPROM retained\r\n");
   cfgFieldSize(cfgAnchorlist, &config.anchorListSize);

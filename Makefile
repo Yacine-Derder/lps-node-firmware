@@ -75,7 +75,9 @@ endif
 CFLAGS += -ffunction-sections -fdata-sections
 # Console/configuration are not radio timing paths. Keep the complete command
 # interface inside128KB without reducing stacks, queues or protocol state.
-src/main.o src/mul_console.o src/cfg.o src/usbcomm.o src/uwb_control.o: CFLAGS += -Os
+# Bounded codecs and passive association/localization use -Os. Transmit
+# scheduling, hardware drivers and clock estimation retain -O3.
+src/main.o src/mul_console.o src/cfg.o src/usbcomm.o src/uwb_control.o src/mul_common.o src/mul_relation.o src/mul_localization.o src/mul_observation.o src/mul_downlink.o src/mul_rlr.o: CFLAGS += -Os
 LDFLAGS+=-Wl,-Map=bin/$(PROG).map,--cref,--gc-sections
 
 

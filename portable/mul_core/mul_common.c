@@ -139,3 +139,14 @@ bool mulDecodeTestPacket(const uint8_t *frame, size_t length, mulTestPacket_t *p
   packet->txTimestamp = mulDecodeTimestamp(&frame[MUL_TX_TIMESTAMP_OFFSET]);
   return true;
 }
+
+uint16_t mulSlotToleranceMs(uint16_t ms) {return ms/10<2?2:ms/10;}
+int64_t mulSlotMinDtu(uint16_t ms) {return (ms-mulSlotToleranceMs(ms))*INT64_C(63897600);}
+int64_t mulSlotMaxDtu(uint16_t ms) {return (ms+mulSlotToleranceMs(ms))*INT64_C(63897600);}
+
+bool mulSlotValid(uint32_t ms) {return ms==10||ms==50||ms==500;}
+uint16_t mulNetworkSlotMs(const mulNetwork_t *n) {return n&&n->slotMs?n->slotMs:MUL_FOLLOWER_SLOT_MS;}
+uint32_t mulNetworkPairMaxAgeMs(const mulNetwork_t *n) {return mulNetworkSlotMs(n)+200u;}
+bool mulNetworkScheduleMatches(const mulNetwork_t *n,uint16_t advertised) {
+ return advertised ? advertised==mulNetworkSlotMs(n) : !n||!n->slotMs;
+}

@@ -6,6 +6,7 @@
 #include "uwb_control.h"
 #include <string.h>
 #include <stddef.h>
+#include <stdio.h>
 static uwbConfig_t boot;
 static unsigned critical;
 void vPortEnterCritical(void){TEST_ASSERT_EQUAL(0,critical);critical++;}
@@ -172,4 +173,26 @@ void test_roleModeAddressEditsRetainExistingAnchorPositionAndPower(void) {
  send(":mul setup disabled 0x23 0x85\n:role rlr\n:addr 0x42\n");
  TEST_ASSERT_TRUE(cfgReadFP32list(cfgAnchorPos,actual,3));TEST_ASSERT_EQUAL_MEMORY(position,actual,sizeof(position));
  binding(0x42,3,0x23,0x85);
+}
+
+void test_runtimeSlotRequiresStoppedOwnerPersistsAndResetsOnResume(void) {
+ uint16_t slot=0;TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(500,slot);TEST_ASSERT_EQUAL(0,writes);
+ apply();unsigned before=writes;send(":cfg set slot_ms 10\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");send(":cfg set slot_ms 10\n");TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(500,slot); // OFF still pending
+ apply();TEST_ASSERT_FALSE(uwbControlRunning());
+ const unsigned slots[]={10,50,500,10};
+ for(unsigned i=0;i<4;i++) {
+  char command[40];snprintf(command,sizeof(command),":cfg set slot_ms %u\n",slots[i]);send(command);
+  TEST_ASSERT_FALSE(cfgPendingRestart());TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(slots[i],slot);
+  send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(slots[i],boot.mulNetwork.slotMs);
+  send(":off\n");apply();cfgInit();uwbControlInit(&boot);TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(slots[i],slot);
+ }
+ before=writes;send(":cfg set slot_ms 20\n:cfg set slot_ms -1\n:cfg set slot_ms 1000\n");TEST_ASSERT_EQUAL(before,writes);
+ TEST_ASSERT_FALSE(cfgMulSlotWrite(20));send(":cfg show\n:status\n");
+ TEST_ASSERT_NOT_NULL(strstr(output,"SAVED slot_ms=10"));
+}
+void test_malformedSlotTlvFailsClosedWithoutErasingOtherFields(void) {
+ TEST_ASSERT_TRUE(cfgWriteU8(cfgMulSlotMs,10));cfgInit();uint16_t slot;
+ TEST_ASSERT_FALSE(cfgMulSlotRead(&slot));uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlCanEnable());
+ binding(0x84,0,0x84,0x85);
 }

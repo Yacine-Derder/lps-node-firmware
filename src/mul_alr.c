@@ -117,7 +117,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   followerSeen = false;
   printf("MUL ALR: Mode initialized role=%s src=0x%02X slot_ms=%u\r\n",
          alrRole == mulAlrReference ? "REF" : alrRole == mulAlrFollower ? "FOLLOWER" : "UNSUPPORTED",
-         (unsigned int)source[0], (unsigned int)MUL_FOLLOWER_SLOT_MS);
+         (unsigned int)source[0], (unsigned int)mulNetworkSlotMs(alrNetwork));
   if (alrRole != mulAlrReference) {
     if (alrRole == mulAlrFollower) {
       mulRxInit(dev);
@@ -151,7 +151,7 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
     return false;
   }
   pendingTimestamp = mulTimestampMask(programmed.full + txAntennaDelay);
-  mulEncodeTestPacket(txFrame, source, pendingSequence, pendingTimestamp);
+  (void)mulEncodeScheduledPacket(txFrame,source,pendingSequence,pendingTimestamp,mulNetworkSlotMs(alrNetwork));
   unsigned int length=MUL_TEST_FRAME_LENGTH;
   if (alrRole==mulAlrFollower) {
     mulClockDelay_t delay;
@@ -160,7 +160,7 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
       pendingTimestamp,readHardwareTime(dev),(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,ranging.powerCorrected);
     if (relation.version==2 && !supplied)
       relation.delayState=mulTwrPropagationState(&ranging,&followerClock,(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS);
-    mulTestPacket_t packet={.sequence=pendingSequence,.txTimestamp=pendingTimestamp}; memcpy(packet.source,source,8);
+    mulTestPacket_t packet={.sequence=pendingSequence,.txTimestamp=pendingTimestamp,.slotMs=mulNetworkSlotMs(alrNetwork)}; memcpy(packet.source,source,8);
     mulRelationEncode(txFrame,&packet,&relation); length=MUL_RELATION_FRAME_LENGTH;
   }
   dwSetData(dev, txFrame, length);
@@ -259,12 +259,12 @@ static bool scheduleFollowerTx(dwDevice_t *dev, uint64_t localRx)
   uint16_t antennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
   // Aim for antenna-referenced TX at RX + the configured slot, in this follower's clock.
   // Subtract TX_ANTD before aligning the raw DX_TIME upwards to 512 ticks.
-  uint64_t rawTarget = mulTimestampMask(localRx + MUL_FOLLOWER_SLOT_DTU - antennaDelay);
+  uint64_t rawTarget = mulTimestampMask(localRx + (mulNetworkSlotMs(alrNetwork)*MUL_DTU_PER_MS) - antennaDelay);
   dwTime_t rawTx = {.full = mulTimestampMask(
     (rawTarget + MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1))};
   int64_t lead = mulTimestampDifference(rawTx.full, readHardwareTime(dev));
   if (lead < (int64_t)MUL_TX_MIN_LEAD_DTU ||
-      lead > (int64_t)(MUL_FOLLOWER_SLOT_DTU + MUL_TX_ALIGNMENT)) {
+      lead > (int64_t)((mulNetworkSlotMs(alrNetwork)*MUL_DTU_PER_MS) + MUL_TX_ALIGNMENT)) {
     // Never move a missed slot forward, retry its sequence, or extrapolate a frame.
     printf("MUL ALR: SLOT skipped ref_seq=%" PRIu32 " reason=late_or_stale\r\n",
            followerReference.sequence);
@@ -326,6 +326,11 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   mulTestPacket_t packet;
   uint64_t arrival = 0;
   bool valid = event == eventPacketReceived && mulRxReadBroadcastNetwork(alrNetwork,dev,&packet,&arrival,NULL);
+  if(valid&&!mulNetworkScheduleMatches(alrNetwork,packet.slotMs)) {
+    printf("MUL ALR: slot_mismatch expected=%u advertised=%u; slot skipped\r\n",mulNetworkSlotMs(alrNetwork),packet.slotMs);
+    valid=false;referenceAcquired=false;mulClockReset(&followerClock);
+    mulTwrCancel(&ranging,dev,"slot_mismatch",true);
+  }
   bool fresh = false;
   bool acquiredNow = false;
   bool armed = false;
@@ -372,7 +377,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
            " state=%s slot_ms=%u\r\n",
            alrNetwork->addresses[0][0],packet.sequence, (unsigned int)(packet.txTimestamp >> 32),
            (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
-           armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED", (unsigned int)MUL_FOLLOWER_SLOT_MS);
+           armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED", (unsigned int)mulNetworkSlotMs(alrNetwork));
     int32_t ppb = followerClock.skewPpb;
     uint32_t magnitude = (uint32_t)(ppb < 0 ? -ppb : ppb);
     printf("MUL ALR: CLOCK src=0x%02X seq=%" PRIu32 " skew_ppm=%s%" PRIu32 ".%03" PRIu32
@@ -437,7 +442,9 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
         uint64_t arrival;
         if (mulRxReadBroadcastNetwork(alrNetwork,dev,&packet,&arrival,NULL) && mulNetworkRole(alrNetwork,packet.source) == mulAlrFollower) {
           int64_t phase = mulTimestampDifference(arrival, pendingTimestamp);
-          if (phase >= (int64_t)(MUL_SLOT_MIN_DTU) && phase <= (int64_t)(MUL_SLOT_PRESENCE_MAX_MS*MUL_DTU_PER_MS))
+          if(!mulNetworkScheduleMatches(alrNetwork,packet.slotMs))
+            printf("MUL ALR: slot_mismatch expected=%u advertised=%u\r\n",mulNetworkSlotMs(alrNetwork),packet.slotMs);
+          else if (phase >= (int64_t)(mulSlotMinDtu(mulNetworkSlotMs(alrNetwork))) && phase <= (int64_t)((mulNetworkSlotMs(alrNetwork)+2*mulSlotToleranceMs(mulNetworkSlotMs(alrNetwork)))*MUL_DTU_PER_MS))
             followerSeen = true;
         }
         mulRxRearm(dev);

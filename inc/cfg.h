@@ -41,12 +41,15 @@ typedef enum {
   cfgLongPreamble,
   cfgMulNetwork, // New three-byte TLV: local role, reference ID, follower ID.
   cfgRfEnable, // Optional one-byte boolean; absent retains legacy enabled behavior.
+  cfgMulSlotMs, // Additive uint32 delay TLV; absent old EEPROM retains 500ms.
 } ConfigField;
 
 void cfgInit();
 bool cfgPendingRestart(void);
 bool cfgStorageReady(void);
 bool cfgRfEnabled(bool *enabled);
+bool cfgMulSlotRead(uint16_t *slotMs);
+bool cfgMulSlotWrite(uint16_t slotMs);
 
 bool cfgReset(void);
 

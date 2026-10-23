@@ -5,6 +5,7 @@
 #include "mul_ads_dw.h"
 static volatile bool requested,running;
 static bool allowed;
+static volatile uint16_t requestedSlot;
 static uint32_t events[5];
 void uwbControlInit(const uwbConfig_t *c) {
  uint8_t role=2,ref,fol;bool enabled=false;
@@ -18,6 +19,7 @@ void uwbControlInit(const uwbConfig_t *c) {
 #if PHY_INTEROP_ROLE || MUL_DIAG_ROLE || MUL_TWR_ROLE
  allowed=cfgStorageReady()&&identity&&network&&role!=3;
 #endif
+ uint16_t slot=0;if(!cfgMulSlotRead(&slot))allowed=false;requestedSlot=slot;
  requested=allowed&&cfgRfEnabled(&enabled)&&enabled;running=false;
 }
 bool uwbControlCanEnable(void) {return allowed&&!cfgPendingRestart();}
@@ -25,9 +27,17 @@ bool uwbControlRequest(bool enabled) {
  if(enabled&&!uwbControlCanEnable())return false;
  requested=enabled;return true;
 }
+bool uwbControlRequestSlot(uint16_t slotMs) {
+ if(!mulSlotValid(slotMs)||requested||running||!uwbControlCanEnable())return false;
+ requestedSlot=slotMs;return true;
+}
 bool uwbControlRequested(void) {return requested;}
 bool uwbControlRunning(void) {return running;}
 bool uwbControlApply(dwDevice_t *dev,uwbAlgorithm_t *algorithm) {
+ /* Slot updates are applied only by the radio owner after RF OFF has
+  * completed. Reinitializing on the next ON discards all old timing models. */
+ if(!running&&uwbGetConfig()->mulNetwork.slotMs!=requestedSlot)
+   uwbGetConfig()->mulNetwork.slotMs=requestedSlot;
  if(requested==running)return false;
  dwIdle(dev);dwClearAllStatus(dev);running=false;
  if(requested){algorithm->init(uwbGetConfig(),dev);running=true;}

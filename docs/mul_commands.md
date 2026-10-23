@@ -193,3 +193,39 @@ use hybrid_static only while stationary. EEPROM failure/power-loss behavior need
 physical fault testing; do not infer RF silence, responsiveness, accuracy or UART/
 PHY fault resolution from host tests. Diagnostic ADS initiator images require a
 fresh nonzero MUL_TWR_SESSION for each physical run, as before.
+
+## Persistent reference-to-follower delay
+
+The line console accepts `:cfg show` and `:cfg set slot_ms 10` (also50/500).
+This delay is independent of the hardware-timed1000ms reference cycle and the
+650..800ms inter-ALR TWR window. Change all participating nodes explicitly; no
+received packet writes EEPROM. Scheduled broadcasts advertise the selected delay
+in the packet-type high bits, so mismatches fail closed with `slot_mismatch`.
+
+On each ALR, enter `:off`, then poll `:status` until RF requested=0/running=0.
+Only then send `:cfg set slot_ms 10`, inspect `:cfg show`, and use `:on`.
+Slot changes do not require restart/reflash: the radio owner applies the saved
+value while stopped and reinitializes scheduling, synchronization and TWR on ON.
+Other configuration edits retain their existing restart requirements. Unsupported
+values and changes while RF is running or stopping are rejected before EEPROM IO.
+A failed EEPROM write/readback keeps RF off and requires inspection/reboot.
+
+Fresh factory configurations select10ms. Old EEPROMs without the additive slot
+TLV retain500ms without writes; explicitly set10ms when upgrading the experiment.
+Previously hand-built50/10ms images had no persistent record of that choice and
+must also be explicitly configured after upgrade. No address/roster/calibration
+or existing EEPROM field IDs are changed.
+
+Build the mixed-radio ALR firmware with:
+
+```sh
+make clean
+make -j4 REV=B BOOTLOAD=0 EXTRA_CFLAGS='-DMUL_HYBRID_CH5=1 -DMUL_PROP_MAX_AGE_MS=6000'
+```
+
+Artifacts: `bin/lps-node-firmware.elf` and `.dfu`. Update all ALRs and the STM32
+receiver before enabling the advertised schedule; older firmware rejects these
+new broadcast types. The ESP32 UWB3 envelope remains fixed length. Software tests
+cover real delayed-TX register programming at10/50/500ms, mismatch skips,
+owner-only safe transitions, EEPROM persistence/malformed fields, and unchanged
+one-second reference cadence. Physical timing/accuracy still need operator checks.
