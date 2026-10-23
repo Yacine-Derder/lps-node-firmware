@@ -1056,3 +1056,21 @@ normal RF idle rather than silently reset. Existing legacy EEPROM is not a
 power-cut journal. Mode-exclusive ALR/RLR IO shares RAM to fit the16KB target
 without reducing stack or buffer reservations. Platform integration/commands and
 physical acceptance are tracked in PLAN.md and docs/mul_heterogeneous.md.
+
+## Runtime reference-to-follower delay
+
+The portable network context carries a validated 10, 50 or 500 ms slot, independently
+of the unchanged 1000 ms reference cadence. Association, source-rate freshness and
+simultaneous-model validation use this context. A zero slot is retained only as a
+legacy API fallback to `MUL_FOLLOWER_SLOT_MS`; the default fallback is now 10 ms.
+Operational configurations use an explicit nonzero slot.
+
+Scheduled reference and relation broadcasts advertise the selected slot using the
+packet-type high two bits (01=10, 10=50, 11=500 ms). The low six bits retain type1
+reference/type2 relation, with unchanged 34/74-byte lengths, timestamps and payloads.
+Code00 remains an unadvertised legacy frame, readable by legacy API contexts.
+An explicit runtime receiver rejects absent or mismatched advertisements with
+`slot_mismatch`, clears association/rate acquisition, and waits for a matching
+schedule. Old firmware rejects the new packet types; update the whole experiment
+before enabling this schedule profile. This avoids silently mixing delay settings
+and adds no multi-ALR scheduler or automatic persistent configuration writes.
