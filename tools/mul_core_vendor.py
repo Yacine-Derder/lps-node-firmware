@@ -7,10 +7,12 @@ from pathlib import Path
 import subprocess
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('revision');p.add_argument('destination',type=Path)
+p.add_argument('--allow-local',action='store_true',help='Explicitly export an unpublished local commit; no push/fetch')
 a=p.parse_args();root=Path(__file__).resolve().parents[1]
 def git(*args): return subprocess.check_output(['git',*args],cwd=root)
 revision=git('rev-parse',a.revision+'^{commit}').decode().strip()
-subprocess.run(['git','merge-base','--is-ancestor',revision,'origin/master'],cwd=root,check=True)
+if not a.allow_local:
+    subprocess.run(['git','merge-base','--is-ancestor',revision,'origin/master'],cwd=root,check=True)
 prefix='portable/mul_core/'
 files=git('ls-tree','-r','--name-only',revision,'--',prefix).decode().splitlines()
 if not files: raise SystemExit('No canonical core in this commit')
