@@ -1028,3 +1028,19 @@ void test_mulInvalidExplicitRosterAndReceiverSelfIdentityStayIdle(void) {
  mulRlrAlgorithm.init(&config,&dev);TEST_ASSERT_FALSE(rlrEnabled);TEST_ASSERT_FALSE(receiving);
  mulRlrAlgorithm.onEvent(&dev,eventPacketReceived);TEST_ASSERT_EQUAL(0,txCount);
 }
+
+void test_mulLegacyRlrUsesConfiguredRegressionAndKeepsPassiveRadio(void) {
+ config.address[0]=0x86;mulClockFitDefaults(&config.mulClockConfig);
+ config.mulClockConfig.estimator=1;config.mulClockConfig.window=30;
+ mulRlrAlgorithm.init(&config,&dev);
+ for(unsigned i=0;i<45;i++) {
+  uint64_t t=(uint64_t)i*PERIOD_DTU;
+  testTick=100+i*1000;
+  deliver(referenceAddress,20+i,mulTimestampMask(t),mulTimestampMask(100000+t+t/1000000*15),false);
+ }
+ const mulClockWorkspace_t *workspace=mulClockWorkspace();
+ TEST_ASSERT_EQUAL_UINT(30,workspace->fit.count);TEST_ASSERT_TRUE(workspace->fit.ready);
+ TEST_ASSERT_TRUE(workspace->fit.applied);
+ TEST_ASSERT_INT32_WITHIN(1,15000,mulRoleScratch.rlr.rate.skewPpb);
+ TEST_ASSERT_EQUAL_UINT(0,txCount);TEST_ASSERT_TRUE(receiving);
+}

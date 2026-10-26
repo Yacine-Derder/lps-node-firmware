@@ -14,8 +14,19 @@ vectors on STM32. Two nonoverlapping maintenance windows serialize propagation
 refresh without duplicating the radio state machine per follower. Existing
 hardware timestamp conventions and signed TDoA math remain shared. See
 [multi-ALR architecture and byte-level formats](mul_multi_alr.md) and
-[software evidence/manual deployment](mul_multi_handoff.md). Only the1Hz cycle
-is supported currently; profile2 requires consistent6s correction policy builds.
+[software evidence/manual deployment](mul_multi_handoff.md). Profiles1/2 retain1Hz compatibility; profile2 requires consistent6s correction
+policy builds. Opt-in profile3 adds numerical spacing and100..2000ms cycles,
+explicit lead/processing/airtime/guard budgets and a new schedule/RF version.
+Delayed-TX guards remain enforced. Fixed AA maintenance windows still require
+cycle>=1000ms; disabling AA permits shorter cycles, with propagation unavailable
+until refreshed or supplied externally. See [configuration](mul_commands.md).
+
+Selectable clock estimation uses the existing five-sample median or bounded
+centered robust regression (default24 observations), with median fallback when
+rate evolution invalidates a window fit. Arrival mapping and propagation correction
+remain distinct; fit uncertainty is conditional scatter, not a physical error bound.
+Optional type10 raw clock diagnostics carry explicit period/capture-age semantics
+and enable production-C offline replay. No host reception time becomes UWB time.
 
 ## Hardware and portability
 

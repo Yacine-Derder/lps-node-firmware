@@ -12,6 +12,20 @@ See [AGENTS.md](AGENTS.md) for operating rules and
 [the architecture](docs/mul_architecture.md) for durable technical decisions.
 Source code remains authoritative for what is actually implemented.
 
+## Current software upgrade campaign
+
+Stages A/B and numerical timing integration are software-tested across LPS,
+STM32 and ESP32. The clock estimator is selectable median/regression with robust
+fallback; profile3 provides guarded numerical broadcast spacing and100..2000ms
+cycles with versioned persistence/telemetry. Tests and firmware builds do not
+establish physical timing or accuracy. Compatibility defaults remain unchanged.
+
+Remaining: automatic ranging scheduler and configurable replies (D), active
+ALR–RLR TWR (E), external geometry/optional odometry EKF (F), then full consolidated
+campaign (G). No physical-validation stop is requested between software stages.
+Detailed continuation and compatible revisions are in
+[the requested engineering handoff](docs/mul_upgrade_handoff.md).
+
 ## Current multi-ALR milestone
 
 **Implemented/software tested; manual hardware acceptance pending.** Persistent

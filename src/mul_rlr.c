@@ -7,6 +7,7 @@
 #include "mul_downlink.h"
 #include "mul_localization.h"
 #include "mul_role_state.h"
+#include "mul_clock_workspace.h"
 #include "task.h"
 
 #include <inttypes.h>
@@ -28,6 +29,9 @@ static void mulRlrInit(uwbConfig_t *config, dwDevice_t *dev)
   if(!rlrEnabled){dwIdle(dev);printf("MUL RLR: invalid/self roster; idle\r\n");return;}
   memset(&mulRoleScratch,0,sizeof(mulRoleScratch));
   mulClockReset(&mulRoleScratch.rlr.rate);
+  mulClockWorkspace_t *workspace=mulClockWorkspace();mulClockFitReset(&workspace->fit);
+  workspace->config=config->mulClockConfig;
+  if(!mulClockFitConfigValid(&workspace->config))mulClockFitDefaults(&workspace->config);
   mulObservationInit(rlrObservations,config->address);
   memset(&rlrAssociation,0,sizeof(rlrAssociation));
   printf("MUL RLR: Mode initialized slot_ms=%u rate_unit=ppb rate_policy=%s prop_max_age_ms=%u motion_mm_s=%d\r\n",
@@ -79,7 +83,8 @@ static uint32_t mulRlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
       if (role==mulAlrReference && result!=mulSequenceDuplicate && result!=mulSequenceOld) {
         if (result==mulSequenceFirst) mulClockReset(&mulRoleScratch.rlr.rate);
         // Reuse skew ONLY, never the arrival mapping/intercept at the RLR.
-        mulClockObserveNetwork(rlrNetwork,&mulRoleScratch.rlr.rate,&packet,arrival,now,true);
+        mulClockWorkspace_t *workspace=mulClockWorkspace();
+        mulClockObserveFitted(rlrNetwork,&mulRoleScratch.rlr.rate,&workspace->fit,&workspace->config,&packet,arrival,now,true,NULL);
       }
       if (!associated && result != mulSequenceDuplicate && result != mulSequenceOld) {
         printf("MUL RLR: RX src=0x%02X seq=%" PRIu32

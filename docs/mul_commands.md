@@ -356,3 +356,56 @@ cannot activate a multi schedule.
 The multi deployment image must use `MUL_PROP_MAX_AGE_MS=6000` on ALR and receiver,
 so the round-robin synchronization schedule can refresh all seven followers.
 See [the architecture](mul_multi_alr.md) and [manual deployment/handoff](mul_multi_handoff.md).
+
+## Experimental numerical timing (software-tested, hardware-unverified)
+
+Compatibility profiles1/2 retain the timing restrictions above. Opt-in profile3
+uses schedule codec2 and multi RF envelope3: all participating ALRs and STM32 must
+run matching new revisions. Version/fingerprint mismatches are rejected.
+The following are preparation commands for a later authorized experiment; no radio
+operation is required for software verification. With RF OFF, apply the same ordered
+roster, timing budgets and revision to each participant:
+
+```text
+off
+cfg roster set 0x84 0x85 0x86 0x87
+cfg set profile experimental
+cfg set tx_lead_us 1000
+cfg set rx_budget_us 500
+cfg set airtime_us 1000
+cfg set guard_us 100
+cfg set slot_ms 3
+cfg set cycle_ms 1000
+cfg set schedule_revision 1
+cfg roster show
+```
+
+LPS console accepts the same commands prefixed by `:`. Node identities/roles must
+already be correct; STM32 selects `mode hybrid_static` only for a stationary-rate
+experiment and retains an RLR ID outside the roster. The3ms example explicitly
+lowers conservative lead/processing budgets; it is not a hardware capability claim.
+Actual delayed-TX lead guards remain before and after SPI.2ms requires still lower
+explicit budgets (for example lead500/rx500/air400/guard100us) and is experimental.
+LPS experimental RF activation requires the known fast PHY, normally the CH5 build;
+long-preamble/low-rate PHY settings are rejected. Stock modes remain available.
+
+`slot_ms` accepts numerical1..65535, subject to lead+processing+airtime+guard and
+cycle feasibility. `cycle_ms` accepts100..2000 in10ms steps. ALR–ALR TWR currently
+retains its compatibility650/800ms windows; `cfg set alr_alr_twr off` allocates none
+and permits shorter cycles. Without TWR or a future external propagation provider,
+fresh propagation relations are unavailable: disabling AA is not yet a complete
+geometry-backed localization mode. Automatic scheduling and active ALR–RLR TWR
+remain pending. Cycle changes update the STM32 estimator's period atomically.
+
+Returning to compatibility requires restoring `slot_ms 10` and `cycle_ms 1000`
+before `profile multi` (or `profile legacy` with exactly two ALRs). Roster edits
+preserve experimental profile3. All timing edits require RF OFF. STM32 schema8
+journal migration preserves implicit/explicit clock settings and retains rollback
+under interrupted writes; LPS retains the original100-byte checksum image and its
+existing fail-closed recovery semantics.
+
+Optional research diagnostics: `cfg set clock_estimator regression`,
+`cfg set clock_window 24`, `cfg set samples on`, `cfg set telemetry on` on STM32;
+`clock show` reports current state. The default estimator remains median. Clock
+telemetry type10 v2 includes raw40-bit timestamps, actual period and capture age;
+v1 remains readable with unknown capture age. Routine logs preserve both.

@@ -309,3 +309,79 @@ mapping without refreshing it (not forcing a reset); old records retain unknown
 capture validity and use CLI period. Offline polynomial diagnostics discard stale
 captures too. Five replay tests and full portable sanitizer suite pass, including
 100/500/2000ms input and explicit type10 v1/v2 codec compatibility.
+
+## Stage C integrated checkpoint (2026-10-26)
+
+This section supersedes the pending-consumer instructions above. Compatible set:
+LPS canonical core `a36af2b` (subsequent LPS-only mode6 fit fix uses same wire),
+STM32 `80e1ce0`, ESP32 `1373433` (clock parser at220a64f, numerical decode3774790).
+All are pushed to their origin branches. Vendor snapshots deterministically pin
+`a36af2b02f91010cfe8ee4f819e6b175564d5cb2`; do not hand-edit vendor files.
+
+STM32 now supports profile3 with all RF-OFF scalar timing setters, matching
+fingerprints, actual cycle period in receiver/clock config, preserved profile3
+roster edits and explicit compatibility return validation. Schema8 uses256 bytes:
+schedule128..159, clock160..171, explicit-clock flag172, zero173..247, CRC248,
+commit252 last. Old schemas1..7 remain readable with old restrictions. Numerical
+spacing is restored from verified extension before alias validation; implicit
+clock settings remain implicit after reboot. Tests cover all64-word append cuts,
+sector rotation cuts, N2/4/8 implicit/explicit clocks, CRC-valid unknown markers,
+malformed/no-write settings and public128-byte decoder rejection.
+
+Production STM32 fake-driver scenarios run2/3/5/7/17ms spacing with100/200/500/
+1000/2000ms periods, injected ALR/RLR skew and signed geometry; persisted settings,
+fit acquisition, passive zero-TX behavior, full80-byte follower preservation and
+bad-capture recovery are checked. Age>15ms at a reference resets the *receiver*
+clock, with reacquisition after valid samples. The estimator itself ignores an
+invalid observation without refreshing mapping; actual JSON mapping-epoch changes
+preserve receiver resets on replay. This distinction matters when extending replay.
+No buffer overflow was found: follower broadcasts are80 bytes, TWR is90, existing
+84-byte LPS-compatible diagnostic storage remains appropriate for current RX paths.
+
+Type10 v2 publication includes actual period and age (UINT16_MAX for invalid
+hardware capture); ESP preserves v1 unknown age/period and v2 explicit validity.
+Type8/9 quality3 marks experimental timing; compact vectors include profile3 and
+actual spacing/cycle. Full85-test ESP host suite passes. Bounded software bridge
+replay passes87 experimental clock/raw/vector records through actual ESP parser,
+queues, TCP reconnect and compact logger, including invalid capture preservation;
+old80-vector replay for N2/3/4/8 also passes. Full175-reference simulation replay
+recovers injected15000ppb; this is simulation, not hardware accuracy evidence.
+
+LPS mode6 legacy RLR now also uses configured regression via the existing typed
+workspace (default median), retaining no-TX behavior; new actual-adapter45-cycle
+window30 test passes. LPS235 native10ms tests pass after this addition; immediately
+prior full matrix234 native+210 sanitizer tests per10/50/500 passed. Run full matrix
+again if changing radio code. Portable sanitizer suite and31 Python tool tests pass.
+All STM32 suites passed (runtime_config,spi_polling,uwb_policy,phy_interop,frequency,
+epuck_console,esp_link,ads_radio,mul_diag); Universal RAM38800/128KiB,
+flash145636/768KiB; ELF load segments/symbols clear config sectors. ESP build fits.
+LPS clean CH5/6s latest text129160/data1136/bss15076; before mode6 fit addition,
+clean default PHY text128848/data1136/bss15076. No stack/queue cuts. Resource
+margin remains tight: more LPS features require explicit size/map review.
+
+Reproduce adapter traces (software only, no serial/radio endpoints):
+```
+# epuck-stm32
+MUL_TIMING_TRACE=/tmp/timing.uart MUL_MULTI_TRACE=/tmp/compat.uart sh tests/runtime_config/run.sh
+# epuck-esp32
+python3 tools/verify_multi_replay.py --experimental /tmp/timing.uart
+python3 tools/verify_multi_replay.py /tmp/compat.uart
+```
+Logs used this run: /tmp/mul-c-stm-final-check.log,
+/tmp/mul-c-experimental-bridge.log,/tmp/mul-c-compat-bridge.log,
+/tmp/mul-c-lps-matrix.log,/tmp/mul-c-lps-final2-build.log,
+/tmp/mul-c-esp-numeric.log. Never operate hardware based on test harness output.
+
+Next: StageD configurable20/10/5ms TWR reply and deterministic scheduler. Actual
+five-message radio state machine currently has fixed20ms replies,5ms TX lead,
+50ms step deadline,20ms final-window guard and150ms650/800 windows. Native scheduler
+must derive all reservations, report infeasible per-link targets and preserve
+compatibility; adapter changes must not lower lead implicitly. LPS EEPROM remains
+known100-byte region; source uses16-bit I2C addresses/32-byte pages but does not
+identify the physical capacity. Do not enlarge allocation without evidence.
+
+StageF audit discovery: real step counters already exist in STM32 epuck_link.c:
+fields20/21 populate candidate.steps_left/right (lines411..412), SENSOR output
+exports them (around819). Inspect source PIC time_ms, rollover and transport
+before defining EKF input. Commanded motor steps/s remain distinct from measured
+step counts. Remaining stagesD/E/F/G are not complete; no hardware stop requested.
