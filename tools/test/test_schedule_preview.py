@@ -40,3 +40,18 @@ class SchedulePreview(unittest.TestCase):
                        dict(alr_rlr=True), dict(reply_ms=5, tx_lead_us=5000), dict(guard_us=101)):
             with self.assertRaises(ValueError):
                 planner.preview(config)
+
+    def test_freshness_priorities_are_versioned_and_keep_requested_rates(self):
+        c=dict(alrs=[132,133],rlrs=[141],alr_alr=True,alr_rlr=True,reply_ms=5,
+               aa_target_millihz=2000,ar_target_millihz=1000,scheduling_policy='freshness',aa_priority=2,ar_priority=1)
+        r=planner.preview(c,cycles=2)
+        self.assertEqual(r['planner_version'],3)
+        self.assertEqual(r['scheduling_policy'],'freshness')
+        self.assertEqual(r['freshness_scope'],'planned_reservations')
+        self.assertEqual(r['cycles'][0]['operations'][0]['kind'],'alr_alr')
+        other=planner.preview(c|dict(ar_priority=3))
+        self.assertEqual(other['cycles'][0]['operations'][0]['kind'],'alr_rlr')
+        self.assertNotEqual(other['fingerprint'],r['fingerprint'])
+        self.assertEqual(sum(len(x['operations']) for x in r['cycles']),8)
+        for bad in (dict(scheduling_policy='adaptive'),dict(aa_priority=256),dict(scheduling_policy='fair')):
+            with self.assertRaises(ValueError):planner.preview(c|bad)

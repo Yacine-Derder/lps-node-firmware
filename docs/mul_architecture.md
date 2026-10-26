@@ -1230,3 +1230,28 @@ survives subsequent reference updates; overwritten results and raw ring loss hav
 separate counters. Runtime queue drops remain separate transport diagnostics.
 Reference_seen denotes observed protocol identity, not a valid current clock map.
 Counter reset refuses a busy exchange and never revives retired reservations.
+
+
+### Freshness scheduling and priority
+
+Fair remains the default full-plan codec2 and preserves its encoded bytes and
+operation selection. Opt-in policy freshness uses codec3 in the same64-byte plan: byte
+50=1,51=AA priority,52=AR priority;53..59 remain zero. Both priorities are0..255.
+The plan CRC/fingerprint binds policy and priorities; old decoders reject codec3,
+and RF4 hash checks reject differing reconstructions. EEPROM journal sizes,
+legacy retained settings and RF/telemetry envelope sizes remain unchanged.
+
+Freshness merges AA/AR virtual-deadline streams calculated from class aggregate
+target rates and reference cycle, then rotates each class's pairs. Larger priority
+serves an equal deadline earlier; AA breaks an equal-priority tie. Priorities do
+not inflate rates or silently sacrifice another class's promised allocation.
+Independent deadline streams can become due together, so validation reserves the
+sum of class ceilings. Operations spread over the usable cycle with the existing
+preparation, delayed-TX lead, airtime, utilization and next-reference margins.
+
+Every participant reconstructs ownership from the same plan/cycle. This policy
+optimizes planned update age, not measured success age: losses never change one
+node's reservations independently. Missing/failed attempts remain visible and
+actual freshness can be unbounded under loss. A conservative planned per-pair gap
+allowance is nominal1000000/r milliseconds plus two cycles for target r milliHz.
+Physical scheduling latency and successful update rates require final experiments.

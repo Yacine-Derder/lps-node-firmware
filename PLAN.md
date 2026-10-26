@@ -47,8 +47,10 @@ now connects assigned five-message AR replies, acquired-time range/quality13/14
 and optional raw90 tracing through ESP and compact/debug logging. Selected AR
 activation is enabled in both firmwares; STM requires explicit RLR assignment.
 Native adapter/fault/queue/reboot and cross-platform delivery tests pass, without
-physical interoperability or accuracy claims. Explicit Stage D priority/freshness
-policy remains unfinished. Existing profiles retain
+physical interoperability or accuracy claims. Stage D also exposes opt-in freshness scheduling with class priority tie-breaks.
+Codec3 preserves the64-byte plan; fair defaults retain byte-compatible codec2.
+Independent virtual deadlines and rotating pairs preserve deterministic ownership
+and requested rates; actual measurement age remains separate from planned age. Existing profiles retain
 their prior wire format. External geometry/optional odometry EKF (F) and the
 consolidated campaign (G) follow. No physical-validation stop is requested between
 software stages.

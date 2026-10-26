@@ -1122,9 +1122,11 @@ void test_actualAlrReferenceInitiatesAssignedArOnlyOperation(void) {
 }
 
 void test_actualFollowerArInitiatorUsesMappedLocalTargetsWithoutAaDependency(void) {
- for(unsigned compensated=0;compensated<2;compensated++) {
+ for(unsigned profile=0;profile<4;profile++) {
+ unsigned compensated=profile&1;
  setUp();scenario(-150000,2131);multiConfig(2,1,10);
  mulRangingPlan_t p={.replyMs=5,.maxUtilization=70,.enabled=MUL_PLAN_AR|(compensated?MUL_PLAN_AA:0),.aaMilliHz=1000,.arMilliHz=1000,.rlrCount=1,.rlrs={141}};
+ p.policy=profile>>1;p.aaPriority=p.policy?2:0;p.arPriority=p.policy?1:0;
  p.broadcast=multiConfiguration.mulSchedule;mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
  p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;
  multiConfiguration.mulSchedule=p.broadcast;multiConfiguration.mulPlan=&p;simulationPlan=&p;

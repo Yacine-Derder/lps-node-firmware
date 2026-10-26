@@ -562,3 +562,21 @@ is UNKNOWN and these ranges are not calibrated. Type14 carries responder
 completion/fault/drop/reset counters; reference_seen is not a freshness guarantee.
 Idle diagnostic reset preserves protocol identities and retired operations; busy
 reset is refused. Ordinary hybrid remains NO_RATE; AA-only/default RLR is passive.
+
+
+While RF is OFF, both LPS (`:` prefix) and STM32 support:
+
+```text
+plan set policy freshness
+plan set aa_priority 200
+plan set ar_priority 1
+```
+
+Larger class priority breaks equal planned deadlines first. Targets still set
+requested per-pair rates; impossible coincident deadline capacity is rejected.
+`plan set policy fair` restores the original codec2 schedule and zeros priorities.
+Freshness uses codec3; all participants must share that policy, priorities and
+plan fingerprint. Saved journal sizes and existing fair defaults are unchanged.
+Plan preview reports actual codec, policy and priorities; Python preview accepts
+`scheduling_policy`, `aa_priority`, `ar_priority`. Freshness describes planned
+reservations, not a guarantee that an exchange succeeds or its data stays fresh.

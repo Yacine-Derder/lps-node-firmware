@@ -1137,3 +1137,61 @@ weighted fair scheduling), then Stage F abstract USB pose ingress/geometry and
 optional measured-step ESP EKF; finish G consolidated campaign. The ROS-agnostic
 LPS boundary and exclusion of ROS/MCS/Pi implementation/access remain mandatory.
 No hardware operations, flashing or intermediate physical experiments. Goal active.
+
+
+## Stage D freshness/priority integration (software-tested)
+
+Canonical13fcdeb88bd802fb710023149fc37bd88abf0650 is published and deterministically
+exported into STM e65037c and ESP3d0d808. Fair defaults preserve exact codec2 bytes.
+Opt-in policy freshness uses codec3 in the same64 bytes, byte50policy1/51AApriority/
+52ARpriority (0..255);53..59 zero. RF4 envelope unchanged; full fingerprint covers
+policy/priority, old decoders reject3. Journals retain their sizes and legacy
+profiles; fresh and fair can be persisted/deselected without rewriting retained
+roster/clock settings. `mulRangingPlanVersion()` reports actual selected codec.
+
+Both CLIs expose RF-OFF `plan set policy fair|freshness`, `aa_priority`,
+`ar_priority`. Fair clears priorities to zero. Python preview accepts
+scheduling_policy/aa_priority/ar_priority and reports policy/version/priorities/
+freshness_scope=planned_reservations. Freshness merges independent class virtual
+deadline streams; priorities break equal deadlines, larger first then AA. Pair
+rotation is fair. Validator reserves sum of class ceilings because deadlines may
+coincide. Requested per-pair rates never silently inflate or starve another class.
+Ownership depends only on plan/cycle, never a local successful-measurement history.
+Actual stale/missing data must still be tracked separately; no physical freshness
+guarantee is implied. Operations spread within cycle, failed attempts are skipped.
+
+Verification: canonical sanitizer suite incl new EDF/priority/codec/roster/wrap
+coverage;4 preview tests;234 LPS tests at10/50/500 and234 ASan/UBSan at10. Actual
+LPS follower AR initiation now tests both policies, with/without committed AA.
+New LPS CLI test saves/reboots priority fields, rejects invalid edits, restores
+codec2. Clean CH5/6s image flash119156/free11916, RAM13572/free2812; checker passes.
+STM full runtime sanitizer suite passes codec3 journal cut/rotation and config,
+RF4 receptionN2/4/8 and100/200/1000ms, assigned mixedAA/AR replies and reboot.
+Clean Universal FLASH160316/RAM39616 (text159492,data768,bss38848), sector checker
+passes. ESP89host tests+ESP32-S3 build pass; unchanged telemetry interfaces.
+Final loopback replay52 RF4 vector/raw records and26 AR range/quality/raw records
+passes actual ESP bridge/priority/TCP reconnect/compact+debug parsing.
+Logs:/tmp/mul-freshness-core-final.log,/tmp/mul-freshness-preview-final.log,
+/tmp/mul-freshness-lps-final.log,/tmp/mul-freshness-lps-matrix.log,
+/tmp/mul-freshness-lps-build.log,/tmp/mul-freshness-resources.json,
+/tmp/mul-freshness-stm-final.log,/tmp/mul-freshness-stm-build.log,
+/tmp/mul-freshness-esp.log,/tmp/mul-freshness-esp-build.log,
+/tmp/mul-freshness-vector-e2e.log,/tmp/mul-freshness-ar-e2e-final.log.
+
+D/E have connected software implementations; F/G remain unfinished. Next work is
+Stage F, NOT another scheduler/telemetry foundation checkpoint. Implement the
+abstract timestamped noisy ALR pose/covariance/validity interface, bounded USB
+ingestion on LPS and source none/TWR/external selection into propagation/geometry.
+Do not compare external timestamps to MCU uptime without an explicit time/age
+contract. Retain pristine truth only in host evaluation; no fallback to truth.
+Existing downstream APIs: portable/mul_core/mul_clock.h mulClockDelay_t and
+corrected/simultaneous mapping; inc/mul_twr.h mulTwrDelay/committed AA cache;
+src/mul_alr.c relation mapping/export; src/mul_console.c and USB fixtures for
+USB source. Need frame/clock identity, supplied covariance (not hard bounds),
+staleness/missing/reorder/epoch reset tests; keep rate scatter distinct from
+physical uncertainty. No actual F interface implementation is claimed yet.
+Then optional measured-wheel-step ESP EKF: audit STM epuck_link.c fields20/21 near
+411 and SENSOR near819 for actual counters/time/rollover, never commanded speed.
+Finish G replay/fault matrix and single consolidated final physical experiment
+preparation. LPS stays ROS-agnostic; no ROS/MCS/Pi code or Pi access, no hardware
+experiments/flashing. Preserve unrelated docs/mul_core.md16/17. Goal remains active.

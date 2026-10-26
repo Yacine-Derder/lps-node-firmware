@@ -20,14 +20,20 @@ def encode(config):
     defaults = dict(cycle_ms=1000, slot_ms=3, revision=1, tx_lead_us=1000,
                     rx_budget_us=500, airtime_us=1000, guard_us=100,
                     reply_ms=20, max_utilization_percent=70, alrs=[132, 133, 134, 135], rlrs=[],
-                    alr_alr=False, alr_rlr=False, aa_target_millihz=500, ar_target_millihz=2000)
+                    alr_alr=False, alr_rlr=False, aa_target_millihz=500, ar_target_millihz=2000,
+                    scheduling_policy="fair", aa_priority=0, ar_priority=0)
     if not isinstance(config, dict) or set(config)-set(defaults):
         raise ValueError('unknown configuration fields')
     c = defaults | config
+    if c['scheduling_policy'] not in ('fair', 'freshness'):
+        raise ValueError('scheduling_policy: fair/freshness')
+    for key in ('aa_priority','ar_priority'):
+        if type(c[key]) is not int or not 0 <= c[key] <= 255:
+            raise ValueError('priority: integer0..255')
     for key in ('alr_alr', 'alr_rlr'):
         if type(c[key]) is not bool:
             raise ValueError(f'{key}: boolean required')
-    for key in set(defaults)-{'alrs', 'rlrs', 'alr_alr', 'alr_rlr'}:
+    for key in set(defaults)-{'alrs', 'rlrs', 'alr_alr', 'alr_rlr','scheduling_policy'}:
         maximum = 0xffffffff if key == 'revision' else 65535
         if type(c[key]) is not int or not 0 <= c[key] <= maximum:
             raise ValueError(f'{key}: integer0..{maximum} required')
@@ -46,11 +52,12 @@ def encode(config):
     struct.pack_into('<HHHBB', schedule, 20, c['tx_lead_us'], c['rx_budget_us'], c['airtime_us'], c['guard_us']//100, 0)
     struct.pack_into('<I', schedule, 28, zlib.crc32(schedule[:28]))
     data = bytearray(64)
-    data[:4] = bytes((2, int(c['alr_alr']) | (int(c['alr_rlr']) << 1), c['reply_ms'], c['max_utilization_percent']))
+    data[:4] = bytes((3 if c['scheduling_policy']=='freshness' else 2, int(c['alr_alr']) | (int(c['alr_rlr']) << 1), c['reply_ms'], c['max_utilization_percent']))
     data[4:36] = schedule
     data[36] = len(c['rlrs'])
     data[37:37+len(c['rlrs'])] = bytes(c['rlrs'])
     struct.pack_into('<HH', data, 46, c['aa_target_millihz'], c['ar_target_millihz'])
+    data[50:53] = bytes((int(c['scheduling_policy']=='freshness'), c['aa_priority'], c['ar_priority']))
     struct.pack_into('<I', data, 60, zlib.crc32(data[:60]))
     return bytes(data)
 

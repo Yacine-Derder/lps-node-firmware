@@ -395,3 +395,13 @@ void test_committedPlanCorruptionOrBootReadFailureCannotFallBackToLegacyRadio(vo
  TEST_ASSERT_EQUAL(mulPlanCorrupt,cfgMulPlanCached(&cached));TEST_ASSERT_NULL(cached);TEST_ASSERT_FALSE(uwbControlCanEnable());
  badRead=true;cfgInit();badRead=false;TEST_ASSERT_EQUAL(mulPlanIoError,cfgMulPlanCached(&cached));TEST_ASSERT_FALSE(uwbControlCanEnable());
 }
+
+void test_freshnessPlanPrioritiesPersistAndFairSelectionRestoresCodec2(void) {
+ send(":off\n");apply();send(":plan init\n:plan set policy freshness\n:plan set aa_priority 200\n:plan set ar_priority 9\n");
+ const mulStoredPlan_t *p=NULL;cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&p));
+ TEST_ASSERT_EQUAL(1,p->plan.policy);TEST_ASSERT_EQUAL(200,p->plan.aaPriority);TEST_ASSERT_EQUAL(9,p->plan.arPriority);
+ TEST_ASSERT_EQUAL(3,mulRangingPlanVersion(&p->plan));unsigned before=writes;
+ send(":plan set aa_priority 256\n:plan set policy unknown\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":plan set policy fair\n");TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&p));
+ TEST_ASSERT_EQUAL(0,p->plan.aaPriority);TEST_ASSERT_EQUAL(0,p->plan.arPriority);TEST_ASSERT_EQUAL(2,mulRangingPlanVersion(&p->plan));
+}
