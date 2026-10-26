@@ -385,3 +385,79 @@ fields20/21 populate candidate.steps_left/right (lines411..412), SENSOR output
 exports them (around819). Inspect source PIC time_ms, rollover and transport
 before defining EKF input. Commanded motor steps/s remain distinct from measured
 step counts. Remaining stagesD/E/F/G are not complete; no hardware stop requested.
+
+## Stage D portable planner checkpoint (live integration NOT complete)
+
+Added canonical mul_ranging_plan.[ch], tests/test_ranging_plan.c, production-C
+preview bridge tools/test/ranging_plan_preview.c, tools/mul_schedule_preview.py,
+example JSON and three Python tests. The planner/config codec is separately
+versioned64 bytes, not exported into current consumer pins or EEPROM. No live
+radio path uses it yet; no reply-delay firmware setter is claimed implemented.
+Default deployed timing remains20ms replies/fixed windows. The shared core has
+new optional APIs only, so the StageC compatible revision set above remains valid.
+
+Planner supports8 ALRs/8 RLRs, independent AA/AR flags, reference-follower AA pairs
+and all ALR×RLR pairs,20/10/5ms candidates, per-pair integer milliHz, fractional
+aggregate quotas and weighted class/pair rotation. Reservations include configured
+initial TX setup, four replies, RESULT airtime/processing/guard; spread over usable
+cycle, bounded by reference preparation, peak demand,10..80% utilization and32 ops.
+Rates exceeding capacity are rejected, not silently degraded. Disabled types have
+zero ranging reservations. Priorities beyond requested rates remain pending.
+
+Native matrix1200 profiles:996 feasible/204 explicitly rejected. Tests check every
+owner/overlap/cycle bound/utilization, deterministic rebuild, uint32 cycle rollover,
+codecCRC and CRC-valid invalid fields, unchanged output on failure.2000-cycle
+fairness gives exactly1000 AA measurements/link and4000 AR measurements/link for
+AA0.5Hz/AR2Hz example; AA gaps<=2.2s in that simulation. Example20ms reply target
+is infeasible and rejected. No actual radio state machine is exercised by this new
+planner test; existing radio fault tests remain separate until adapters are wired.
+
+Full canonical portable ASan/UBSan suite and34 Python tests pass. Latest LPS native
+matrix after mode6 fix is235 tests+211 sanitizer tests at each10/50/500ms (check
+/tmp/mul-d-lps-final-matrix.log final completion). Object-only Cortex-M0 -Os build
+of planner: text2280/data0/bss0, largest individual function stack136 bytes;
+call chains/other radio task usage still need integration review. Dependencies are
+integer ABI division/multiply/memory/schedule only (no new FP). Current LPS image
+has about776 flash bytes spare, so simply linking this planner cannot fit. Do not
+claim embedded integration/resource acceptance from the object/native tests.
+
+Immediate continuation, in order:
+1. Review planner model/API and extend priority/freshness reporting if needed.
+   Compare reservation formula against all actual mul_twr.c transitions; add
+   simulated SPI/IRQ-delay/lost-message cancellation at reservation boundaries.
+2. Reclaim LPS flash with measured build changes (consider optional LTO or carefully
+   size-optimized C driver units; preserve TX lead checks, stacks, queues and modes).
+   Review Makefile/linker + full clean builds/map/stack before wiring new objects.
+3. Resolve compact persistent ranging settings under known100-byte LPS region,
+   preserving existing fields. Source does not prove EEPROM capacity; do not extend
+   blindly. Current64-byte planner wire may need a compact storage codec.
+4. Replace fixed-window reservation selection in ALR owner and mul_twr.c using
+   planner intervals, add configurable replies/timeouts/guard/lead that preserve
+   legacy20/5/50ms behavior. New ownership requires schedule/RF versioning; current
+   profile3 consumers reject unsupported flags. Do not merely run both schedulers.
+5. Integrate persistent RLR roster/targets in STM32, deterministic matching plan,
+   explicit radio ownership. Implement StageE compatible five-message ALR–RLR
+   DW1000/DW3000 exchanges in assigned slots, quality/raw telemetry, fault recovery.
+6. StageF real steps exist in epuck_link.c; trace sensor timestamp/rollover/transport
+   then geometry/range provider and optional PC EKF. Finish StageG unified campaign.
+
+Exact next smoke commands (read-only software):
+```
+python3 tools/mul_schedule_preview.py tools/examples/mul_ranging_plan.json --cycles 3
+python3 -m unittest discover -s tools/test
+sh portable/mul_core/tests/run.sh
+```
+
+At this context checkpoint, StageD is partial; E/F/G remain pending. Goal remains
+active. No flash, robot motion, physical experiment or external message was sent.
+Preserve unrelated docs/mul_core.md edits; STM32/ESP32 trees are committed/clean.
+
+Final checkpoint verification: full LPS matrix completed235 native+211 sanitizer
+checks at all10/50/500ms, with unsupported compile-time slot rejection. Clean
+default-PHY build after legacy mode6 fit passes text128872/data1136/bss15076;
+current bin artifacts are this default build, NOT the CH5 campaign image. Latest
+CH5/6s build text129160/data1136/bss15076 also passed. No binary was deployed.
+STM32 HEAD/origin main80e1ce0 and ESP32 HEAD/origin main1373433 agree and trees
+are clean. The only intentionally unstaged file in LPS is the pre-existing
+unrelated docs/mul_core.md edit. Planner APIs/tool/tests are committed in the
+checkpoint containing this section; obtain its exact revision with git log -1.

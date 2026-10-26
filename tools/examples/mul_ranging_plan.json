@@ -1,0 +1,16 @@
+{
+  "alrs": [132, 133, 134, 135],
+  "rlrs": [141, 142],
+  "cycle_ms": 1000,
+  "slot_ms": 3,
+  "tx_lead_us": 1000,
+  "rx_budget_us": 500,
+  "airtime_us": 1000,
+  "guard_us": 100,
+  "reply_ms": 5,
+  "max_utilization_percent": 70,
+  "alr_alr": true,
+  "alr_rlr": true,
+  "aa_target_millihz": 500,
+  "ar_target_millihz": 2000
+}
