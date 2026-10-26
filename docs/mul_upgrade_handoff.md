@@ -540,3 +540,37 @@ Updated Stage F acceptance/work plan:
   replay, compare TDoA-only/TDoA+TWR/EKF. Do not estimate frame alignment or SLAM error.
 - Continue scheduler/reply/active ALR–RLR integration first, then MCS-noise/geometry/
   odometry/EKF and consolidated A–G campaign. No intermediate hardware checkpoint.
+
+## Persistence prerequisite after production cleanup
+
+Commit188927f (pushed) is the MUL-only cleanup and StageF clarification checkpoint.
+Subsequent EEPROM fix removes a real error-masking bug: old eepromWrite could fail
+an early32-byte page, continue, then return true when a later page succeeded.
+Writer now stops immediately on first failure; tests verify no following bus write.
+Read/write guard negative/out-of-range/overflow/NULL inputs before bus access,
+zero-length no-ops and last-device-byte operations. No larger config image is used.
+New TestMulEeprom uses the real production driver with a simulated I2C device and
+fault injection at all4 page boundaries, including unaligned1/32/32/1 splits.
+216 production native+216 ASan/UBSan tests pass at10ms; firmware builds and image
+checker pass. Latest CH5 image after driver fix flash117384/free13688, RAM12828/
+free3556. No new global allocation; no radio or hardware operation occurred.
+
+Primary hardware evidence found (supersedes earlier "capacity unknown" limitation):
+- Bitcraze Rev-D schematic labels U6 as24AA64FT-E/OT:
+  https://www.bitcraze.io/documentation/hardware/loco_node/loco_node_revd.pdf
+- Microchip datasheet specifies8K x8-bit memory and32-byte pages:
+  https://ww1.microchip.com/downloads/aemDocuments/documents/MPD/ProductDocuments/DataSheets/24AA64-24FC64-24LC64-64-Kbit-I2C-Serial-EEPROM-DS20001189.pdf
+This supports an explicit board-profile storage design, not a physical inspection
+of the user's nodes or blanket proof across unknown revisions. Header driver bound
+is8192; current cfg.c still reads/writes only original100 bytes. No extension area
+has been touched. Do not confuse firmware REV=B toolchain selection with verified
+physical PCB revision. A future extended scheduler record should use its own
+version/CRC/commit-last/readback/rollback contract and preserve0..99 unchanged,
+rather than blindly growing the old config buffer and its main-task stack copies.
+
+Continue with D/E radio integration now that flash/RAM are available. A useful
+next coherent unit is actual profile3 TWR reply20/10/5 selection with explicit
+lead/processing/airtime/guard validation, preserved compatibility20/5/50 defaults,
+and real adapter delayed-TX/fault tests. Then bind the deterministic planner,
+RLR roster/targets and versioned persistent plan to the radio owner instead of
+running fixed and generated reservations together. No pause for hardware required.

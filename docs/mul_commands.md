@@ -448,3 +448,13 @@ combined CH5 image, savings are12904 flash and3376 RAM bytes. Both builds use th
 same compiler/optimization flags; LTO was not needed. The core UWB/main/idle task
 stacks and USB queue sizes were not cut. No mode-specific task existed to remove;
 all retained tasks serve MUL, console or the kernel. Timers were already disabled.
+
+The EEPROM driver now checks device bounds and stops at the first failed page;
+a later successful page cannot turn an incomplete write into reported success.
+Its8KiB/32-byte-page bound follows the part identified in Bitcraze's
+[Rev-D schematic](https://www.bitcraze.io/documentation/hardware/loco_node/loco_node_revd.pdf)
+and Microchip's [24AA64 datasheet](https://ww1.microchip.com/downloads/aemDocuments/documents/MPD/ProductDocuments/DataSheets/24AA64-24FC64-24LC64-64-Kbit-I2C-Serial-EEPROM-DS20001189.pdf).
+This is board-design evidence, not inspection of each robot's fitted device.
+The legacy configuration allocation remains100 bytes; no extension region is
+written by the current firmware. New scheduler persistence must define its region,
+version, failure/rollback rules and hardware assumption explicitly.

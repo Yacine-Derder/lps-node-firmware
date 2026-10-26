@@ -48,39 +48,31 @@ bool eepromTest()
   return eepromRead(0, &test, 1);
 }
 
-bool eepromRead(int address, void* data, size_t length)
-{
-  int status;
-
-  status = HAL_I2C_Mem_Read(hi2c, devAddr, address, I2C_MEMADD_SIZE_16BIT, data, length, 100);
-
-  if (status == HAL_OK)
-    return true;
-
-  return false;
+static bool withinDevice(int address,const void *data,size_t length) {
+  return address>=0&&(unsigned)address<=EEPROM_SIZE_BYTES&&
+    length<=EEPROM_SIZE_BYTES-(unsigned)address&&(!length||data!=NULL);
 }
 
-bool eepromWrite(int address, void* data, size_t length)
+bool eepromRead(int address,void *data,size_t length)
 {
-  int status = HAL_OK;
-  size_t start_address = address;
-  size_t start_i = 0;
+  if(!withinDevice(address,data,length))return false;
+  if(!length)return true;
+  return HAL_I2C_Mem_Read(hi2c,devAddr,(uint16_t)address,I2C_MEMADD_SIZE_16BIT,
+                         data,(uint16_t)length,100)==HAL_OK;
+}
 
-  for (int i=0; i<length; i++) {
-    if ((address+i+1)%32 == 0) {
-      status = HAL_I2C_Mem_Write(hi2c, devAddr, start_address, I2C_MEMADD_SIZE_16BIT, ((uint8_t*)data)+start_i, (i+1) - start_i, 100);
-      start_address = address + i + 1;
-      start_i = i+1;
-      vTaskDelay(10);
-    }
-  }
-  if (start_i != length) {
-    status = HAL_I2C_Mem_Write(hi2c, devAddr, start_address, I2C_MEMADD_SIZE_16BIT, ((uint8_t*)data)+start_i, length - start_i, 100);
+bool eepromWrite(int address,void *data,size_t length)
+{
+  if(!withinDevice(address,data,length))return false;
+  const uint8_t *bytes=data;
+  while(length) {
+    size_t chunk=EEPROM_PAGE_BYTES-(unsigned)address%EEPROM_PAGE_BYTES;
+    if(chunk>length)chunk=length;
+    // Stop on the first failed page: a later success cannot validate this image.
+    if(HAL_I2C_Mem_Write(hi2c,devAddr,(uint16_t)address,I2C_MEMADD_SIZE_16BIT,
+                        (uint8_t *)bytes,(uint16_t)chunk,100)!=HAL_OK)return false;
     vTaskDelay(10);
+    address+=(int)chunk;bytes+=chunk;length-=chunk;
   }
-
-  if (status == HAL_OK)
-    return true;
-
-  return false;
+  return true;
 }
