@@ -23,12 +23,16 @@ typedef struct {
   uint8_t powerCorrectedTwr:1;
   uint8_t version:2; // 0 in legacy API fixtures means v1.
   uint8_t delayState:3;
+  uint8_t externalPose:1; // v3:1 external,0 none; v1/2 retain TWR semantics.
   uint8_t period10ms; // Context from versioned multi schedule;0 means1000ms.
 
 } mulRelation_t;
 
+mulDelaySource_t mulRelationSource(const mulRelation_t *relation);
 mulRelation_t mulRelationPublish(const mulClock_t *clock,const mulClockDelay_t *delay,
   uint64_t followerTx,uint64_t hardwareNow,uint32_t nowMs,bool powerCorrectedTwr);
+mulRelation_t mulRelationPublishSourceNetwork(const mulNetwork_t *network,const mulClock_t *clock,const mulClockDelay_t *delay,
+  uint64_t followerTx,uint64_t hardwareNow,uint32_t nowMs,bool powerCorrectedTwr,mulDelaySource_t source);
 mulRelation_t mulRelationPublishNetwork(const mulNetwork_t *network,const mulClock_t *clock,const mulClockDelay_t *delay,
   uint64_t followerTx,uint64_t hardwareNow,uint32_t nowMs,bool powerCorrectedTwr);
 void mulRelationEncode(uint8_t frame[MUL_RELATION_FRAME_LENGTH],
