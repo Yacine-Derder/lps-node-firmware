@@ -713,3 +713,67 @@ at10ms (/tmp/mul-plan-backend-final-tests.log); full native-source suite246 pass
 (/tmp/mul-plan-backend-reference.log).
 CH5 build/image check passes, unchanged flash118224/RAM12828 because new APIs are
 not reachable from the live radio/console yet. Goal remains active, D/E incomplete.
+
+
+## Stage D generated AA owner checkpoint (supersedes backend-only limitation above)
+
+LPS now loads the journal into a boot cache while RF is stopped. Physical journal
+edits require acknowledged OFF and the writer lock; no radio callbacks use I2C.
+Cache errors/corruption block legacy fallback. Selected plans expose their broadcast
+schedule directly. Reset invalidates legacy magic FIRST, then both journal commits;
+write-cut/reboot tests show idle defaults after the first successful invalidation.
+Address-menu and legacy schedule aliases cannot shadow-edit a selected plan.
+
+`:plan init/show/use/alrs/rlrs/set` persists full configuration and selection,
+provides bounded USB preview pages, and validates candidates before writes. Clock
+settings remain separately editable. See mul_commands.md for exact fields. AR plans
+are persistable/previewable but cannot enable RF yet; selected plans require mode5,
+ALR roster membership and known fast PHY, and diagnostic overrides are refused.
+
+Canonical plan codec is now2, due to a deterministic1000us RTOS service margin
+in reservation preparation (1kHz kernel). Embedded schedule ranging flags must
+be zero; fixed windows never run alongside generated ownership. New RF envelope4
+binds full-plan fingerprint, cycle32, operation0..31 and generic assigned pair.
+Broadcast40/80 and TWR90 lengths remain; old decoders explicitly reject the version.
+Changing an RLR roster changes this fingerprint even when the sub-schedule doesn't.
+
+Actual LPS reference/follower loops now run generated AA reservations, including
+multiple operations per cycle, exact microsecond poll/end offsets, late skipping,
+turnaround cancellation and mandatory broadcast priority. TWR before/after-SPI lead
+checks remain. Planned final-tail guard uses exact airtime+processing, leaving the
+separately reserved guard for drift/propagation/512-DTU alignment. Native tests
+exercise full exchanges, assigned follower delay identity and dropped exchange/TX
+IRQ recovery at a subsequent operation. dwNewTransmit uses the existing driver's
+TX-status clearing. AR cannot publish AA propagation delay; keeping a distinct AA
+cache once AR reuses the context is STILL required before enabling actual AR.
+
+IMPORTANT compatible-set limit: current STM32/ESP pin remains e7f3518; neither has
+new full-plan persistence/RF4 reception/vector labels. Current LPS unselected
+profiles retain compatibility. Do not describe selected generated plans as an
+end-to-end working deployment. Next work must wire those consumers, then actual
+ALR–RLR TX/quality, priority/freshness configuration, StageF MCS/noise/geometry and
+measured-step portable ESP EKF, and G. Goal remains active; no hardware checkpoint.
+
+Stack review: journal console chain exceeded the previous800-byte main allocation,
+so main is1600. UWB1600/idle800/linker2048/USB512 remain. ARM -fstack-usage files
+were copied to /tmp/mul-plan-stack-usage and removed from source. These are static
+frame/chain estimates, not runtime watermark acceptance. Global -u _printf_float
+was removed; power-menu half-dB output is integer formatted, optional ADS retains
+float formatter by a cold ARM symbol reference. Both ADS role1/2 builds retain
+_printf_float; normal MUL does not. Floating-point radio math was not removed.
+
+Final clean CH5/6s image: flash116072/free15000, RAM13548/free2836 including linker
+stack. Default PHY: flash115756/free15316, sameRAM. Final normal artifact isCH5/6s.
+Native production10ms:229/229 plus229 ASan/UBSan; portable full sanitizer suite
+passes including1200-plan matrix996/204, fairness, journal cuts and RF4protocol;
+34 Python tests pass. Preview JSON schema2 reports planner_version2 and separate
+LPS-AA/receiver/AR integration flags. Native reset cuts are per eepromWrite call;
+canonical journal tests separately cover every payload byte cut.
+Logs:/tmp/mul-plan-final-native.log,/tmp/mul-plan-final-core.log,
+/tmp/mul-plan-final-python.log,/tmp/mul-plan-ch5-build.log,
+/tmp/mul-plan-ch5-resources.json,/tmp/mul-plan-default-build.log,
+/tmp/mul-plan-default-resources.json,/tmp/mul-plan-ads-build.log,
+/tmp/mul-plan-ads2-build.log. No flash/reset/EEPROM command ran on hardware.
+Preserve unrelated docs/mul_core.md (16 additions/17 deletions). Canonical changes
+in this checkpoint have not yet been exported to STM32/ESP; export only after
+commit using the deterministic vendor tool, then test actual consumers.

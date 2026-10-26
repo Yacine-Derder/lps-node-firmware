@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Preview production-C ranging reservations without connecting to hardware.
 
-This planner is not yet integrated into live radio adapters or persistence.
+LPS persists these plans and runs generated AA reservations; active AR and
+matching STM32 reception are still under development.
 Target rates are per participant pair in integer milliHz (500 means0.5Hz).
 """
 import argparse
@@ -45,7 +46,7 @@ def encode(config):
     struct.pack_into('<HHHBB', schedule, 20, c['tx_lead_us'], c['rx_budget_us'], c['airtime_us'], c['guard_us']//100, 0)
     struct.pack_into('<I', schedule, 28, zlib.crc32(schedule[:28]))
     data = bytearray(64)
-    data[:4] = bytes((1, int(c['alr_alr']) | (int(c['alr_rlr']) << 1), c['reply_ms'], c['max_utilization_percent']))
+    data[:4] = bytes((2, int(c['alr_alr']) | (int(c['alr_rlr']) << 1), c['reply_ms'], c['max_utilization_percent']))
     data[4:36] = schedule
     data[36] = len(c['rlrs'])
     data[37:37+len(c['rlrs'])] = bytes(c['rlrs'])

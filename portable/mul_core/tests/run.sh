@@ -45,3 +45,6 @@ cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-p
 cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-pie \
  -I. tests/test_plan_store.c mul_plan_store.c mul_ranging_plan.c mul_schedule.c mul_common.c -o "$work/plan_store"
 "$work/plan_store"
+cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-pie \
+ -I. tests/test_plan_protocol.c mul_plan_protocol.c mul_multi_protocol.c mul_ranging_plan.c mul_schedule.c mul_relation.c mul_legacy_twr.c mul_clock.c mul_common.c -lm -o "$work/plan_protocol"
+"$work/plan_protocol"

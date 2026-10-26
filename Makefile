@@ -65,14 +65,14 @@ OBJS+=vendor/libdw1000/src/libdw1000.o vendor/libdw1000/src/libdw1000Spi.o
 
 OBJS+=src/mul_clock_fit.o src/mul_clock_workspace.o src/dwOps.o src/mul_schedule.o src/mul_multi_protocol.o
 
-OBJS+=src/mul_plan_store.o src/mul_ranging_plan.o
+OBJS+=src/mul_plan_store.o src/mul_ranging_plan.o src/mul_plan_protocol.o
 
 ALL_BUILD_OBJS := $(OBJS)
 OBJS := $(filter-out src/uwb_twr_anchor.o src/uwb_twr_tag.o src/uwb_sniffer.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o src/lpp.o src/lps25h.o src/production_test.o,$(OBJS))
 
 CFLAGS+=$(PROCESSOR) $(INCLUDES) -O3 -g3 -Wall -Wno-pointer-sign -std=gnu11
 CFLAGS+=$(EXTRA_CFLAGS) -DMUL_ONLY=$(MUL_ONLY)
-LDFLAGS+=$(PROCESSOR) --specs=nano.specs --specs=nosys.specs -lm -lc -u _printf_float
+LDFLAGS+=$(PROCESSOR) --specs=nano.specs --specs=nosys.specs -lm -lc
 
 ifeq ($(strip $(BOOTLOAD)),0)
 LDFLAGS+=-Ttools/make/stm32f072.ld

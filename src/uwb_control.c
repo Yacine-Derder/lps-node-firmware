@@ -23,6 +23,22 @@ void uwbControlInit(const uwbConfig_t *c) {
  requested=uwbControlCanEnable()&&cfgRfEnabled(&enabled)&&enabled;running=false;
 }
 bool uwbControlCanEnable(void) {
+ const mulStoredPlan_t *stored=NULL;mulPlanStoreResult_t planState=cfgMulPlanCached(&stored);
+ if(planState==mulPlanIoError||planState==mulPlanCorrupt)return false;
+ // The selected-plan branch is separate from legacy aliases/window ownership.
+ if(stored&&stored->selected) {
+  const uwbConfig_t *c=uwbGetConfig();uint8_t mode,node;mulClockFitConfig_t clock;
+  if(!cfgMulClockRead(&clock))return false;
+#if PHY_INTEROP_ROLE || MUL_DIAG_ROLE || MUL_TWR_ROLE
+  return false;
+#endif
+#if !MUL_HYBRID_CH5
+  if(c->lowBitrate||c->longPreamble)return false;
+#endif
+  return !cfgPendingRestart()&&c->mode==MODE_MUL_ALR&&!(stored->plan.enabled&MUL_PLAN_AR)&&
+    cfgReadU8(cfgMode,&mode)&&mode==c->mode&&cfgReadU8(cfgAddress,&node)&&node==c->address[0]&&
+    mulScheduleIndex(&stored->plan.broadcast,node)>=0;
+ }
  mulSchedule_t schedule;mulClockFitConfig_t clockConfig;
  const uwbConfig_t *c=uwbGetConfig();
 #if MUL_ONLY
@@ -63,7 +79,8 @@ bool uwbControlApply(dwDevice_t *dev,uwbAlgorithm_t *algorithm) {
  /* Slot updates are applied only by the radio owner after RF OFF has
   * completed. Reinitializing on the next ON discards all old timing models. */
  if(!running) {
-   uwbConfig_t *c=uwbGetConfig();
+   uwbConfig_t *c=uwbGetConfig();const mulStoredPlan_t *stored=NULL;
+   c->mulPlan=cfgMulPlanCached(&stored)==mulPlanStored&&stored->selected?&stored->plan:NULL;
    (void)cfgMulScheduleRead(c->address[0],&c->mulSchedule);
    (void)cfgMulClockRead(&c->mulClockConfig);
    c->mulNetwork.slotMs=requestedSlot;

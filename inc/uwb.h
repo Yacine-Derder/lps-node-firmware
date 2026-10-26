@@ -47,6 +47,7 @@ typedef struct uwbConfig_s {
   uint8_t mode;
   mulNetwork_t mulNetwork;
   mulSchedule_t mulSchedule;
+  const mulRangingPlan_t *mulPlan; // Cached immutable while RF is running.
   mulClockFitConfig_t mulClockConfig;
   mulAlrRole_t mulRole;
   bool mulConfigured;

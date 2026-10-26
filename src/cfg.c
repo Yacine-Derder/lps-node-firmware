@@ -57,6 +57,9 @@ typedef struct {
 
 static CfgHeader * cfgHeader = (CfgHeader*) buffer;
 static bool mulStorageUncertain, pendingRestart;
+static mulStoredPlan_t cachedPlan;
+static mulPlanStoreResult_t cachedPlanStatus=mulPlanAbsent;
+static void planBootLoad(void);
 static volatile bool writing;
 static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length);
 bool cfgPendingRestart(void) {return pendingRestart||mulStorageUncertain||writing;}
@@ -185,7 +188,7 @@ static void idleConfiguration(void) {
 }
 
 void cfgInit(void) {
-  pendingRestart=false;
+  pendingRestart=false;cachedPlanStatus=mulPlanIoError;
   mulStorageUncertain=true;
   if (readData()) {
     cfgHeader = (CfgHeader*) buffer;
@@ -215,13 +218,25 @@ void cfgInit(void) {
     tlv.data=&buffer[SIZE_HEADER];idleConfiguration();
     printf("CONFIG: EEPROM unreadable; radio idle; data retained\r\n");
   }
+  if(!mulStorageUncertain)planBootLoad();
 }
 
 bool cfgReset(void) {
-  uint8_t data = 0;
-  bool ret = eepromWrite(0, &data, 1);
+  if(uwbControlRequested()||uwbControlRunning())return false;
+  taskENTER_CRITICAL();bool busy=writing;if(!busy)writing=true;taskEXIT_CRITICAL();
+  if(busy)return false;
+  const uint8_t zero[4]={0};uint8_t check[4];
+  // Invalidate the legacy boot image first. A cut while clearing either plan
+  // commit then boots idle defaults, never an older selected radio owner.
+  bool ok=eepromWrite(0,(void *)zero,1)&&eepromRead(0,check,1)&&check[0]==0;
   HAL_Delay(10);
-  return ret;
+  for(unsigned slot=0;slot<2&&ok;slot++) {
+    unsigned at=MUL_PLAN_STORE_BASE+slot*MUL_PLAN_STORE_STRIDE+92;
+    ok=eepromWrite((int)at,(void *)zero,4)&&eepromRead((int)at,check,4)&&!memcmp(zero,check,4);
+  }
+  if(ok){cachedPlanStatus=mulPlanAbsent;pendingRestart=true;}
+  else mulStorageUncertain=true;
+  writing=false;return ok;
 }
 
 bool cfgReadU8(ConfigField field, uint8_t * value) {
@@ -364,6 +379,7 @@ bool cfgMulWrite(uint8_t role,uint8_t reference,uint8_t follower) {
   uint8_t values[3]={role,reference,follower};return mulStore(cfgMulNetwork,values,3);
 }
 bool cfgMulChangeAddress(uint8_t address) {
+  if(cachedPlanStatus==mulPlanStored&&cachedPlan.selected)return false;
   uint8_t old=0,role,reference,follower,mode=0,size;
   if(!cfgReadU8(cfgAddress,&old)||!cfgMulRead(old,&role,&reference,&follower))return false;
   cfgReadU8(cfgMode,&mode);
@@ -382,6 +398,7 @@ bool cfgMulChangeAddress(uint8_t address) {
 bool cfgMulSlotRead(uint16_t *slotMs) {
  uint8_t size;uint32_t value=500;
  if(!slotMs||!cfgStorageReady())return false;
+ if(cachedPlanStatus==mulPlanStored&&cachedPlan.selected){*slotMs=cachedPlan.plan.broadcast.slotMs;return true;}
  if(cfgFieldSize(cfgMulSchedule,&size)) {
   uint8_t bytes[MUL_SCHEDULE_BYTES];mulSchedule_t schedule;
   if(size!=sizeof(bytes)||!cfgReadU8list(cfgMulSchedule,bytes,sizeof(bytes))||!mulScheduleDecode(bytes,&schedule))return false;
@@ -393,6 +410,7 @@ bool cfgMulSlotRead(uint16_t *slotMs) {
  *slotMs=(uint16_t)value;return true;
 }
 bool cfgMulSlotWrite(uint16_t slotMs) {
+ if(cachedPlanStatus==mulPlanStored&&cachedPlan.selected)return false;
  if(!mulSlotValid(slotMs))return false;
  uint8_t size;
  if(cfgFieldSize(cfgMulSchedule,&size)) {
@@ -406,6 +424,7 @@ bool cfgMulSlotWrite(uint16_t slotMs) {
 
 bool cfgMulScheduleRead(uint8_t node,mulSchedule_t *schedule) {
  uint8_t size;if(!schedule||!cfgStorageReady())return false;
+ if(cachedPlanStatus==mulPlanStored&&cachedPlan.selected){*schedule=cachedPlan.plan.broadcast;return true;}
  if(cfgFieldSize(cfgMulSchedule,&size)) {
   uint8_t bytes[MUL_SCHEDULE_BYTES];
   return size==sizeof(bytes)&&cfgReadU8list(cfgMulSchedule,bytes,sizeof(bytes))&&mulScheduleDecode(bytes,schedule);
@@ -415,6 +434,7 @@ bool cfgMulScheduleRead(uint8_t node,mulSchedule_t *schedule) {
  mulScheduleLegacy(schedule,ref,fol,slot);return !mulScheduleValidate(schedule);
 }
 bool cfgMulScheduleWrite(uint8_t node,const mulSchedule_t *schedule) {
+ if(cachedPlanStatus==mulPlanStored&&cachedPlan.selected)return false;
  if(mulScheduleValidate(schedule)||mulScheduleIndex(schedule,node)<0)return false;
  uint8_t bytes[MUL_SCHEDULE_BYTES];if(!mulScheduleEncode(bytes,schedule))return false;
  return mulStore(cfgMulSchedule,bytes,sizeof(bytes));
@@ -441,6 +461,17 @@ static bool planWrite(void *ctx,unsigned at,const void *data,size_t n) {
 }
 static mulPlanStoreWorkspace_t planWorkspace;
 static const mulPlanStore_t planStorage={NULL,planRead,planWrite,&planWorkspace};
+static void planBootLoad(void) {
+ cachedPlanStatus=mulPlanStoreLoad(&planStorage,&cachedPlan);
+ if(cachedPlanStatus==mulPlanIoError||cachedPlanStatus==mulPlanCorrupt)mulStorageUncertain=true;
+}
+mulPlanStoreResult_t cfgMulPlanCached(const mulStoredPlan_t **stored) {
+ if(!stored)return mulPlanIoError;
+ *stored=NULL;
+ if(!cfgStorageReady())return cachedPlanStatus==mulPlanCorrupt?mulPlanCorrupt:mulPlanIoError;
+ if(cachedPlanStatus==mulPlanStored)*stored=&cachedPlan;
+ return cachedPlanStatus;
+}
 mulPlanStoreResult_t cfgMulPlanLoad(mulStoredPlan_t *stored) {
  if(uwbControlRequested()||uwbControlRunning())return mulPlanIoError;
  taskENTER_CRITICAL();bool busy=writing||mulStorageUncertain;if(!busy)writing=true;taskEXIT_CRITICAL();
@@ -452,6 +483,7 @@ bool cfgMulPlanSave(const mulRangingPlan_t *plan,bool selected,uint32_t *generat
  taskENTER_CRITICAL();bool busy=writing||mulStorageUncertain;if(!busy)writing=true;taskEXIT_CRITICAL();
  if(busy)return false;
  bool ok=mulPlanStoreSave(&planStorage,plan,selected,generation);
+ if(ok){planBootLoad();ok=cachedPlanStatus==mulPlanStored&&!mulStorageUncertain;}
  // A failed final readback may follow a committed new state. Block activation
  // until reboot/reload rather than claiming the old plan is still current.
  if(!ok)mulStorageUncertain=true;

@@ -5,6 +5,8 @@
 #include "unity.h"
 #include "mul_twr.h"
 #include "mul_schedule.h"
+#include "mul_ranging_plan.h"
+#include "mul_plan_protocol.h"
 #include "mul_multi_protocol.h"
 #include "mul_relation.h"
 #include "mul_role_state.h"
@@ -50,6 +52,7 @@ static uint32_t exchangeSequence;
 static TickType_t ticks;
 static bool useAlr[2];
 static const mulSchedule_t *simulationSchedule;
+static const mulRangingPlan_t *simulationPlan;
 static const uint8_t identities[2][8] = {{0x84,0,0,0,0,0,0xcf,0xbc},{0x85,0,0,0,0,0,0xcf,0xbc}};
 
 TickType_t xTaskGetTickCount(void) { return ticks; }
@@ -175,7 +178,8 @@ static void transfer(int from) {
   TEST_ASSERT_EQUAL_UINT(ctx(from)->multiProfile?MUL_MULTI_TWR_BYTES:MUL_TWR_FRAME_LENGTH,length);
   memcpy(payload,s->tx,length);
   mulTwrPacket_t packet;
-  if(ctx(from)->multiProfile) {unsigned slot;TEST_ASSERT_TRUE(mulMultiTwrDecode(simulationSchedule,ctx(from)->syncWindow,payload,length,&packet,&slot));}
+  if(ctx(from)->planned){TEST_ASSERT_TRUE(mulPlanTwrDecode(simulationPlan,exchangeSequence,ctx(from)->operation,payload,length,&packet));}
+  else if(ctx(from)->multiProfile) {unsigned slot;TEST_ASSERT_TRUE(mulMultiTwrDecode(simulationSchedule,ctx(from)->syncWindow,payload,length,&packet,&slot));}
   else TEST_ASSERT_TRUE(mulTwrDecode(payload,length,&packet));
   if (s->stampError == 0) TEST_ASSERT_EQUAL_UINT64(s->actual,packet.txTimestamp);
   int64_t when=sendTime(from);
@@ -834,7 +838,7 @@ static void multiConfig(unsigned count,unsigned slot,unsigned spacing) {
 }
 static void injectMulti(unsigned receiver,unsigned slot,uint32_t cycle,uint64_t tx,uint64_t rx) {
  FakeRadio *r=&radios[receiver];mulRelation_t unavailable={.version=2,.maxAgeMs=MUL_PROP_MAX_AGE_MS};
- r->rxLength=mulMultiBroadcastEncode(r->rx,sizeof(r->rx),&multiConfiguration.mulSchedule,slot,cycle,tx,slot?&unavailable:NULL);
+ r->rxLength=multiConfiguration.mulPlan?mulPlanBroadcastEncode(r->rx,sizeof(r->rx),multiConfiguration.mulPlan,slot,cycle,tx,slot?&unavailable:NULL):mulMultiBroadcastEncode(r->rx,sizeof(r->rx),&multiConfiguration.mulSchedule,slot,cycle,tx,slot?&unavailable:NULL);
  TEST_ASSERT_EQUAL_UINT(slot?80:40,r->rxLength);r->arrival=rx;r->receiving=false;
  dispatch(receiver,eventPacketReceived);
 }
@@ -991,4 +995,70 @@ void test_shortReplyMathIsExplicitAndCannotWeakenLegacyTimingAcceptance(void) {
  TEST_ASSERT_FALSE(mulTwrCalculate(t,&tof));
  TEST_ASSERT_TRUE(mulTwrCalculateReply(t,&tof,5));TEST_ASSERT_EQUAL(100,tof);
  TEST_ASSERT_FALSE(mulTwrCalculateReply(t,&tof,7));
+}
+
+void test_generatedReservationsDriveMultipleActualTwrExchangesInOneCycle(void) {
+ setUp();scenario(150000,2131);
+ mulRangingPlan_t p={.replyMs=5,.maxUtilization=70,.enabled=MUL_PLAN_AA,.aaMilliHz=5000};
+ mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);
+ p.broadcast.rangingFlags=0;p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;
+ simulationPlan=&p;TEST_ASSERT_EQUAL(5,mulRangingPlanCount(&p,5));
+ for(unsigned index=0;index<5;index++) {
+  mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,index,&op));
+  advance((int64_t)op.startUs*MS/1000);
+  TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,5,index));TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(1),&p,5,index));
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));completeExchange();
+  TEST_ASSERT_TRUE(ctx(1)->delayValid);TEST_ASSERT_UINT32_WITHIN(1,flight,ctx(1)->tof);
+  TEST_ASSERT_FALSE(mulTwrConfigurePlan(ctx(0),&p,5,index));
+  TEST_ASSERT_FALSE(mulTwrConfigurePlan(ctx(1),&p,5,index));
+  TEST_ASSERT_TRUE(mulTimestampDifference(ctx(0)->expectedTx,origins[0])<(int64_t)op.endUs*(int64_t)MS/1000);
+ }
+ TEST_ASSERT_EQUAL(15,radios[0].sends);TEST_ASSERT_EQUAL(10,radios[1].sends);
+ TEST_ASSERT_FALSE(mulTwrConfigurePlan(ctx(0),&p,4,0));
+}
+
+void test_actualAlrReferenceUsesGeneratedOwnersAndNeverStartsFixedWindows(void) {
+ setUp();scenario(15000,2131);multiConfig(2,0,10);
+ mulRangingPlan_t p={.replyMs=5,.maxUtilization=70,.enabled=MUL_PLAN_AA,.aaMilliHz=5000};
+ p.broadcast=multiConfiguration.mulSchedule;mulScheduleExperimental(&p.broadcast);
+ p.broadcast.rangingFlags=0;p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;
+ multiConfiguration.mulSchedule=p.broadcast;multiConfiguration.mulPlan=&p;simulationPlan=&p;
+ useAlr[0]=true;advance(-20*(int64_t)MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[0].device);
+ dispatch(0,eventTimeout);TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_EQUAL(4,radios[0].tx[34]);
+ int64_t reference=sendTime(0);advance(reference+MS);radios[0].armed=false;dispatch(0,eventPacketSent);
+ exchangeSequence=pendingSequence;origins[0]=pendingTimestamp;origins[1]=clockAt(1,reference+flight);
+ mulRelation_t unavailable={.version=2,.maxAgeMs=MUL_PROP_MAX_AGE_MS};
+ advance(reference+10*MS+MS);radios[0].rxLength=mulPlanBroadcastEncode(radios[0].rx,sizeof(radios[0].rx),&p,1,exchangeSequence,clockAt(1,reference+10*MS),&unavailable);
+ TEST_ASSERT_EQUAL(80,radios[0].rxLength);radios[0].arrival=clockAt(0,reference+10*MS);radios[0].receiving=false;dispatch(0,eventPacketReceived);
+ TEST_ASSERT_EQUAL(2,followerSeen);
+ for(unsigned index=0;index<5;index++) {
+  mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,exchangeSequence,index,&op));
+  advance(reference+(int64_t)op.startUs*MS/1000);dispatch(0,eventTimeout);
+  TEST_ASSERT_TRUE(ranging.active);TEST_ASSERT_TRUE(ranging.planned);TEST_ASSERT_EQUAL(index,ranging.operation);
+  TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(1),&p,exchangeSequence,index));
+  // Lose the first exchange, including its TX IRQ. The next reservation must
+  // cancel its stale owner and make progress without replaying the missed slot.
+  if(index==0)continue;
+  completeExchange();TEST_ASSERT_TRUE(ctx(1)->delayValid);
+  if(index==3){unsigned sends=radios[0].sends;advance(reference+650*MS);dispatch(0,eventTimeout);TEST_ASSERT_EQUAL(sends,radios[0].sends);TEST_ASSERT_FALSE(radios[0].armed);}
+ }
+ TEST_ASSERT_EQUAL(31,servedOperations);TEST_ASSERT_EQUAL(14,radios[0].sends);
+}
+
+void test_actualAlrFollowerUsesAssignedGeneratedOperationsAndRetainsAaDelay(void) {
+ setUp();scenario(-150000,2131);multiConfig(2,1,10);
+ mulRangingPlan_t p={.replyMs=5,.maxUtilization=70,.enabled=MUL_PLAN_AA,.aaMilliHz=5000};
+ p.broadcast=multiConfiguration.mulSchedule;mulScheduleExperimental(&p.broadcast);
+ p.broadcast.rangingFlags=0;p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;
+ multiConfiguration.mulSchedule=p.broadcast;multiConfiguration.mulPlan=&p;simulationPlan=&p;
+ useAlr[1]=true;advance(MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+ injectMulti(1,0,5,origins[0],origins[1]);TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_EQUAL(4,radios[1].tx[34]);
+ advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ for(unsigned index=0;index<2;index++) {
+  mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,index,&op));advance((int64_t)op.startUs*MS/1000);
+  TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,5,index));TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+  completeExchange();TEST_ASSERT_TRUE(ranging.delayValid);TEST_ASSERT_EQUAL(index,ranging.operation);TEST_ASSERT_UINT32_WITHIN(1,flight,ranging.tof);
+  mulClockDelay_t delay;TEST_ASSERT_TRUE(mulTwrDelay(&ranging,&followerClock,&delay));TEST_ASSERT_EQUAL(132,delay.reference[0]);TEST_ASSERT_EQUAL(135,delay.follower[0]);
+ }
+ TEST_ASSERT_EQUAL(5,radios[1].sends); // One data broadcast plus two response/report pairs.
 }

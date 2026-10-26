@@ -24,6 +24,13 @@ static void abortExchange(dwDevice_t *d,mulAdsAbortReason_t cause) {
   if(state.core.aborted!=before) logAbort();
 }
 static void init(uwbConfig_t *config,dwDevice_t *d) {
+#if defined(__arm__)
+  // Only this optional diagnostic prints floating-point fields. Keep nano's
+  // formatter here rather than forcing it into every MUL production image.
+  extern void _printf_float(void);
+  void (*volatile formatter)(void)=_printf_float;
+  (void)formatter;
+#endif
   (void)config; dwIdle(d); memset(&state,0,sizeof(state));
   if(dwSpiRead16(d,TX_ANTD,NO_SUB)!=MUL_ADS_DW_ANT_DTU ||
      dwSpiRead16(d,LDE_IF,LDE_RXANTD_SUB)!=MUL_ADS_DW_ANT_DTU) {

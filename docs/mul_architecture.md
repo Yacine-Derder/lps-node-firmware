@@ -1113,3 +1113,43 @@ An explicit runtime receiver rejects absent or mismatched advertisements with
 schedule. Old firmware rejects the new packet types; update the whole experiment
 before enabling this schedule profile. This avoids silently mixing delay settings
 and adds no multi-ALR scheduler or automatic persistent configuration writes.
+
+
+## Generated-plan ownership and persistence
+
+The opt-in full ranging plan is a separate configuration from the retained
+broadcast-only schedule. Its64-byte codec2 includes the RLR roster, per-pair AA/AR
+milliHz targets, enabled classes, reply interval and utilization ceiling. Embedded
+broadcast ranging flags must be zero. Planner2 adds a1000us service allowance
+before delayed-TX preparation for the1kHz RTOS; this changes deterministic operation
+times and therefore rejects the earlier host-only codec1. The reference's hardware
+clock defines cycle-relative reservation start/poll/end times. No host timestamp
+or cross-radio timestamp subtraction determines a delayed-TX target.
+
+Selected plans use RF envelope4. The broadcast40/80-byte envelope binds the full
+plan fingerprint, including RLR settings that the broadcast-only fingerprint
+cannot cover. Five-message90-byte TWR binds the same fingerprint, reference cycle32,
+operation index0..31 and assigned MAC pair. Replay or wrong-cycle/index/pair frames
+are rejected. Each operation's setup and final airtime guards retain the actual
+hardware before/after-SPI delayed-TX checks. LPS AA ownership is connected; fixed
+maintenance windows are bypassed, each reference operation is attempted once and
+mandatory data broadcasts preempt ranging. A missed slot is skipped, never caught
+up in a burst. AR ownership and STM32 RF4 reception are unfinished and selected AR
+activation is refused. Old participants reject RF4 explicitly.
+
+The selected plan is cached at boot, with no EEPROM access in radio callbacks.
+Two96-byte commit-last records at128/256 leave the original100-byte TLV image
+intact. Version1 journal records contain generation32, selection, full plan and
+CRC; failed/ambiguous writes block radio activation until reboot/recovery. Only
+acknowledged RF-OFF edits publish a verified cache. Legacy configuration is retained
+for explicit deselection, rather than shadow-edited while a plan is active.
+Reset invalidates legacy magic before clearing the journal commits, ensuring an
+interrupted reset cannot reactivate an older plan through a valid old boot image.
+These offsets rely on the documented8KiB24AA64 board-design assumption.
+
+Console/journal stack review required increasing main from800 to1600 bytes. UWB
+retains1600, idle800, linker2048 and USB queue512. ARM stack-usage reports describe
+individual frames and reviewed chains; dynamic stack watermarks and real callback
+latency remain part of final physical acceptance. Production no longer globally
+links float printf; the optional ADS diagnostic retains its formatter locally.
+This reduces flash without altering radio or TWR floating-point calculations.

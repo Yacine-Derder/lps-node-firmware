@@ -522,7 +522,8 @@ static void changePower(uint8_t power) { //expects [0, POWER_LEVELS-1] interval
 
   //copy power byte to all 4 bytes of txPower
   uint32_t txPower = power_bits | (power_bits<<8) | (power_bits<<16) | (power_bits<<24);
-  printf("Setting txpower to: 0x%lX = %.1fdB\r\n", txPower, db_amp+db_mix);
+  unsigned halfDb=2u*db_amp+(unsigned)(2*db_mix);
+  printf("Setting txpower to: 0x%lX = %u.%udB\r\n", txPower, halfDb/2,(halfDb%2)*5);
   cfgWriteU32(cfgTxPower, txPower);
 }
 
@@ -635,7 +636,9 @@ static void help() {
 }
 
 static StaticTask_t xMainTask;
-static StackType_t ucMainStack[configMINIMAL_STACK_SIZE];
+// Journal decode/save call chains exceed the old800-byte console stack.
+#define MAIN_STACK_WORDS (MUL_ONLY ? 400 : configMINIMAL_STACK_SIZE)
+static StackType_t ucMainStack[MAIN_STACK_WORDS];
 
 int main() {
   // Reset of all peripherals, Initializes the Flash interface and the Systick.
@@ -645,7 +648,7 @@ int main() {
   SystemClock_Config();
 
   // Setup main task
-  xTaskCreateStatic( main_task, "main", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, ucMainStack, &xMainTask );
+  xTaskCreateStatic( main_task, "main", MAIN_STACK_WORDS, NULL, configMAX_PRIORITIES - 2, ucMainStack, &xMainTask );
 
   // Start the FreeRTOS scheduler
   vTaskStartScheduler();

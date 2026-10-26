@@ -142,6 +142,8 @@ void uwbInit()
      mulNetworkInit(&config.mulNetwork,reference,follower)&&cfgMulSlotRead(&config.mulNetwork.slotMs)) {
     if(mulRole<2)config.mulRole=(mulAlrRole_t)mulRole;
   } else printf("MUL CONFIG: invalid roster; MUL disabled, EEPROM retained\r\n");
+  const mulStoredPlan_t *storedPlan=NULL;
+  config.mulPlan=cfgMulPlanCached(&storedPlan)==mulPlanStored&&storedPlan->selected?&storedPlan->plan:NULL;
   if(!cfgMulScheduleRead(config.address[0],&config.mulSchedule)) {
     memset(&config.mulSchedule,0,sizeof(config.mulSchedule));config.mulRole=mulAlrUnsupported;
   } else if(config.mulSchedule.profile>=MUL_PROFILE_MULTI) {

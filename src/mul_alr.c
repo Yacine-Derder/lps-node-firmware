@@ -27,6 +27,8 @@
 #define MUL_TX_ERROR_STATUS UINT16_C(0x0408)
 
 static const mulNetwork_t *alrNetwork;
+static const mulRangingPlan_t *activePlan;
+static uint32_t servedOperations;
 static uint8_t source[MUL_ADDRESS_LENGTH];
 // dwSetData() reads length + 2 bytes when hardware FCS is enabled.
 #define txFrame mulRoleIo.alr.frame
@@ -121,7 +123,7 @@ static bool readBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *arri
  if(!multiMode)return mulRxReadBroadcastNetwork(alrNetwork,dev,packet,arrival,NULL);
  unsigned n=dwGetDataLength(dev);if(n!=MUL_MULTI_REFERENCE_BYTES&&n!=MUL_MULTI_FOLLOWER_BYTES)return false;
  uint8_t frame[MUL_MULTI_FOLLOWER_BYTES];mulMultiBroadcast_t decoded;dwGetData(dev,frame,n);
- if(!mulMultiBroadcastDecode(schedule,frame,n,&decoded))return false;
+ if(!(activePlan?mulPlanBroadcastDecode(activePlan,frame,n,&decoded):mulMultiBroadcastDecode(schedule,frame,n,&decoded)))return false;
  dwTime_t rx={.full=0};dwGetRawReceiveTimestamp(dev,&rx);
  int64_t age=mulTimestampDifference(readHardwareTime(dev),rx.full);
  if(age<0||age>(int64_t)(15*MUL_DTU_PER_MS))return false;
@@ -132,6 +134,7 @@ static bool readBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *arri
 
 static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
 {
+  activePlan=config->mulPlan;servedOperations=0;
   dwIdle(dev);
   dwReceivePermanently(dev, false);
   memcpy(source, config->address, sizeof(source));
@@ -154,6 +157,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
       (void)mulSchedulePair(schedule,index?index:1,&config->mulNetwork);
       if(mulNetworkRole(alrNetwork,source)!=alrRole)alrRole=mulAlrUnsupported;}
   }
+  if(activePlan&&(!multiMode||mulRangingPlanValidate(activePlan,NULL)||(activePlan->enabled&MUL_PLAN_AR)||mulScheduleFingerprint(&activePlan->broadcast)!=mulScheduleFingerprint(&config->mulSchedule)))alrRole=mulAlrUnsupported;
   if(!multiMode&&!mulScheduleTag(mulNetworkSlotMs(alrNetwork)))alrRole=mulAlrUnsupported;
 #if !MUL_HYBRID_CH5
   if(multiMode&&schedule->profile==MUL_PROFILE_EXPERIMENTAL&&(config->lowBitrate||config->longPreamble))alrRole=mulAlrUnsupported;
@@ -204,7 +208,7 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
   pendingTimestamp = mulTimestampMask(programmed.full + txAntennaDelay);
   (void)mulEncodeScheduledPacket(txFrame,source,pendingSequence,pendingTimestamp,mulNetworkSlotMs(alrNetwork));
   unsigned int length=MUL_TEST_FRAME_LENGTH;
-  if(multiMode)length=mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,0,pendingSequence,pendingTimestamp,NULL);
+  if(multiMode)length=activePlan?mulPlanBroadcastEncode(txFrame,sizeof(txFrame),activePlan,0,pendingSequence,pendingTimestamp,NULL):mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,0,pendingSequence,pendingTimestamp,NULL);
   if (alrRole==mulAlrFollower) {
     mulClockDelay_t delay;
     bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
@@ -213,7 +217,7 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
     if (relation.version==2 && !supplied)
       relation.delayState=mulTwrPropagationState(&ranging,&followerClock,(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS);
     mulTestPacket_t packet={.sequence=pendingSequence,.txTimestamp=pendingTimestamp,.slotMs=mulNetworkSlotMs(alrNetwork)}; memcpy(packet.source,source,8);
-    if(multiMode)length=mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,localSlot,pendingSequence,pendingTimestamp,&relation);
+    if(multiMode)length=activePlan?mulPlanBroadcastEncode(txFrame,sizeof(txFrame),activePlan,localSlot,pendingSequence,pendingTimestamp,&relation):mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,localSlot,pendingSequence,pendingTimestamp,&relation);
     else {mulRelationEncode(txFrame,&packet,&relation);length=MUL_RELATION_FRAME_LENGTH;}
   }
   if(!length){dwIdle(dev);printf("MUL ALR: invalid TX payload; skipped\r\n");return false;}
@@ -262,7 +266,7 @@ static uint32_t scheduleTx(dwDevice_t *dev)
   nextRawTx = mulTimestampMask(nextRawTx + MUL_TX_PERIOD_DTU);
   mulTwrCancel(&ranging, dev, NULL, false);
   followerSeen = false;
-  if(multiMode)servedWindows=0;
+  if(multiMode){servedWindows=0;servedOperations=0;}
   uint16_t antennaDelay = dwSpiRead16(dev, TX_ANTD, NO_SUB);
   bool started = startDelayedTx(dev, rawTx, antennaDelay);
   mulTwrFlush(&ranging);
@@ -376,7 +380,18 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   bool selected=true;
   if(multiMode&&referenceAcquired) {
     selected=false;
-    for(unsigned window=0;window<MUL_SYNC_WINDOWS;window++)if(mulScheduleSyncOwner(schedule,refSequence(),window)==localSlot) {
+    if(activePlan) {
+      int64_t phase=mulTimestampDifference(readHardwareTime(dev),refRx());
+      if(ranging.active&&event==eventPacketReceived&&(dwGetDataLength(dev)==40||dwGetDataLength(dev)==80))mulTwrCancel(&ranging,dev,NULL,false);
+      unsigned count=mulRangingPlanCount(activePlan,refSequence());
+      for(unsigned index=0;index<count;index++) {
+        mulRangingOperation_t op;(void)mulRangingPlanOperation(activePlan,refSequence(),index,&op);
+        if(op.kind==MUL_PLAN_AA&&op.responder==source[0]&&phase>=(int64_t)((uint64_t)op.startUs*MUL_DTU_PER_MS/1000)&&phase<(int64_t)((uint64_t)op.endUs*MUL_DTU_PER_MS/1000)) {
+          selected=mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index);break;
+        }
+      }
+      if(!selected&&ranging.active)mulTwrCancel(&ranging,dev,"reservation_end",false);
+    }else for(unsigned window=0;window<MUL_SYNC_WINDOWS;window++)if(mulScheduleSyncOwner(schedule,refSequence(),window)==localSlot) {
       selected=mulTwrConfigureSchedule(&ranging,schedule,localSlot,window);break;
     }
     if(!selected&&event==eventPacketReceived&&dwGetDataLength(dev)==MUL_MULTI_TWR_BYTES){mulRxRearm(dev);return followerWait(dev);}
@@ -484,7 +499,31 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
 
 /* One radio, two disjoint maintenance windows. Reference reuses one TWR context;
  * each follower keeps its own committed propagation estimate. */
+static uint32_t plannedReferenceService(dwDevice_t *dev,bool start) {
+ uint32_t wait=waitForNextTx(dev);int64_t phase=mulTimestampDifference(readHardwareTime(dev),pendingTimestamp);
+ unsigned count=mulRangingPlanCount(activePlan,pendingSequence);
+ for(unsigned index=0;index<count;index++) {
+  uint32_t bit=UINT32_C(1)<<index;if(servedOperations&bit)continue;
+  mulRangingOperation_t op;(void)mulRangingPlanOperation(activePlan,pendingSequence,index,&op);
+  int64_t begins=(int64_t)((uint64_t)op.startUs*MUL_DTU_PER_MS/1000);
+  if(phase>=begins&&start) {
+   servedOperations|=bit;
+   if(ranging.active)mulTwrCancel(&ranging,dev,"reservation_turnaround",false);
+   int follower=mulScheduleIndex(schedule,op.responder);
+   if(op.kind==MUL_PLAN_AA&&op.initiator==source[0]&&follower>0&&(followerSeen&(1u<<follower))&&
+      phase<(int64_t)((uint64_t)op.pollUs*MUL_DTU_PER_MS/1000)-(int64_t)minimumLeadDtu()&&
+      mulTwrConfigurePlan(&ranging,activePlan,pendingSequence,index))mulTwrStart(&ranging,dev,pendingSequence,pendingTimestamp);
+  }else {
+   int64_t remaining=begins-phase;
+   uint32_t ms=remaining<=0?1:(uint32_t)((remaining+MUL_DTU_PER_MS-1)/MUL_DTU_PER_MS);
+   if(ms<wait)wait=ms;
+  }
+ }
+ return mulTwrWait(&ranging,dev,pendingTimestamp,wait);
+}
+
 static uint32_t multiReferenceService(dwDevice_t *dev,bool start) {
+ if(activePlan)return plannedReferenceService(dev,start);
  uint32_t wait=waitForNextTx(dev);int64_t phase=mulTimestampDifference(readHardwareTime(dev),pendingTimestamp);
  for(unsigned w=0;w<MUL_SYNC_WINDOWS;w++) {
    unsigned owner=mulScheduleSyncOwner(schedule,pendingSequence,w);

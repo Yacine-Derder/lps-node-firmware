@@ -18,7 +18,7 @@ bool uwbSetEnabled(bool enabled){return uwbControlRequest(enabled);}
 void dwIdle(dwDevice_t *dev){(void)dev;}
 void dwClearAllStatus(dwDevice_t *dev){(void)dev;}
 bool usbcommTryWrite(const char *data,unsigned len){return CDC_TryWrite(data,len);}
-static uint8_t nv[100];static unsigned writes,armedCount,queueCreates,txBytes;
+static uint8_t nv[8192];static unsigned writes,armedCount,queueCreates,txBytes;
 static bool armed,connected;static unsigned critical,txSpaces=512;
 USBD_HandleTypeDef hUsbDeviceFS;
 static USBD_CDC_HandleTypeDef cdc;

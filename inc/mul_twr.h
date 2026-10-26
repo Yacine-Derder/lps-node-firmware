@@ -5,6 +5,7 @@
 #include "mul_clock.h"
 #include "uwb.h"
 #include "mul_power.h"
+#include "mul_plan_protocol.h"
 
 #include "../portable/mul_core/mul_legacy_twr.h"
 
@@ -37,6 +38,8 @@ typedef struct {
   uint8_t multiProfile:1;
   uint8_t syncWindow:1;
   uint8_t followerSlot:3;
+  uint8_t planned:1;
+  uint8_t operation;
 } mulTwr_t;
 
 void mulTwrEncode(uint8_t frame[MUL_TWR_FRAME_LENGTH], const mulTwrPacket_t *packet);
@@ -46,6 +49,7 @@ bool mulTwrResults(const uint64_t stamps[6], const mulPower_t power[3],
   uint32_t *raw, uint32_t *corrected); // UINT32_MAX corrected means unavailable.
 void mulTwrConfigureNetwork(const mulNetwork_t *network);
 void mulTwrInit(mulTwr_t *twr);
+bool mulTwrConfigurePlan(mulTwr_t *twr,const mulRangingPlan_t *plan,uint32_t cycle,unsigned operation);
 bool mulTwrConfigureSchedule(mulTwr_t *twr,const mulSchedule_t *schedule,unsigned slot,unsigned window);
 void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool invalidateDelay);
 void mulTwrFlush(mulTwr_t *twr);

@@ -436,7 +436,7 @@ python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000
 
 These commands build/test only. The checker verifies that removed engines and the
 TDoA3 overlay are absent, the explicit344-byte MUL clock workspace exists, required
-MUL engines remain, stack/USB queue allocations are retained, and flash/RAM fit.
+MUL engines remain, stack/USB queue allocations meet their documented sizes, and flash/RAM fit.
 It does not prove physical timing or dynamic stack safety. No image is flashed by
 these commands. `--mul-only` runs only MUL fixtures under the production define;
 without it the test helper also runs useful stock-source regressions. Test outputs
@@ -455,9 +455,8 @@ Its8KiB/32-byte-page bound follows the part identified in Bitcraze's
 [Rev-D schematic](https://www.bitcraze.io/documentation/hardware/loco_node/loco_node_revd.pdf)
 and Microchip's [24AA64 datasheet](https://ww1.microchip.com/downloads/aemDocuments/documents/MPD/ProductDocuments/DataSheets/24AA64-24FC64-24LC64-64-Kbit-I2C-Serial-EEPROM-DS20001189.pdf).
 This is board-design evidence, not inspection of each robot's fitted device.
-The legacy configuration allocation remains100 bytes; no extension region is
-written by the current firmware. New scheduler persistence must define its region,
-version, failure/rollback rules and hardware assumption explicitly.
+The legacy configuration allocation remains100 bytes. Generated plans use the
+separate two-slot journal described below; this assumes that same fitted EEPROM.
 
 ## Experimental five-message TWR reply timing
 
@@ -477,8 +476,74 @@ the fingerprint; older decoders reject the newly assigned bits, and differently
 configured participants reject each other's frames. Update and configure all ALRs
 and the passive receiver consistently. Roster preview reports `reply` in ms.
 
-This milestone still uses the two original650/800ms maintenance windows. It does
-not yet enable generated reservations or active ALR–RLR ranging. Their integration
-must replace fixed-window ownership rather than run alongside it. Software tests
+Unselected profiles still use the two original650/800ms maintenance windows.
+Selected generated plans replace those windows as described below. Software tests
 cover complete20/10/5ms exchanges with±150ppm clocks, precise markers, after-SPI
 failure, timeout and recovery; they do not establish hardware reliability/accuracy.
+
+
+## Generated ranging plans (LPS AA integration)
+
+Plans are opt-in and remain separate from legacy settings. With RF OFF
+acknowledged, `:plan init` creates an unselected plan using the current ALR roster
+and timing, converted to experimental timing if necessary. Ranging starts disabled.
+`plan show` displays the stored generation, selection, complete-plan fingerprint,
+rosters, timing, rates, budget and cycle1 reservations. Its pages are bounded USB
+messages; this is a configuration preview, not observed radio performance.
+
+Commands use the same leading colon as the existing console:
+
+- `:plan use on|off` persists selection; `off` restores the retained legacy profile.
+- `:plan alrs ID ID ...` sets2..8 ordered ALRs; first is reference.
+- `:plan rlrs [ID ...]` sets0..8 distinct RLRs outside the ALR roster.
+- `:plan set aa|ar on|off` independently enables reservation classes.
+- `:plan set aa_millihz|ar_millihz N` sets per-pair targets0..10000 milliHz.
+- `:plan set slot_ms|cycle_ms|lead_us|process_us|air_us|guard_us N` sets explicit
+  timing. Guard is100..10000us in100us increments; existing profile3 limits apply.
+- `:plan set reply_ms 5|10|20`, `:plan set util_percent N` (10..80), and
+  `:plan set revision N` configure the remaining plan fields.
+
+All edits require RF OFF acknowledged and a valid complete candidate. Set smaller
+budgets before selecting a short reply. An infeasible target is rejected before
+writing; targets do not claim achieved rates. While selected, legacy roster/timing
+aliases and address-menu changes are rejected; clock estimator settings remain
+editable. Deselect before editing the retained legacy configuration.
+
+The LPS reference services generated AA operations once each per cycle and only
+when the assigned follower was heard. Followers accept only assigned reservations.
+Lost/late operations are skipped; later reservations can recover without bursts.
+Mandatory broadcasts retain priority. Fixed650/800ms windows do not run alongside
+this owner. Full AR plans can be saved and previewed, but cannot enable RF until
+active ALR–RLR adapters are implemented. Selected plans currently require mode5,
+roster membership and the known fast PHY. Diagnostics cannot override them.
+
+**Compatibility:** generated-plan RF envelope4 is deliberately distinct from
+profile3's RF3 and legacy frames. The current STM32/ESP snapshot does not yet
+support RF4 reception, persistence or vector labels. A generated LPS plan must
+therefore not be treated as an end-to-end deployable configuration. Unselected
+profiles retain their previous protocols. No hardware has been operated here.
+
+The64-byte plan codec2 embeds the32-byte broadcast codec2, RLR roster, AA/AR
+rates, enabled classes, reply and utilization. The broadcast's legacy ranging flags
+must be zero. Planner2 reserves an additional1000us before TX setup for the
+1kHz FreeRTOS service quantum; the old host-only planner1 is rejected. Reservation
+length includes setup, four replies, final airtime, processing and guard. Next
+reference preparation retains20ms. Extra callback delays can still skip a slot;
+software budgeting is not a measured deadline guarantee.
+
+The journal has two96-byte records at EEPROM offsets128/256, leaving0..99 intact.
+Record version1 stores selection, generation32, plan, CRC and commit-last marker.
+Inactive-slot invalidation, body write, final commit and exact readback preserve
+the prior record across interrupted writes. A lost final ACK may have committed;
+failed writes block activation until reboot/recovery. Boot reads/cache publication
+occur while RF is stopped; UWB callbacks never perform journal I2C. Reset requires
+RF OFF, invalidates legacy magic first, then both journal commits. Interrupted
+reset after magic invalidation boots idle defaults rather than an old selected
+owner; a failed first invalidation leaves the prior RF-OFF configuration.
+
+The main task now has1600 bytes of stack, increased from800 after reviewing the
+journal/console call chain. UWB1600, idle800, linker2048 and USB queue512 remain.
+Global float-printf linking was removed; production half-dB power display uses
+integer formatting, and the optional ADS diagnostic retains float formatting.
+Current image measurements and remaining stack-watermark checks are recorded in
+[the engineering handoff](mul_upgrade_handoff.md).

@@ -12,12 +12,26 @@
 /* One physical radio owner; configuration changes only during stopped init.
  * The portable codec/receiver keeps explicit context ownership. */
 static const void *twrContext=&mulDefaultNetwork;
+static struct {const mulRangingPlan_t *plan;mulRangingOperation_t op;uint32_t cycle;} plannedSession;
+bool mulTwrConfigurePlan(mulTwr_t *twr,const mulRangingPlan_t *plan,uint32_t cycle,unsigned index) {
+ mulRangingOperation_t op;
+ if(!twr||!mulRangingPlanOperation(plan,cycle,index,&op))return false;
+ if(twr->planned&&twr->attempted&&cycle!=twr->id&&(uint32_t)(cycle-twr->id)>=UINT32_C(0x80000000))return false;
+ if(twr->active&&(!twr->planned||twr->id!=cycle||twr->operation!=index))return false;
+ if(twr->planned&&twr->attempted&&twr->id==cycle) {
+  if(index<twr->operation||(index==twr->operation&&!twr->active))return false;
+ }else twr->attempted=false;
+ if(!twr->planned||twr->id!=cycle||twr->operation!=index)twr->attempted=false;
+ twr->planned=true;twr->multiProfile=true;twr->id=cycle;twr->operation=(uint8_t)index;
+ plannedSession.plan=plan;plannedSession.op=op;plannedSession.cycle=cycle;return true;
+}
 void mulTwrConfigureNetwork(const mulNetwork_t *network) {twrContext=network?network:&mulDefaultNetwork;}
 bool mulTwrConfigureSchedule(mulTwr_t *twr,const mulSchedule_t *schedule,unsigned slot,unsigned window) {
  if(!twr||mulScheduleValidate(schedule)||schedule->profile<MUL_PROFILE_MULTI||!slot||slot>=schedule->count||window>=MUL_SYNC_WINDOWS)return false;
- twrContext=schedule;twr->multiProfile=1;twr->syncWindow=window;twr->followerSlot=slot;return true;
+ twrContext=schedule;twr->planned=0;twr->multiProfile=1;twr->syncWindow=window;twr->followerSlot=slot;return true;
 }
 static const mulNetwork_t *networkFor(const mulTwr_t *twr,mulNetwork_t *pair) {
+ if(twr->planned){if(!mulPlanOperationNetwork(plannedSession.plan,twr->id,twr->operation,pair))memset(pair,0,sizeof(*pair));return pair;}
  if(!twr->multiProfile)return (const mulNetwork_t *)twrContext;
  if(!mulSchedulePair((const mulSchedule_t *)twrContext,twr->followerSlot,pair))memset(pair,0,sizeof(*pair));
  return pair;
@@ -26,6 +40,7 @@ static const mulNetwork_t *networkFor(const mulTwr_t *twr,mulNetwork_t *pair) {
 static unsigned pollMs(const mulTwr_t *twr){return twr->multiProfile?mulScheduleSyncPollMs(twr->syncWindow):MUL_TWR_POLL_MS;}
 static unsigned endMs(const mulTwr_t *twr){return twr->multiProfile?mulScheduleSyncEndMs(twr->syncWindow):MUL_TWR_END_MS;}
 static const mulSchedule_t *experimental(const mulTwr_t *twr) {
+ if(twr->planned)return &plannedSession.plan->broadcast;
  const mulSchedule_t *s=twr->multiProfile?(const mulSchedule_t *)twrContext:NULL;
  return s&&s->profile==MUL_PROFILE_EXPERIMENTAL?s:NULL;
 }
@@ -33,13 +48,21 @@ static uint64_t leadDtu(const mulTwr_t *twr) {
  const mulSchedule_t *s=experimental(twr);
  return s?((uint64_t)s->txLeadUs*MUL_TWR_DTU_PER_MS+999)/1000:5*MUL_TWR_DTU_PER_MS;
 }
-static unsigned replyMs(const mulTwr_t *twr){return mulScheduleReplyMs(experimental(twr));}
+static unsigned replyMs(const mulTwr_t *twr){return twr->planned?plannedSession.plan->replyMs:mulScheduleReplyMs(experimental(twr));}
 static unsigned tailMs(const mulTwr_t *twr) {
  const mulSchedule_t *s=experimental(twr);
  return s?(s->airtimeUs+s->rxBudgetUs+100u*s->guard100us+999)/1000:20;
 }
+static uint64_t tailDtu(const mulTwr_t *twr) {
+ if(twr->planned){const mulSchedule_t *s=&plannedSession.plan->broadcast;return ((uint64_t)(s->airtimeUs+s->rxBudgetUs)*MUL_TWR_DTU_PER_MS+999)/1000;}
+ return tailMs(twr)*MUL_TWR_DTU_PER_MS;
+}
 static unsigned stepMs(const mulTwr_t *twr){return experimental(twr)?replyMs(twr)+tailMs(twr):MUL_TWR_STEP_MS;}
+static uint64_t microsDtu(uint32_t us){return ((uint64_t)us*MUL_TWR_DTU_PER_MS+999)/1000;}
+static uint64_t pollOffset(const mulTwr_t *twr){return twr->planned?microsDtu(plannedSession.op.pollUs):pollMs(twr)*MUL_TWR_DTU_PER_MS;}
+static uint64_t endOffset(const mulTwr_t *twr){return twr->planned?microsDtu(plannedSession.op.endUs):endMs(twr)*MUL_TWR_DTU_PER_MS;}
 static bool due(const mulTwr_t *twr,uint32_t cycle) {
+ if(twr->planned)return plannedSession.cycle==cycle;
  return twr->multiProfile?mulScheduleSyncOwner((const mulSchedule_t *)twrContext,cycle,twr->syncWindow)==twr->followerSlot:mulTwrDue(cycle);
 }
 static bool evaluate(mulTwr_t *twr)
@@ -112,7 +135,7 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   uint16_t antenna = dwSpiRead16(dev, TX_ANTD, NO_SUB);
   dwTime_t raw = {.full=mulTimestampMask((mulTimestampMask(target-antenna)+511) & ~UINT64_C(511))};
   if (mulTimestampDifference(raw.full, hardwareNow(dev)) < (int64_t)leadDtu(twr) ||
-      mulTimestampDifference(twr->windowEnd, target) < (int64_t)(tailMs(twr)*MUL_TWR_DTU_PER_MS)) {
+      mulTimestampDifference(twr->windowEnd, target) < (int64_t)tailDtu(twr)) {
     mulTwrCancel(twr, dev, "late", false);
     return false;
   }
@@ -137,7 +160,9 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   memcpy(packet.power, twr->power, sizeof(packet.power));
   uint8_t frame[MUL_MULTI_TWR_BYTES+2] = {0}; // libdw1000 reads two FCS reserve bytes.
   unsigned length=twr->multiProfile?MUL_MULTI_TWR_BYTES:MUL_TWR_FRAME_LENGTH;
-  if(twr->multiProfile) {
+  if(twr->planned) {
+    if(!mulPlanTwrEncode(frame,plannedSession.plan,twr->operation,&packet))return false;
+  }else if(twr->multiProfile) {
     if(!mulMultiTwrEncode(frame,(const mulSchedule_t *)twrContext,twr->syncWindow,&packet))return false;
   } else if(!mulTwrEncodeNetwork(twrNetwork,frame,&packet))return false;
   dwSetData(dev,frame,length);
@@ -161,10 +186,10 @@ bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t ori
   if (!due(twr,sequence) || twr->active || (twr->attempted && twr->id == sequence)) return false;
   twr->id = sequence;
   twr->attempted = twr->active = true;
-  twr->windowEnd = mulTimestampMask(origin+endMs(twr)*MUL_TWR_DTU_PER_MS);
+  twr->windowEnd = mulTimestampMask(origin+endOffset(twr));
   memset(twr->stamps, 0, sizeof(twr->stamps));
   memset(twr->power, 0, sizeof(twr->power));
-  return sendPacket(twr, dev, mulTwrPoll, mulTimestampMask(origin+pollMs(twr)*MUL_TWR_DTU_PER_MS));
+  return sendPacket(twr, dev, mulTwrPoll, mulTimestampMask(origin+pollOffset(twr)));
 }
 
 static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
@@ -209,7 +234,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     return true;
   }
   int64_t phase = mulTimestampDifference(hardwareNow(dev), origin);
-  if (twr->active && (phase < 0 || phase >= (int64_t)(endMs(twr)*MUL_TWR_DTU_PER_MS) ||
+  if (twr->active && (phase < 0 || phase >= (int64_t)(endOffset(twr)) ||
       sequence != twr->id || (role == mulAlrFollower && epoch != twr->epoch))) {
     mulTwrCancel(twr, dev, "window_or_epoch", role == mulAlrFollower && epoch != twr->epoch);
   }
@@ -251,7 +276,8 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   bool valid=dwGetDataLength(dev)==length;
   if (valid) {
     dwGetData(dev,frame,length);
-    if(twr->multiProfile) {
+    if(twr->planned)valid=mulPlanTwrDecode(plannedSession.plan,sequence,twr->operation,frame,length,&packet);
+    else if(twr->multiProfile) {
       unsigned slot;valid=mulMultiTwrDecode((const mulSchedule_t *)twrContext,twr->syncWindow,frame,length,&packet,&slot)&&slot==twr->followerSlot;
     } else valid=mulTwrDecodeNetwork(twrNetwork,frame,length,&packet);
     valid=valid&&sender(packet.type)!=role&&packet.id==sequence;
@@ -273,10 +299,16 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   }
   if (packet.type == mulTwrPoll && role == mulAlrFollower && !twr->active) {
     int64_t arrivalPhase = mulTimestampDifference(rx.full, origin);
-    int64_t remotePhase = mulTimestampDifference(packet.stamps[0], referenceOrigin);
-    if (!due(twr,sequence) || (twr->attempted && twr->id == sequence) ||
-        arrivalPhase < (int64_t)((pollMs(twr)-50)*MUL_TWR_DTU_PER_MS) || arrivalPhase > (int64_t)((pollMs(twr)+50)*MUL_TWR_DTU_PER_MS) ||
-        remotePhase < (int64_t)((pollMs(twr)-50)*MUL_TWR_DTU_PER_MS) || remotePhase > (int64_t)((pollMs(twr)+50)*MUL_TWR_DTU_PER_MS)) {
+    int64_t remotePhase = twr->planned&&plannedSession.op.kind==MUL_PLAN_AR?0:mulTimestampDifference(packet.stamps[0], referenceOrigin);
+    bool phaseValid;
+    if(twr->planned) {
+      phaseValid=arrivalPhase>=(int64_t)microsDtu(plannedSession.op.startUs)&&arrivalPhase<(int64_t)endOffset(twr);
+      // Only AA's initiator is the reference clock. An AR initiator may be a
+      // different ALR: never compare its P1 directly to reference-domain origin.
+      if(plannedSession.op.kind==MUL_PLAN_AA)phaseValid=phaseValid&&remotePhase>=(int64_t)microsDtu(plannedSession.op.startUs)&&remotePhase<(int64_t)endOffset(twr);
+    }else phaseValid=arrivalPhase>=(int64_t)((pollMs(twr)-50)*MUL_TWR_DTU_PER_MS)&&arrivalPhase<=(int64_t)((pollMs(twr)+50)*MUL_TWR_DTU_PER_MS)&&
+      remotePhase>=(int64_t)((pollMs(twr)-50)*MUL_TWR_DTU_PER_MS)&&remotePhase<=(int64_t)((pollMs(twr)+50)*MUL_TWR_DTU_PER_MS);
+    if (!due(twr,sequence) || (twr->attempted && twr->id == sequence) || !phaseValid) {
       mulRxRearm(dev);
       return true;
     }
@@ -285,7 +317,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     twr->id = sequence;
     twr->attempted = twr->active = true;
     // Preserve the committed estimate during an attempted refresh.
-    twr->windowEnd = mulTimestampMask(origin+endMs(twr)*MUL_TWR_DTU_PER_MS);
+    twr->windowEnd = mulTimestampMask(origin+endOffset(twr));
     twr->epoch = epoch;
     // Backdate the coarse acquisition time by hardware RX-to-callback latency,
     // rounded upwards. Neither callback delay nor RESULT delivery can re-date it.
@@ -354,7 +386,7 @@ uint32_t mulTwrWait(const mulTwr_t *twr, dwDevice_t *dev, uint64_t origin, uint3
   if (!twr->active) return fallback;
   uint64_t now = hardwareNow(dev);
   int64_t step = mulTimestampDifference(twr->deadline, now);
-  int64_t end = mulTimestampDifference(mulTimestampMask(origin+endMs(twr)*MUL_TWR_DTU_PER_MS), now);
+  int64_t end = mulTimestampDifference(mulTimestampMask(origin+endOffset(twr)), now);
   if (end < step) step = end;
   uint32_t wait = step <= 0 ? 1 : (uint32_t)(((uint64_t)step+MUL_TWR_DTU_PER_MS-1)/MUL_TWR_DTU_PER_MS);
   return wait < fallback ? wait : fallback;
@@ -364,6 +396,7 @@ bool mulTwrDelay(const mulTwr_t *twr, const mulClock_t *clock, mulClockDelay_t *
 {
   mulNetwork_t pairNetwork;
   if (twr == NULL || clock == NULL || delay == NULL || !twr->delayValid) return false;
+  if(twr->planned){mulRangingOperation_t op;if(!mulRangingPlanOperation(plannedSession.plan,twr->id,twr->operation,&op)||op.kind!=MUL_PLAN_AA)return false;}
   *delay = (mulClockDelay_t){.epoch=twr->epoch, .oneWayDtu=twr->tof, .units=mulClockDelayReferenceDtu,
     .measuredMs=twr->measuredMs, .referenceSequence=twr->estimateId, .maxAgeMs=MUL_PROP_MAX_AGE_MS,
     .valid=true, .measurementBoundDtu=MUL_CLOCK_BOUND_UNKNOWN, .motionBoundDtuPerMs=MUL_CLOCK_BOUND_UNKNOWN};

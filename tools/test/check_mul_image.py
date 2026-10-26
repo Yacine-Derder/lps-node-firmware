@@ -22,7 +22,7 @@ def inspect(path):
         assert name in symbols, f'missing MUL function: {name}'
     assert symbols.get('workspace') == 344, 'missing explicit bounded MUL clock workspace'
     # Preserve radio task/console/idle stack and USB queue allocations.
-    for prefix, size in (('uwbStaticStack.', 1600), ('ucMainStack', 800),
+    for prefix, size in (('uwbStaticStack.', 1600), ('ucMainStack', 1600),
                          ('uxIdleTaskStack.', 800), ('txqStorage', 512)):
         matches = [value for name, value in symbols.items() if name.startswith(prefix)]
         assert matches == [size], f'allocation changed: {prefix}: {matches}'

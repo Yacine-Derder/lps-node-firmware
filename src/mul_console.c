@@ -16,7 +16,7 @@ static uint8_t used,page,pageIndex;
 static const char *message;
 /* Up to eight hexadecimal roster IDs; output remains bounded to48 bytes. */
 static char line[56];
-enum {none,answer,help,show,status,peers,diag,cal,clockPage};
+enum {none,answer,help,show,status,peers,diag,cal,clockPage,planPage};
 static void reply(const char *text) {message=text;page=answer;pageIndex=0;}
 static bool id(const char *s,uint8_t *value) {
  unsigned n=0,base=10;if(s[0]=='0'&&s[1]=='x'){base=16;s+=2;}
@@ -34,7 +34,13 @@ static bool revision(const char *s,uint32_t *value) {
 }
 static const char *roleName(uint8_t role) {return role==0?"ref":role==1?"follower":role==3?"rlr":"disabled";}
 static bool saved(uint8_t *node,uint8_t *role,uint8_t *ref,uint8_t *fol) {
- if(!cfgReadU8(cfgAddress,node)||!cfgMulRead(*node,role,ref,fol))return false;
+ if(!cfgReadU8(cfgAddress,node))return false;
+ const mulStoredPlan_t *stored=NULL;
+ if(cfgMulPlanCached(&stored)==mulPlanStored&&stored->selected) {
+  *ref=stored->plan.broadcast.ids[0];*fol=stored->plan.broadcast.ids[1];
+  int slot=mulScheduleIndex(&stored->plan.broadcast,*node);*role=slot==0?0:slot>0?1:2;return true;
+ }
+ if(!cfgMulRead(*node,role,ref,fol))return false;
  uint8_t bytes;if(cfgFieldSize(cfgMulSchedule,&bytes)) {
   mulSchedule_t spec;if(!cfgMulScheduleRead(*node,&spec))return false;
   *ref=spec.ids[0];*fol=spec.ids[1];int slot=mulScheduleIndex(&spec,*node);
@@ -47,11 +53,69 @@ static bool rfOff(void) {
  uwbSetEnabled(false);
  return cfgWriteU8(cfgRfEnable,0);
 }
+static void planCommand(char **w,unsigned count) {
+ if(count==2&&!strcmp(w[1],"show")){page=planPage;pageIndex=0;return;}
+ if(uwbControlRequested()||uwbControlRunning()){reply("ERR plan edit requires RF OFF acknowledged");return;}
+ const mulStoredPlan_t *stored=NULL;mulPlanStoreResult_t state=cfgMulPlanCached(&stored);
+ if(state==mulPlanIoError||state==mulPlanCorrupt){reply("ERR plan storage unconfirmed; inspect reboot");return;}
+ mulRangingPlan_t p;bool selected=stored&&stored->selected;
+ if(count==2&&!strcmp(w[1],"init")) {
+  if(stored){reply("ERR plan exists; use plan set/show/use");return;}
+  uint8_t node=0;cfgReadU8(cfgAddress,&node);memset(&p,0,sizeof(p));
+  if(!cfgMulScheduleRead(node,&p.broadcast)){reply("ERR invalid broadcast configuration");return;}
+  p.replyMs=mulScheduleReplyMs(&p.broadcast);
+  if(p.broadcast.profile!=MUL_PROFILE_EXPERIMENTAL)mulScheduleExperimental(&p.broadcast);
+  p.broadcast.rangingFlags=0;p.aaMilliHz=500;p.arMilliHz=2000;p.maxUtilization=70;
+ }else {
+  if(!stored){reply("ERR no plan; use plan init with RF OFF");return;}p=stored->plan;
+  if(count==3&&!strcmp(w[1],"use")) {
+   if(!strcmp(w[2],"on"))selected=true;else if(!strcmp(w[2],"off"))selected=false;else {reply("ERR plan use on/off");return;}
+  }else if(count>=2&&(!strcmp(w[1],"alrs")||!strcmp(w[1],"rlrs"))) {
+   bool alrs=!strcmp(w[1],"alrs");unsigned n=count-2;
+   if(n>8||(alrs&&n<2)){reply("ERR roster ALR2..8/RLR0..8");return;}
+   uint8_t *ids=alrs?p.broadcast.ids:p.rlrs;memset(ids,0,8);
+   for(unsigned i=0;i<n;i++)if(!id(w[i+2],&ids[i])){reply("ERR invalid roster ID");return;}
+   if(alrs)p.broadcast.count=(uint8_t)n;else p.rlrCount=(uint8_t)n;
+  }else if(count==4&&!strcmp(w[1],"set")) {
+   if(!strcmp(w[2],"aa")||!strcmp(w[2],"ar")) {
+    unsigned flag=!strcmp(w[2],"aa")?MUL_PLAN_AA:MUL_PLAN_AR;
+    if(!strcmp(w[3],"on"))p.enabled|=flag;else if(!strcmp(w[3],"off"))p.enabled&=~flag;else {reply("ERR ranging type: on/off");return;}
+   }else {
+    uint32_t n=0;if(strcmp(w[3],"0")&&!revision(w[3],&n)){reply("ERR unsigned decimal number");return;}
+    if(!strcmp(w[2],"revision"))p.broadcast.revision=n;
+    else {
+     if(n>UINT16_MAX){reply("ERR timing/rate exceeds uint16");return;}
+     if(!strcmp(w[2],"aa_millihz"))p.aaMilliHz=n;
+     else if(!strcmp(w[2],"ar_millihz"))p.arMilliHz=n;
+     else if(!strcmp(w[2],"slot_ms"))p.broadcast.slotMs=n;
+     else if(!strcmp(w[2],"cycle_ms"))p.broadcast.periodMs=n;
+     else if(!strcmp(w[2],"lead_us"))p.broadcast.txLeadUs=n;
+     else if(!strcmp(w[2],"process_us"))p.broadcast.rxBudgetUs=n;
+     else if(!strcmp(w[2],"air_us"))p.broadcast.airtimeUs=n;
+     else if(!strcmp(w[2],"guard_us")){if(n<100||n>10000||n%100){reply("ERR guard_us100..10000 step100");return;}p.broadcast.guard100us=n/100;}
+     else if(!strcmp(w[2],"reply_ms")){if(n>255){reply("ERR reply_ms5/10/20");return;}p.replyMs=n;}
+     else if(!strcmp(w[2],"util_percent")){if(n>100){reply("ERR utilization10..80");return;}p.maxUtilization=n;}
+     else {reply("ERR unknown plan field; see plan show/help");return;}
+    }
+   }
+  }else {reply("ERR plan init/show/use/alrs/rlrs/set");return;}
+ }
+ const char *error=mulRangingPlanValidate(&p,NULL);if(error){reply(error);return;}
+ uint32_t generation=0;reply(cfgMulPlanSave(&p,selected,&generation)?"SAVED plan; ON checks assigned radio support":"ERR plan write unconfirmed; inspect reboot");
+}
+
 static void command(void) {
  char *words[11],**w=words;unsigned count=0;char *p=line;
  while(*p){while(*p==' ')p++;if(!*p)break;if(count==11)goto syntax;
   words[count++]=p;while(*p&&*p!=' '){if(*p>='A'&&*p<='Z')*p+='a'-'A';p++;}if(*p)*p++=0;}
  if(!count)return;
+ if(!strcmp(w[0],"plan")){planCommand(w,count);return;}
+ const mulStoredPlan_t *selectedPlan=NULL;
+ if(cfgMulPlanCached(&selectedPlan)==mulPlanStored&&selectedPlan->selected&&
+    ((!strcmp(w[0],"cfg")&&count>1&&((!strcmp(w[1],"set")&&(count<3||strncmp(w[2],"clock_",6)))||(!strcmp(w[1],"roster")&&count>2&&!strcmp(w[2],"set"))))||
+     !strcmp(w[0],"role")||!strcmp(w[0],"reference")||!strcmp(w[0],"follower")||!strcmp(w[0],"addr")||!strcmp(w[0],"mode")||!strcmp(w[0],"mul"))) {
+  reply("ERR selected plan; use plan commands/use off");return;
+ }
  bool legacy=!strcmp(w[0],"mul");if(legacy){count--;w++;if(!count)goto syntax;}
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255,value;
  bool valid=saved(&node,&role,&ref,&fol);cfgReadU8(cfgMode,&mode);
@@ -263,11 +327,41 @@ bool mulConsolePoll(void) {
   "cfg set tx_lead_us/rx_budget_us number",
   "cfg set airtime_us/guard_us number",
   "cfg set alr_alr_twr on/off; RF OFF",
-  "cfg set twr_reply_ms 20/10/5; RF OFF"};
+  "cfg set twr_reply_ms 20/10/5; RF OFF",
+  "plan init/show; plan use on/off; RF OFF",
+  "plan alrs id0 id1...; plan rlrs id0...",
+  "plan set aa/ar on/off; aa_millihz/ar_millihz",
+  "plan set reply_ms/util_percent",
+  "plan set slot_ms/cycle_ms/revision",
+  "plan set lead_us/process_us/air_us/guard_us"};
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255;
  bool valid=saved(&node,&role,&ref,&fol),last=true,enabled=false;
  if(page==answer)snprintf(line,sizeof(line),"%s",message);
  if(page==help){snprintf(line,sizeof(line),"%s",helps[pageIndex]);last=pageIndex+1==sizeof(helps)/sizeof(*helps);}
+ if(page==planPage) {
+  const mulStoredPlan_t *stored=NULL;mulPlanStoreResult_t state=cfgMulPlanCached(&stored);
+  if(state!=mulPlanStored)snprintf(line,sizeof(line),"PLAN %s",state==mulPlanAbsent?"absent; RF OFF then plan init":"storage unconfirmed");
+  else {
+   const mulRangingPlan_t *p=&stored->plan;mulRangingBudget_t b;const char *error=mulRangingPlanValidate(p,&b);
+   if(error)snprintf(line,sizeof(line),"ERR %s",error);
+   else {
+    unsigned base=5+p->broadcast.count+p->rlrCount,n=mulRangingPlanCount(p,1),total=base+2+2*n;last=pageIndex+1>=total;
+    if(pageIndex==0)snprintf(line,sizeof(line),"PLAN selected=%u gen=%lu",stored->selected,(unsigned long)stored->generation);
+    else if(pageIndex==1)snprintf(line,sizeof(line),"PLAN hash=%08lX ALR=%u RLR=%u",(unsigned long)mulRangingPlanFingerprint(p),p->broadcast.count,p->rlrCount);
+    else if(pageIndex==2)snprintf(line,sizeof(line),"PLAN slot=%u cycle=%u reply=%u",p->broadcast.slotMs,p->broadcast.periodMs,p->replyMs);
+    else if(pageIndex==3)snprintf(line,sizeof(line),"PLAN AA=%u AR=%u util=%u",!!(p->enabled&MUL_PLAN_AA),!!(p->enabled&MUL_PLAN_AR),p->maxUtilization);
+    else if(pageIndex==4)snprintf(line,sizeof(line),"RATE mHz AA=%u AR=%u",p->aaMilliHz,p->arMilliHz);
+    else if(pageIndex<5+p->broadcast.count){unsigned i=pageIndex-5;snprintf(line,sizeof(line),"ALR %u id=%u offset=%u ms",i,p->broadcast.ids[i],i*p->broadcast.slotMs);}
+    else if(pageIndex<base){unsigned i=pageIndex-5-p->broadcast.count;snprintf(line,sizeof(line),"RLR %u id=%u",i,p->rlrs[i]);}
+    else if(pageIndex==base)snprintf(line,sizeof(line),"AIR reserve=%lu capacity=%u peak=%u",(unsigned long)b.reservationUs,b.capacity,b.peakOperations);
+    else if(pageIndex==base+1)snprintf(line,sizeof(line),"PREVIEW cycle=1 units=reference_us");
+    else {unsigned i=(pageIndex-base-2)/2;mulRangingOperation_t op;(void)mulRangingPlanOperation(p,1,i,&op);
+     if((pageIndex-base)%2==0)snprintf(line,sizeof(line),"OP%u %c %u>%u %lu..%luus",i,op.kind==MUL_PLAN_AA?'A':'R',op.initiator,op.responder,(unsigned long)op.startUs,(unsigned long)op.endUs);
+     else snprintf(line,sizeof(line),"POLL op=%u at=%lu us",i,(unsigned long)op.pollUs);
+    }
+   }
+  }
+ }
  if(page==peers) {
   mulSchedule_t schedule;
   if(!cfgMulScheduleRead(node,&schedule))snprintf(line,sizeof(line),"ERR invalid schedule");

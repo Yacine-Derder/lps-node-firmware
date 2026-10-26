@@ -345,3 +345,53 @@ void test_fullPlanJournalBackendRequiresAcknowledgedOffAndPreservesLegacyBytes(v
  TEST_ASSERT_TRUE(cfgMulPlanSave(&p,false,&generation));TEST_ASSERT_EQUAL(2,generation);
  TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanLoad(&loaded));TEST_ASSERT_FALSE(loaded.selected);
 }
+
+void test_selectedPlanBootCacheNeverEnablesLegacyOwnerAndResetDisablesJournal(void) {
+ send(":off\n");apply();
+ mulRangingPlan_t p={.replyMs=20,.maxUtilization=70};mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
+ uint32_t generation=0;TEST_ASSERT_TRUE(cfgMulPlanSave(&p,true,&generation));
+ const mulStoredPlan_t *cached=NULL;TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));TEST_ASSERT_TRUE(cached->selected);
+ cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));TEST_ASSERT_TRUE(cached->selected);
+ uwbControlInit(&boot);TEST_ASSERT_TRUE(uwbControlCanEnable());apply();TEST_ASSERT_NOT_NULL(boot.mulPlan);
+ send(":off\n");apply();TEST_ASSERT_TRUE(cfgReset());TEST_ASSERT_TRUE(cfgPendingRestart());cfgInit();
+ TEST_ASSERT_EQUAL(mulPlanAbsent,cfgMulPlanCached(&cached));TEST_ASSERT_NULL(cached);
+}
+
+void test_planConsoleEditsPersistsPreviewsSelectsAndRejectsUnsupportedRadio(void) {
+ send(":off\n");apply();uint8_t prefix[100];memcpy(prefix,memory,sizeof(prefix));
+ send(":plan init\n:plan set lead_us 1000\n:plan set process_us 500\n:plan set slot_ms 3\n");
+ send(":plan alrs 132 135 138 141\n:plan rlrs 144 145\n:plan set reply_ms 5\n:plan set aa on\n:plan set ar on\n:plan use on\n");
+ const mulStoredPlan_t *stored=NULL;TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_TRUE(stored->selected);
+ TEST_ASSERT_EQUAL(4,stored->plan.broadcast.count);TEST_ASSERT_EQUAL(2,stored->plan.rlrCount);TEST_ASSERT_EQUAL(5,stored->plan.replyMs);
+ TEST_ASSERT_EQUAL_MEMORY(prefix,memory,sizeof(prefix));TEST_ASSERT_FALSE(uwbControlCanEnable());
+ output[0]=0;send(":plan show\n");TEST_ASSERT_NOT_NULL(strstr(output,"PLAN selected=1"));TEST_ASSERT_NOT_NULL(strstr(output,"RLR 0 id=144"));TEST_ASSERT_NOT_NULL(strstr(output,"POLL op="));
+ send(":plan set ar off\n");TEST_ASSERT_TRUE(uwbControlCanEnable());send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_NOT_NULL(boot.mulPlan);
+ unsigned before=writes;send(":plan set reply_ms 10\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");apply();before=writes;
+ send(":cfg set slot_ms 10\n:plan set aa_millihz 10000\n:plan rlrs 144 144\n:plan set util_percent 100\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":cfg set clock_window 30\n");mulClockFitConfig_t clock;TEST_ASSERT_TRUE(cfgMulClockRead(&clock));TEST_ASSERT_EQUAL(30,clock.window);
+ cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_TRUE(stored->selected);
+ send(":plan use off\n");apply();TEST_ASSERT_NULL(boot.mulPlan);uint16_t slot;TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(500,slot);
+}
+
+void test_resetInterruptedAtEveryWriteKeepsBootRadioStopped(void) {
+ for(int cut=0;cut<=3;cut++) {
+  setUp();send(":off\n");apply();
+  mulRangingPlan_t p={.replyMs=20,.maxUtilization=70};mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
+  uint32_t generation=0;TEST_ASSERT_TRUE(cfgMulPlanSave(&p,true,&generation));
+  budget=cut;TEST_ASSERT_EQUAL(cut==3,cfgReset());budget=-1;
+  cfgInit();TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&boot.mode));TEST_ASSERT_TRUE(cfgReadU8(cfgAddress,&boot.address[0]));
+  uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlRequested());TEST_ASSERT_FALSE(uwbControlRunning());
+  if(cut){TEST_ASSERT_FALSE(uwbControlCanEnable());}
+ }
+}
+
+void test_committedPlanCorruptionOrBootReadFailureCannotFallBackToLegacyRadio(void) {
+ send(":off\n");apply();
+ mulRangingPlan_t p={.replyMs=20,.maxUtilization=70};mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
+ uint32_t generation=0;TEST_ASSERT_TRUE(cfgMulPlanSave(&p,true,&generation));
+ unsigned before=writes;TEST_ASSERT_FALSE(cfgMulChangeAddress(135));TEST_ASSERT_EQUAL(before,writes);
+ memory[MUL_PLAN_STORE_BASE+12]^=1;cfgInit();const mulStoredPlan_t *cached=NULL;
+ TEST_ASSERT_EQUAL(mulPlanCorrupt,cfgMulPlanCached(&cached));TEST_ASSERT_NULL(cached);TEST_ASSERT_FALSE(uwbControlCanEnable());
+ badRead=true;cfgInit();badRead=false;TEST_ASSERT_EQUAL(mulPlanIoError,cfgMulPlanCached(&cached));TEST_ASSERT_FALSE(uwbControlCanEnable());
+}

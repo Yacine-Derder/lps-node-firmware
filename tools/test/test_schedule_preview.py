@@ -12,7 +12,9 @@ class SchedulePreview(unittest.TestCase):
     def test_production_preview_owns_every_reservation_and_rejects_infeasible_rates(self):
         config = dict(rlrs=[141, 142], alr_alr=True, alr_rlr=True, reply_ms=5)
         result = planner.preview(config, cycles=4)
-        self.assertFalse(result['radio_integration'])
+        self.assertEqual(result['version'], 2)
+        self.assertEqual(result['planner_version'], 2)
+        self.assertEqual(result['radio_integration'], dict(lps_aa=True, rlr_receive=False, alr_rlr=False))
         self.assertEqual((result['aa_pairs'], result['ar_pairs']), (3, 8))
         self.assertEqual(result['requested_millihz'], 17500)
         self.assertEqual(sum(len(c['operations']) for c in result['cycles']), 70)
