@@ -1134,8 +1134,9 @@ are rejected. Each operation's setup and final airtime guards retain the actual
 hardware before/after-SPI delayed-TX checks. LPS AA ownership is connected; fixed
 maintenance windows are bypassed, each reference operation is attempted once and
 mandatory data broadcasts preempt ranging. A missed slot is skipped, never caught
-up in a burst. AR ownership and STM32 RF4 reception are unfinished and selected AR
-activation is refused. Old participants reject RF4 explicitly.
+up in a burst. Assigned AR initiation/responses and STM32 RF4 reception are
+connected; STM32 AR activation requires explicit local RLR assignment. Old
+participants reject RF4 explicitly.
 
 The selected plan is cached at boot, with no EEPROM access in radio callbacks.
 Two96-byte commit-last records at128/256 leave the original100-byte TLV image
@@ -1187,11 +1188,11 @@ Delay export, propagation state, expiry wakeups, relation power flags and SYNC
 status use the committed AA identity while another operation is selected. Legacy
 unplanned behavior retains its existing fields. The bounded MUL role reservation
 is now at most160 bytes (linked144 versus prior128); no stack/USB queues were cut.
-This is a prerequisite for active AR ownership, which remains disabled pending
-LPS scheduling and DW3000 responder integration. It does not authorize radio TX.
+This record remains independent of the active AR owner. Firmware capability
+does not authorize operating hardware in this software campaign.
 
 
-### Generated AR radio ownership (software implementation, activation gated)
+### Generated AR radio ownership (software-tested)
 
 The LPS reference can initiate assigned AR operations without waiting for an ALR
 follower observation. A data follower instead maps reference reservation start,
@@ -1210,7 +1211,22 @@ bound. Broadcast priority and the committed AA cache remain independent of AR.
 The STM32 DW3000 responder implements the matching five-message RF4 transaction
 with assigned-slot/pair/hash validation and verified delayed RESPONSE/REPORT TX.
 Its committed result preserves clock-domain identities and raw ToF; DW3000 power
-bias correction remains explicitly unsupported. Both firmware activation gates
-still reject AR plans until versioned range/quality telemetry and complete
-cross-platform delivery are connected and verified. No physical validation is
-asserted by the native adapter tests.
+bias correction remains explicitly unsupported. Both firmware activation guards
+are removed following persisted-runtime and end-to-end delivery tests. No physical
+validation is asserted by native adapter tests.
+
+UWB3 type13 publishes committed acquisition time separately from report time,
+full plan/cycle/pair/operation, raw/corrected ToF, power metadata and all six
+timestamps with explicit clock identities. Type14 carries responder counters and
+last failure/reset generation. The152-byte envelope stays fixed; quality4 and
+strict reserved/version checks reject mixed layouts. Type13 is essential in both
+STM32 and ESP queues; native90-byte RX and verified TX copies are optional type12
+traces with explicit direction/marker. Never call a scheduled TX target an actual
+TX marker before TXFRS and marker equality checks. Unknown uncertainty and
+uncalibrated status survive compact logging; ADS-only correction is not applied.
+
+A two-entry trace ring preserves coalesced TX+RX. A committed result snapshot
+survives subsequent reference updates; overwritten results and raw ring loss have
+separate counters. Runtime queue drops remain separate transport diagnostics.
+Reference_seen denotes observed protocol identity, not a valid current clock map.
+Counter reset refuses a busy exchange and never revives retired reservations.

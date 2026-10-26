@@ -42,10 +42,13 @@ establish physical timing or accuracy. Compatibility defaults remain unchanged.
 Stage D now has persisted full-plan selection, RF-OFF configuration/preview and
 generated AA reservations in the LPS radio owner, with guarded5/10/20ms replies.
 Full-plan codec2/RF4 binds every operation to its cycle, pair and configuration.
-STM32 schema9 now persists/selects independent full plans and receives RF4
-passively. Versioned vector/raw telemetry11/12 crosses ESP and the collector with
-full-plan identity. Explicit priority/freshness policy and active ALR–RLR TWR (E)
-remain unfinished; selected AR plans cannot enable RF yet. Existing profiles retain
+STM32 schema9 persists/selects independent full plans and receives RF4. Stage E
+now connects assigned five-message AR replies, acquired-time range/quality13/14
+and optional raw90 tracing through ESP and compact/debug logging. Selected AR
+activation is enabled in both firmwares; STM requires explicit RLR assignment.
+Native adapter/fault/queue/reboot and cross-platform delivery tests pass, without
+physical interoperability or accuracy claims. Explicit Stage D priority/freshness
+policy remains unfinished. Existing profiles retain
 their prior wire format. External geometry/optional odometry EKF (F) and the
 consolidated campaign (G) follow. No physical-validation stop is requested between
 software stages.

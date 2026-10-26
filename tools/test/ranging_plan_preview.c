@@ -10,7 +10,7 @@ int main(int argc,char **argv) {
  uint8_t bytes[MUL_PLAN_BYTES];if(fread(bytes,1,sizeof(bytes),stdin)!=sizeof(bytes)||fgetc(stdin)!=EOF)return 2;
  mulRangingPlan_t p;const char *decode=mulRangingPlanDecodeError(bytes,&p);if(decode){fprintf(stderr,"%s\n",decode);return 1;}
  mulRangingBudget_t b;const char *error=mulRangingPlanValidate(&p,&b);if(error){fprintf(stderr,"%s\n",error);return 1;}
- printf("{\"version\":2,\"planner_version\":%u,\"radio_integration\":{\"lps_aa\":true,\"rlr_receive\":true,\"alr_rlr\":false},\"fingerprint\":\"%08lX\",\"reservation_us\":%lu,\"data_end_us\":%lu,\"capacity\":%u,\"peak_operations\":%u,\"aa_pairs\":%u,\"ar_pairs\":%u,\"aa_pair_millihz\":%u,\"ar_pair_millihz\":%u,\"max_utilization_percent\":%u,\"requested_millihz\":%lu,\"cycles\":[",
+ printf("{\"version\":2,\"planner_version\":%u,\"radio_integration\":{\"lps_aa\":true,\"rlr_receive\":true,\"alr_rlr\":true},\"fingerprint\":\"%08lX\",\"reservation_us\":%lu,\"data_end_us\":%lu,\"capacity\":%u,\"peak_operations\":%u,\"aa_pairs\":%u,\"ar_pairs\":%u,\"aa_pair_millihz\":%u,\"ar_pair_millihz\":%u,\"max_utilization_percent\":%u,\"requested_millihz\":%lu,\"cycles\":[",
   MUL_PLAN_VERSION,(unsigned long)mulRangingPlanFingerprint(&p),(unsigned long)b.reservationUs,(unsigned long)b.dataEndUs,b.capacity,b.peakOperations,b.aaPairs,b.arPairs,b.aaPairs?p.aaMilliHz:0,b.arPairs?p.arMilliHz:0,p.maxUtilization,(unsigned long)b.requestedMilliHz);
  for(unsigned at=0;at<count;at++) {
   uint32_t cycle=(uint32_t)(first+at);unsigned n=mulRangingPlanCount(&p,cycle);

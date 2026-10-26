@@ -2,7 +2,7 @@
 """Preview production-C ranging reservations without connecting to hardware.
 
 LPS runs generated AA reservations; matching STM32/ESP receive and telemetry
-paths are connected. Active ALR-RLR ranging remains under development.
+paths and assigned ALR-RLR responders are connected (software-tested only).
 Target rates are per participant pair in integer milliHz (500 means0.5Hz).
 """
 import argparse

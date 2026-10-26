@@ -363,9 +363,9 @@ void test_planConsoleEditsPersistsPreviewsSelectsAndRejectsUnsupportedRadio(void
  send(":plan alrs 132 135 138 141\n:plan rlrs 144 145\n:plan set reply_ms 5\n:plan set aa on\n:plan set ar on\n:plan use on\n");
  const mulStoredPlan_t *stored=NULL;TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_TRUE(stored->selected);
  TEST_ASSERT_EQUAL(4,stored->plan.broadcast.count);TEST_ASSERT_EQUAL(2,stored->plan.rlrCount);TEST_ASSERT_EQUAL(5,stored->plan.replyMs);
- TEST_ASSERT_EQUAL_MEMORY(prefix,memory,sizeof(prefix));TEST_ASSERT_FALSE(uwbControlCanEnable());
+ TEST_ASSERT_EQUAL_MEMORY(prefix,memory,sizeof(prefix));TEST_ASSERT_TRUE(uwbControlCanEnable());
  output[0]=0;send(":plan show\n");TEST_ASSERT_NOT_NULL(strstr(output,"PLAN selected=1"));TEST_ASSERT_NOT_NULL(strstr(output,"RLR 0 id=144"));TEST_ASSERT_NOT_NULL(strstr(output,"POLL op="));
- send(":plan set ar off\n");TEST_ASSERT_TRUE(uwbControlCanEnable());send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_NOT_NULL(boot.mulPlan);
+ TEST_ASSERT_TRUE(uwbControlCanEnable());send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_NOT_NULL(boot.mulPlan);
  unsigned before=writes;send(":plan set reply_ms 10\n");TEST_ASSERT_EQUAL(before,writes);
  send(":off\n");apply();before=writes;
  send(":cfg set slot_ms 10\n:plan set aa_millihz 10000\n:plan rlrs 144 144\n:plan set util_percent 100\n");TEST_ASSERT_EQUAL(before,writes);

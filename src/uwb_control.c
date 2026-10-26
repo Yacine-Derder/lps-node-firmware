@@ -35,7 +35,7 @@ bool uwbControlCanEnable(void) {
 #if !MUL_HYBRID_CH5
   if(c->lowBitrate||c->longPreamble)return false;
 #endif
-  return !cfgPendingRestart()&&c->mode==MODE_MUL_ALR&&!(stored->plan.enabled&MUL_PLAN_AR)&&
+  return !cfgPendingRestart()&&c->mode==MODE_MUL_ALR&&
     cfgReadU8(cfgMode,&mode)&&mode==c->mode&&cfgReadU8(cfgAddress,&node)&&node==c->address[0]&&
     mulScheduleIndex(&stored->plan.broadcast,node)>=0;
  }

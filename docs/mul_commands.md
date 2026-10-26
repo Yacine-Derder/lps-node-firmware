@@ -513,14 +513,15 @@ The LPS reference services generated AA operations once each per cycle and only
 when the assigned follower was heard. Followers accept only assigned reservations.
 Lost/late operations are skipped; later reservations can recover without bursts.
 Mandatory broadcasts retain priority. Fixed650/800ms windows do not run alongside
-this owner. Full AR plans can be saved and previewed, but cannot enable RF until
-active ALR–RLR adapters are implemented. Selected plans currently require mode5,
+this owner. Selected AR plans enable assigned ALR initiation and STM32 RLR
+responses. STM32 RF ON requires the local node in the plan RLR roster. LPS plans require mode5,
 roster membership and the known fast PHY. Diagnostics cannot override them.
 
 **Compatibility:** generated-plan RF envelope4 is deliberately distinct from
 profile3's RF3 and legacy frames. Matching STM32 schema9 now persists/selects
-independent plans and receives RF4 passively; ESP/collector supports new planned
-vector/raw types11/12 with quality4, full-plan fingerprint and explicit profile4.
+independent plans and receives RF4, with assigned AR RESPONSE/REPORT transmissions.
+ESP/collector supports planned vector/raw11/12 and AR range/quality13/14,
+quality4, full-plan fingerprint and explicit profile4.
 All participants must have the same full plan, including RLR roster/rates. Old
 decoders reject the new types. This path is software-tested; physical timing and
 interoperability remain unverified. Unselected profiles retain their protocols.
@@ -550,3 +551,14 @@ Global float-printf linking was removed; production half-dB power display uses
 integer formatting, and the optional ADS diagnostic retains float formatting.
 Current image measurements and remaining stack-watermark checks are recorded in
 [the engineering handoff](mul_upgrade_handoff.md).
+
+
+AR diagnostics use STM32 `hybrid ar`; `hybrid status` reports passive=0 only when
+a selected AR plan is enabled. `samples on` opts into native RX/TX tracing;
+range results remain essential even with samples off. Type13 retains six mixed
+clock timestamps, raw/corrected ToF in initiator DTU, power status, cycle/pair/op,
+plan identity, acquisition uptime and separate report uptime. Physical uncertainty
+is UNKNOWN and these ranges are not calibrated. Type14 carries responder
+completion/fault/drop/reset counters; reference_seen is not a freshness guarantee.
+Idle diagnostic reset preserves protocol identities and retired operations; busy
+reset is refused. Ordinary hybrid remains NO_RATE; AA-only/default RLR is passive.

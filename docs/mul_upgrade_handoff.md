@@ -1091,3 +1091,49 @@ no-TX tests. Complete remaining D priorities/freshness, F abstract USB pose/geom
 and measured-step optional ESP EKF, then G. ROS/Pi bridge remains OUT OF SCOPE;
 no hardware operations or Pi access. Goal active; preserve unrelated LPS
  docs/mul_core.md16/17 and do not stage it.
+
+
+## Stage E delivered and software-enabled checkpoint
+
+Shared canonical telemetry commit9935db39f620b0221aa76c6e837841e8558ba8ec is
+published/exported unchanged. Consumers: STM bba784a, ESP21569f6. Type13 essential
+AR range and14 quality retain full plan identity/acquisition time/raw mixed-clock
+evidence/UNKNOWN uncertainty; optional type12 native90 tracing distinguishes
+verified TX from RX. Result snapshots survive new references; bounded2-entry
+trace ring handles coalesced interrupts. Busy counter reset rejects; idle reset
+retains retired ops and protocol identities. Queue loss and adapter loss remain
+separate diagnostics. No ADS-only calibration is applied; DW3000 power unsupported.
+
+Both AR RF activation guards are removed. STM RF ON requires explicit membership
+in the selected plan RLR roster; LPS mode/PHY/storage/identity guards remain.
+Runtime/help/preview truthfully distinguish assigned AR replies from passive
+AA-only/unselected hybrid. Ordinary NO_RATE is unchanged. Production runtime
+fixture saves/enables/reboots mixed AA/AR plans with multiple RLRs, drives the
+actual hybrid handler through RESPONSE/REPORT TX and validates range delivery.
+It covers5/10/20ms, independent RLR±150ppm and ALR±35/45ppm clocks, separate/coalesced
+IRQs, late/antenna/hash/stamp/window/broadcast/rearm faults, no retry and saturated
+optional queues. Clock fit is supplied from synthetic reference observations;
+these are register/transport simulations, not a shared physical radio experiment.
+
+Verification passes:233 production LPS tests at10/50/500ms and233ASan/UBSan at10;
+STM full runtime sanitizer suite and frequency regressions; ESP89host tests and
+ESP32-S3 build. Clean CH5/6s LPS image flash117904 (free13168), RAM13564 (free2820),
+checker confirms stacks/queues344-byte workspace/removed stock modes. Universal
+STM text158340,data768,bss38824, linker FLASH159164/RAM39592; sector check passes.
+ESP actual bridge/priority/TCP reconnect/collector replay preserves26 AR result/
+quality/raw records, including acquisition/report times and TX/RX markers.
+Logs:/tmp/mul-ar-activation-lps-production.log,/tmp/mul-ar-activation-lps-matrix.log,
+/tmp/mul-ar-activation-stm.log,/tmp/mul-ar-activation-frequency.log,
+/tmp/mul-ar-activation-esp.log,/tmp/mul-ar-runtime-e2e.log,
+/tmp/mul-ar-activation-lps-build.log,/tmp/mul-ar-activation-resources.json,
+/tmp/mul-ar-activation-stm-build-final.log,/tmp/mul-ar-activation-esp-build.log.
+An initial bare rake command used the unsupported combined profile (MUL_ONLY=0)
+and failed the existing reset-idle assertion because its factory mode is anchor;
+production matrix explicitly sets MUL_ONLY=1 and passes. No production reset
+semantics were changed. The root docs/mul_core.md unrelated16/17 edit remains.
+
+Next: finish Stage D explicit priority/freshness policy (currently only target-rate
+weighted fair scheduling), then Stage F abstract USB pose ingress/geometry and
+optional measured-step ESP EKF; finish G consolidated campaign. The ROS-agnostic
+LPS boundary and exclusion of ROS/MCS/Pi implementation/access remain mandatory.
+No hardware operations, flashing or intermediate physical experiments. Goal active.
