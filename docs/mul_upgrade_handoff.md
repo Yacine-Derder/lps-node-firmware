@@ -797,3 +797,44 @@ source lists when exporting. Actual STM32 schema9/CLI/radio selection and new
 telemetry labels remain unimplemented. Do not publish new RF4 vectors using the
 old type8/9 profile labels. New API's plan must remain alive and immutable until
 receiver reinitialization (hybridConfig is suitable once adapter is wired).
+
+
+### Published consumer snapshot update and next implementation boundary
+
+Canonical receiver/API commit7334036ecc94f74281dbeac4f1e87cacae26e44f is published
+and deterministically exported unchanged into both consumers. STM commitdfb79c7
+adds protocol/planner source dependencies to CMake and native script lists. ESP
+uses the same pin with no telemetry behavior change. This supersedes the older
+pin statements above: full-plan APIs are available, but not selected by live STM.
+
+Consumer verification: STM runtime-config sanitizer suite, frequency diagnostics,
+clean Universal build and ELF-sector check pass. text146812,data768,bss38032
+(flash147580/RAM38800); ELF build/Universal/EPuck_STM32.elf. ESP C protocol/transport
+sanitizers and85 Python host tests pass; IDF UwbReview build succeeds, app0xc8260
+in1MiB partition (22% free). UwbReview cache expects venv/bin/python, notpython3;
+use the matching executable rather than deleting/reconfiguring the build. Logs:
+/tmp/mul-rf4-stm-native.log,/tmp/mul-rf4-stm-frequency.log,
+/tmp/mul-rf4-stm-build.log,/tmp/mul-rf4-esp-host.log,
+/tmp/mul-rf4-esp-build.log. Actual IDF compiler output is additionally in
+build/UwbReview/log/idf_py_stdout_output_2028166. No flash command was executed.
+
+Next coherent unit: STM full-plan schema9/CLI/live receiver plus explicit telemetry
+labeling across ESP/collector. Likely layout fits existing256-byte record: schedule
+128..159, clock160..171, explicit172, selected173, reserved174..175, plan176..239,
+reserved240..247, CRC248, commit252. This is a PROPOSAL, not implemented schema.
+Keep schemas1..8 decoding and mixed128/256 scan/powercut invariants; public128 decode
+must reject9. Candidate validation must enforce plan/schedule/ref/fol/slot aliases,
+selected support and live role. Persist the unselected candidate independently so
+legacy settings can be restored deliberately; choose exact representation before
+coding. Core/Src/uwb_config.c currently compares whole clock/schedule structs and
+has one schedule field, so do not add selected flag while silently shadowing it.
+
+Use hybridConfig's immutable lifetime for mulMultiReceiverInitPlan once selected;
+no TX is implied. Radio adapter currently calls only mulMultiReceiverInit and
+publishes oldtype8/9 with quality3 for numerical timing. Prefer new planned-vector/
+raw types11/12, with fullplan hash and explicit profile4, so old decoders reject
+rather than mislabel10ms as compatibility. Update essential-queue priority,
+ESP decoder/compact collector and wire replay tests together. Then actual StageE
+AR ownership, preserved separate AA delay cache, correct initiator clock mapping,
+quality/fault tests; remaining D priority/freshness; F/G per user scope. No hardware
+checkpoint or user permission is needed to continue these software tasks.
