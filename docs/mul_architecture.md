@@ -1153,3 +1153,21 @@ individual frames and reviewed chains; dynamic stack watermarks and real callbac
 latency remain part of final physical acceptance. Production no longer globally
 links float printf; the optional ADS diagnostic retains its formatter locally.
 This reduces flash without altering radio or TWR floating-point calculations.
+
+
+## Stage F external pose boundary (current scope)
+
+LPS firmware is entirely ROS-agnostic. It accepts portable externally supplied,
+timestamped noisy ALR poses and associated covariance, validity and freshness
+metadata over USB serial. The pose source stays abstract. LPS must not subscribe
+to ROS, ingest MCS directly or generate synthetic noise. Current campaign work is
+limited to this interface/ingress, downstream geometry/propagation correction and
+host-side synthetic input/replay tests, alongside the optional measured-step EKF.
+
+In the eventual setup each WaveRover's Raspberry Pi5 handles MCS/ROS ingestion,
+noise injection and forwarding to its attached LPS node. That bridge and all Pi
+software/hardware are outside the current campaign: no implementation, changes,
+configuration or access. Host tests may generate seeded synthetic observations
+and retain pristine truth separately for evaluation; this does not implement the
+experimental Pi bridge. Known frame, supplied uncertainty and stale/missing-data
+handling remain required. D/E/F/G order and final-only hardware campaign remain.

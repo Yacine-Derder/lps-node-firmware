@@ -21,9 +21,13 @@ MUL timing/protocol compatibility, but stored modes0..4 remain idle and their
 commands are rejected. Clock fitting owns its storage rather than overlaying
 TDoA3. See [production build details](docs/mul_commands.md).
 
-StageF uses timestamped MCS/ROS ALR poses in a known common frame, with deterministic
-synthetic noise and supplied covariance. Uncorrupted MCS truth stays separate for
-evaluation. SLAM, map alignment and inferred SLAM uncertainty are out of scope.
+StageF uses abstract timestamped noisy ALR poses in a known common frame, supplied
+with covariance/validity metadata over USB serial. LPS is entirely ROS-agnostic.
+Only portable pose ingress, USB ingestion, downstream geometry and host synthetic
+input/replay tests belong to this campaign. Eventual Raspberry Pi5 MCS/ROS
+ingestion, noise injection and forwarding are external and out of scope: do not
+implement, configure or access Pi software/hardware. Pristine truth stays separate
+for host evaluation. SLAM, map alignment and inferred uncertainty are out of scope.
 Optional measured-wheel-step EKF should prefer ESP32, retain raw data and default
 off. Continue D/E/F/G without physical checkpoints; hardware remains unauthorized.
 

@@ -838,3 +838,40 @@ ESP decoder/compact collector and wire replay tests together. Then actual StageE
 AR ownership, preserved separate AA delay cache, correct initiator clock mapping,
 quality/fault tests; remaining D priority/freshness; F/G per user scope. No hardware
 checkpoint or user permission is needed to continue these software tasks.
+
+
+## Latest Stage F boundary clarification (supersedes earlier ROS/noise scope)
+
+User explicitly narrowed deployment work: LPS must remain entirely ROS-agnostic.
+Implement only portable timestamped noisy-pose data/uncertainty/validity interface,
+USB serial ingestion as needed, geometry/propagation correction, and host-side
+synthetic input/replay tests. Pose source abstract, pristine truth separate.
+Do NOT implement ROS subscriptions, MCS ingestion or noise generation on LPS.
+Eventual WaveRover Raspberry Pi5 handles MCS/ROS/noise/USB forwarding externally,
+but Pi bridge/software/hardware are NOT in this campaign: no implementation,
+modification, configuration or attempted access. No Pi work is authorized.
+Optional measured-step portable ESP EKF remains required. Continue D/E/F/G in order,
+without intermediate physical experiments or permission checkpoints.
+
+STM schema9 milestone commitabd3048 adds independent full-plan persistence and
+RF-OFF `plan init/show/use/alrs/rlrs/set`, preserving retained schedule/clock fields.
+Record256: retained schedule128, estimator160, explicit172, selected173, zero174..175,
+plan176..239, zero240..247, CRC248, commit252. Presence implied by schema9. Existing
+schemas1..8 preserved; public128 decode rejects9. Effective schedule/clock getters
+exist; live RF4 is still refused explicitly by selected-plan validation pending
+radio/telemetry integration. Deselect restores retained profile. Retained schedule
+edits require deselection; clock parameters remain editable with selected period
+only derived by the effective getter. No radio operation was performed.
+
+Tests: runtime-config full sanitizer suite plus plan append/rotation all64-word
+cuts across retained implicit/explicit/numeric profiles, nested CRC/marker/reserved
+rejection, no-op, RF-OFF CLI/reboot/backpressure/malformed/no-write and deselection
+recovery pass. Frequency suite passes. Clean Universal build: text151304,data768,
+bss38320; linker FLASH152128/RAM39088. ELF-sector check passes. Native config API
+now links mul_ranging_plan.c, so direct standalone config build lists must include
+it; no need to duplicate it when already linked for mul_multi_receiver.c.
+Logs:/tmp/mul-schema9-final-runtime.log,/tmp/mul-schema9-frequency.log,
+/tmp/mul-schema9-build.log. Next: distinct planned vector/raw telemetry11/12 in
+canonical core, consumer export/decoders/essential-priority/compact labeling,
+then wire STM hybridConfig plan to passive RF4 receive and remove pending gate
+only with end-to-end tests. AR remains unsupported until StageE adapter work.
