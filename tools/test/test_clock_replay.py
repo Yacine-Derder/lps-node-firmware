@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -60,3 +61,15 @@ class ClockReplay(unittest.TestCase):
         linear = replay.polynomial_predict(points, 24, 1)
         self.assertAlmostEqual(quadratic, expected, places=7)
         self.assertLess(abs(quadratic-expected), abs(linear-expected))
+
+    def test_clock_json_uses_radio_sequence_and_epoch_instead_of_transport_order(self):
+        path = Path(self.work.name)/'clock.jsonl'
+        clock = dict(type='clock', node=141, epoch='A', mapping_epoch='B', sequence=999,
+                     reference_sequence=42, reference_node=132, reference_tx_dtu=1000,
+                     local_rx_dtu=2000, u_ms=10000)
+        path.write_text('\n'.join(json.dumps(row) for row in (clock, dict(clock, sequence=1000, reference_sequence=43),
+                                                            dict(clock, mapping_epoch='C', sequence=1001, reference_sequence=0))))
+        rows = list(replay.observations(path, 1000))
+        self.assertEqual([row['sequence'] for row in rows], [42, 43, 0])
+        self.assertEqual([row['reset'] for row in rows], [True, False, True])
+        self.assertTrue(all(row['local'] == 141 for row in rows))

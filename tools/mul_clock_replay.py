@@ -27,6 +27,7 @@ def delta(a, b):
 def observations(path, period):
     source, local, reset = 132, 133, True
     previous, uptime = None, 0
+    clock_epoch = None
     pattern = re.compile(r'REF_RX src=0x([0-9a-f]+) seq=(\d+) tx=0x([0-9a-f]+) rx=0x([0-9a-f]+)', re.I)
     for line in path.read_text(errors='replace').splitlines():
         if 'Mode initialized' in line:
@@ -36,6 +37,12 @@ def observations(path, period):
             previous, reset = None, True
         if line.startswith('{'):
             row = json.loads(line)
+            if row.get('type') == 'clock':
+                marker = (row['node'], row.get('epoch'), row.get('mapping_epoch'))
+                reset_clock = marker != clock_epoch
+                clock_epoch = marker
+                row = dict(row, reset=reset_clock, sequence=row['reference_sequence'], uptime_ms=row.get('uptime_ms', row.get('u_ms')),
+                           reference=row['reference_node'], local=row['node'])
             if all(key in row for key in ('sequence', 'reference_tx_dtu', 'local_rx_dtu', 'uptime_ms')):
                 yield row
             continue

@@ -902,7 +902,7 @@ void test_mulMultiFollowerRegressionWindowAndOutlierNeverSuppressScheduledBroadc
   TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_EQUAL_UINT(80,radios[1].txLength);
   mulMultiBroadcast_t decoded;TEST_ASSERT_TRUE(mulMultiBroadcastDecode(&multiConfiguration.mulSchedule,radios[1].tx,80,&decoded));
   TEST_ASSERT_EQUAL_UINT32(100+i,decoded.packet.sequence);
-  if(i==35)TEST_ASSERT_FALSE(decoded.relation.available);
+  if(i==35){TEST_ASSERT_FALSE(decoded.relation.available);}
   advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
  }
  TEST_ASSERT_TRUE(mulClockWorkspace()->fit.ready);TEST_ASSERT_EQUAL(24,mulClockWorkspace()->fit.count);

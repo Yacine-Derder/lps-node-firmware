@@ -162,3 +162,68 @@ not a physical uncertainty claim. Consumer publication/parsing follows this comm
 Regression LPS logs now use one FIT line instead of duplicating old CLOCK/MAP
 lines, retaining raw REF_RX and reporting mapping status/age in FIT. Median text
 output is unchanged. This limits added pressure on the existing USB queue.
+
+## Stage B integrated checkpoint / compatible consumers
+
+LPS shared core29c1f7a is pinned in STM32 commit1da6900 and ESP32 commit96e397c;
+all three pushes were verified. LPS source commitsdd5d932/e21f0ed/d8505db/9e30bba/
+29c1f7a cover design, core, ALR settings/storage, replay/fallback and diagnostic wire.
+Median remains default. Opt-in regression and window settings work persistently on
+ALR and STM32; both legacy and multi STM32 receivers use the same production core.
+Schema7 adds clock settings to extended256-byte STM32 records with final commit,
+old-schema read-only defaults, all word-cut tests, rollback and reserved-byte checks.
+`clock show` is read-only. In hybrid mode, `cfg set samples on` plus `tlm on` enables
+optional type10 clock records; default samples-off queue behavior remains unchanged.
+The RLR native test exercises45 cycles with a persisted30-point window and confirms
+that raw clock telemetry matches captured reference TX/RX and radio cycle exactly.
+
+Canonical `mode hybrid[_static]` had a pre-existing transition bug from standalone:
+it restored the old standalone protocol role after selecting a passive mode. This
+was fixed while preserving the explicit standalone requirement for selecting a
+transmitting mode. Clock tests enter passive mode from defaults and remain no-TX.
+
+Final StageB checks: shared ASan/UBSan core suite;228 native +206 MUL sanitizer tests
+at each500/50/10ms;30 host-analysis tests; all available STM32 run.sh suites
+(spi_polling,uwb_policy,frequency,phy_interop,epuck_console,esp_link,mul_diag,ads_radio,
+runtime_config); STM32 Universal build and reserved-flash ELF check;82 ESP/Python
+host tests and ESP-IDF build. Fixed missing portable-header include paths in older
+standalone host scripts instead of disabling tests. LPS final channel5 build:
+text128312/data1128/bss15244,20 bytes static RAM margin. Compiler stack frames:
+clock fitted observer296, solve128, ALR event256 bytes; task reservations unchanged.
+These static figures are not runtime stack high-water or timing measurements.
+STM32 RAM38744 bytes/128KiB, flash142588/768KiB. ESP app0xC8160/0x100000 fits.
+
+`mul_bias_report.py` compares per-device/per-slot validity, means/spread and optional
+measured-geometry residuals. It rank-checks device+slot effects and refuses to infer
+a clock slope from a fixed device/slot assignment. The supplied09:26 capture gives
+means-142.95/-196.34/-234.93mm (n165/182/177) and SD41.69/53.67/61.00mm; device and
+slot are confounded. Permutation/geometry/invalid-entry tests pass. Clock replay
+also accepts compact/raw type10 JSONL, correctly using the radio reference sequence
+rather than transport sequence, and resetting on clock-domain epoch changes.
+
+## Stage C next implementation design (not yet implemented)
+
+Use an explicit experimental schedule profile3 and schedule codec version2, retaining
+32 bytes by assigning old reserved20..27 to minimum TX lead_us, processing budget_us,
+packet airtime_us (uint16 each), guard in100us units, and ranging flags. Profiles1/2
+retain version1 bytes/constraints/defaults. Profile3 radio frames must explicitly
+use protocol version3 plus the full fingerprint; old participants reject them.
+Numerical slot spacing remains integer milliseconds; feasible cycles can initially
+use10ms resolution within100..2000ms. Legacy profile1 retains10/50/500 and1Hz.
+
+Default experimental budgets should remain conservative;3/5/2ms spacing requires
+explicit opt-in lead/processing/airtime budgets, with actual hardware deadline
+checks before and after SPI retained. Never change the compatibility5ms guard.
+Reference period, clock period and propagation sequence-age guards must all agree.
+No fixed1Hz sequence thresholds may silently survive the new variable-period path.
+A uint16 period can occupy existing padding in the80-byte clock ABI; investigate
+an8-bit period/10ms field in the existing relation padding to keep its48-byte size
+and128-byte LPS scratch assertion. Check these sizes in a clean embedded build.
+
+Do not enable ALR–RLR flags before the assigned ranging adapter exists. AA disabled
+must reserve no TWR windows; with AA enabled keep compatibility windows until the
+StageD deterministic generator is integrated. New STM32 schema8 can carry verified
+experimental schedule metadata and full numerical spacing in its extended record;
+old128-byte packed slot fields must remain compatibility-only. Extend vector/raw
+telemetry with an explicit experimental marker rather than reinterpreting old fields.
+After StageC tests/builds/pin refresh proceed throughD–G without physical requests.
