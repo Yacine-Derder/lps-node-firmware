@@ -146,3 +146,19 @@ is not a physical uncertainty bound. Native context remains336 bytes.
 Adaptive LPS channel5 build passed: text128216/data1128/bss15244; RAM margin remains
 20 bytes with unchanged task/queue reservations. After pin refresh, STM32/ESP must
 use this adaptive core revision rather than the earlier d8505db import.
+
+## Research clock telemetry addition
+
+UWB3 type10 is an additive optional clock diagnostic; all prior record types keep
+their meanings. It retains152 bytes/309 characters: raw reference TX40..44,
+local RX45..49, reference sequence50..53, applied/fitted signed ppb54..61,
+RMS62..65, rejected66..69, conditional fit sigma70..73, mapping age74..77,
+reference ID78, method79, window/count/inliers80..82, mapping status83,
+fit-ready84, applied85, fallback86, compensated87;88..149 are zero/reserved.
+Header exchange binds the process-local clock epoch. This is optional queue traffic
+and must never displace essential TDoA vectors. Unknown fit sigma isUINT32_MAX,
+not a physical uncertainty claim. Consumer publication/parsing follows this commit.
+
+Regression LPS logs now use one FIT line instead of duplicating old CLOCK/MAP
+lines, retaining raw REF_RX and reporting mapping status/age in FIT. Median text
+output is unchanged. This limits added pressure on the existing USB queue.
