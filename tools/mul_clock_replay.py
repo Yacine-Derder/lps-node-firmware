@@ -86,6 +86,7 @@ class Replay:
         self.lib, self.window, self.period = library, window, period
         self.context = None
         self.identity = None
+        self.active_period = None
 
     def feed(self, row):
         for name, maximum in (('sequence', 0xffffffff), ('reference_tx_dtu', MASK), ('local_rx_dtu', MASK), ('uptime_ms', 0xffffffff)):
@@ -94,19 +95,31 @@ class Replay:
                 raise ValueError(f'invalid {name}')
         if not -1 <= row.get('one_way_dtu', -1) <= 63898 or not 0 <= row.get('delay_age_ms', 0) <= 0xffffffff:
             raise ValueError('invalid delay sample')
+        period = row.get('sample_period_ms')
+        if period is None:
+            period = self.period
+        if type(period) is not int or not 10 <= period <= 2000:
+            raise ValueError('invalid sample_period_ms')
+        age = row.get('capture_age_ms')
+        if age is not None and (type(age) is not int or not 0 <= age <= 65535):
+            raise ValueError('invalid capture_age_ms')
+        # Old captures did not carry RX age: preserve replay but mark its qualification.
+        capture_valid = age is None or age <= 15
         identity = (row.get('reference', 132), row.get('local', 133))
-        if self.context is None or row.get('reset') or identity != self.identity:
+        if self.context is None or row.get('reset') or identity != self.identity or period != self.active_period:
             self.close()
-            self.context = self.lib.replay_new(self.window, self.period, *identity)
+            self.context = self.lib.replay_new(self.window, period, *identity)
             if not self.context:
                 raise ValueError('invalid identity or clock configuration')
             self.identity = identity
+            self.active_period = period
         output = ctypes.create_string_buffer(1024)
         count = self.lib.replay_step(self.context, row['sequence'], row['reference_tx_dtu'], row['local_rx_dtu'],
-                                     row['uptime_ms'], row.get('one_way_dtu', -1), row.get('delay_age_ms', 0), output, len(output))
+                                     row['uptime_ms'], int(capture_valid), row.get('one_way_dtu', -1), row.get('delay_age_ms', 0), output, len(output))
         if not 0 < count < len(output):
             raise ValueError('replay output overflow')
-        return json.loads(output.value)
+        return dict(json.loads(output.value), sample_period_ms=period, capture_valid=capture_valid if age is not None else None,
+                    capture_validity='unknown; assumed for legacy replay' if age is None else 'valid' if capture_valid else 'invalid')
 
     def close(self):
         if self.context:
@@ -125,7 +138,7 @@ def build_library(directory):
     library.replay_new.restype = ctypes.c_void_p
     library.replay_free.argtypes = [ctypes.c_void_p]
     library.replay_step.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_ulonglong, ctypes.c_ulonglong,
-                                   ctypes.c_uint, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+                                   ctypes.c_uint, ctypes.c_uint, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
     return library
 
 
@@ -147,7 +160,7 @@ def main():
             x = phase = 0
             try:
                 for row in observations(path, args.period_ms):
-                    if row.get('reset'):
+                    if row.get('reset') or (last and row.get('sample_period_ms', args.period_ms) != last.get('sample_period_ms', args.period_ms)) or row.get('capture_age_ms', 0) is not None and row.get('capture_age_ms', 0) > 15:
                         points, last, x, phase = [], None, 0, 0
                     if last:
                         dt = delta(row['reference_tx_dtu'], last['reference_tx_dtu'])
@@ -165,7 +178,7 @@ def main():
                             points, x, phase = [(0, 0)], 0, 0
                     else:
                         points.append((0, 0))
-                    last = row
+                    last = row if row.get('capture_age_ms') is None or row['capture_age_ms'] <= 15 else None
                     result = replay.feed(row)
                     records.append(result)
                     if not args.summary:

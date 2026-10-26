@@ -73,3 +73,31 @@ class ClockReplay(unittest.TestCase):
         self.assertEqual([row['sequence'] for row in rows], [42, 43, 0])
         self.assertEqual([row['reset'] for row in rows], [True, False, True])
         self.assertTrue(all(row['local'] == 141 for row in rows))
+
+    def test_capture_age_and_period_follow_production_clock_validity(self):
+        model = replay.Replay(self.library)
+        try:
+            for period in (100, 2000, 500):
+                for i in range(35):
+                    t = i*period*replay.MS
+                    row = dict(sequence=i, reference_tx_dtu=(100000+t)&replay.MASK,
+                               local_rx_dtu=(800000+t+t*15000//1000000000)&replay.MASK,
+                               uptime_ms=10000+i*period, sample_period_ms=period, capture_age_ms=2)
+                    value = model.feed(row)
+                self.assertTrue(value['fit_applied'])
+                self.assertEqual(value['sample_period_ms'], period)
+                self.assertEqual(value['regression_ppb'], 15000)
+                invalid = model.feed(dict(row, capture_age_ms=16))
+                self.assertEqual(invalid['capture_validity'], 'invalid')
+                self.assertEqual(invalid['result'], 0)  # Ignored; does not refresh the prior mapping.
+                self.assertEqual(invalid['count'], value['count'])
+            legacy = model.feed(dict(row, capture_age_ms=None))
+            self.assertIsNone(legacy['capture_valid'])
+            for bad in (-1, 65536, True):
+                with self.assertRaises(ValueError):
+                    model.feed(dict(row, capture_age_ms=bad))
+            for bad in (0, 2001, True):
+                with self.assertRaises(ValueError):
+                    model.feed(dict(row, sample_period_ms=bad))
+        finally:
+            model.close()

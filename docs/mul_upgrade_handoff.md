@@ -302,3 +302,10 @@ version1 records with zero88..149, labeling capture age unknown. Clock sample pe
 uses the common transaction field in version2 (0 means compatibility1000ms).
 Consumer parser/publication update and STM32 schema8 are next; no StageC completion
 claim until the complete compatible revision set/builds/replays pass.
+
+Clock replay refinement: production-C replay now honors recorded sample_period_ms
+and capture_age_ms. Age>15ms is ignored by the estimator, preserving the previous
+mapping without refreshing it (not forcing a reset); old records retain unknown
+capture validity and use CLI period. Offline polynomial diagnostics discard stale
+captures too. Five replay tests and full portable sanitizer suite pass, including
+100/500/2000ms input and explicit type10 v1/v2 codec compatibility.
