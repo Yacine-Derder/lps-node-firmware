@@ -302,3 +302,25 @@ void test_mulOnlyRemovedModeCommandsNeverMutateOrEnableRadio(void) {
  for(unsigned i=0;i<7;i++){memory[10]=i<5?i:i==5?200:255;checksum();cfgInit();boot.mode=memory[10];uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlRequest(true));}
 #endif
 }
+
+void test_experimentalReplySettingsPersistValidateBudgetsAndRequireRfOff(void) {
+ send(":off\n");apply();send(":cfg set profile experimental\n");
+ unsigned before=writes;send(":cfg set twr_reply_ms 5\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":cfg set tx_lead_us 1000\n:cfg set rx_budget_us 500\n:cfg set twr_reply_ms 5\n");
+ mulSchedule_t s;TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&s));TEST_ASSERT_EQUAL(5,mulScheduleReplyMs(&s));
+ before=writes;send(":cfg set twr_reply_ms 7\n");TEST_ASSERT_EQUAL(before,writes);
+ cfgInit();TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&s));TEST_ASSERT_EQUAL(5,mulScheduleReplyMs(&s));
+ send(":cfg set alr_alr_twr off\n");TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&s));TEST_ASSERT_EQUAL(5,mulScheduleReplyMs(&s));TEST_ASSERT_FALSE(mulScheduleAlrRanging(&s));
+ send(":cfg set alr_alr_twr on\n:on\n");apply();before=writes;
+ send(":cfg set twr_reply_ms 10\n");TEST_ASSERT_EQUAL(before,writes);
+}
+
+void test_replyFlagsAreFingerprintBoundAndReservedCodesFailClosed(void) {
+ mulSchedule_t s,decoded;mulScheduleLegacy(&s,132,133,10);mulScheduleExperimental(&s);
+ uint32_t baseline=mulScheduleFingerprint(&s);s.rangingFlags=3;
+ uint8_t bytes[32];TEST_ASSERT_TRUE(mulScheduleEncode(bytes,&s));TEST_ASSERT_TRUE(mulScheduleDecode(bytes,&decoded));
+ TEST_ASSERT_EQUAL(10,mulScheduleReplyMs(&decoded));TEST_ASSERT_NOT_EQUAL(baseline,mulScheduleFingerprint(&decoded));
+ s.rangingFlags=5;TEST_ASSERT_NOT_NULL(mulScheduleValidate(&s));s.txLeadUs=500;s.rxBudgetUs=500;
+ TEST_ASSERT_TRUE(mulScheduleEncode(bytes,&s));TEST_ASSERT_TRUE(mulScheduleDecode(bytes,&decoded));TEST_ASSERT_EQUAL(5,mulScheduleReplyMs(&decoded));
+ s.rangingFlags=7;TEST_ASSERT_FALSE(mulScheduleEncode(bytes,&s));s.rangingFlags=8;TEST_ASSERT_FALSE(mulScheduleEncode(bytes,&s));
+}

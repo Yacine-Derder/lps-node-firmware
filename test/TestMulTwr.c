@@ -948,3 +948,47 @@ void test_experimentalReferencePeriodAndDisabledRangingDoNotUseFixedWindows(void
   TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_EQUAL_UINT(sent,radios[0].sends);
  }
 }
+
+void test_experimentalTwrReplyCandidatesCompleteWithActualScheduledMarkers(void) {
+ const unsigned replies[]={20,10,5},codes[]={0,2,4};
+ const int32_t skews[]={0,150000,-150000};
+ for(unsigned a=0;a<3;a++)for(unsigned b=0;b<3;b++) {
+  setUp();scenario(skews[b],2131);multiConfig(4,0,10);
+  mulSchedule_t *s=&multiConfiguration.mulSchedule;mulScheduleExperimental(s);
+  s->txLeadUs=500;s->rxBudgetUs=2000;s->airtimeUs=400;s->rangingFlags=1|codes[a];
+  TEST_ASSERT_NULL(mulScheduleValidate(s));TEST_ASSERT_EQUAL(replies[a],mulScheduleReplyMs(s));
+  unsigned owner=mulScheduleSyncOwner(s,exchangeSequence,0);
+  TEST_ASSERT_TRUE(mulTwrConfigureSchedule(ctx(0),s,owner,0));
+  TEST_ASSERT_TRUE(mulTwrConfigureSchedule(ctx(1),s,owner,0));
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,exchangeSequence,origins[0]));
+  completeExchange();TEST_ASSERT_TRUE(ctx(1)->delayValid);TEST_ASSERT_UINT32_WITHIN(1,flight,ctx(1)->tof);
+  int64_t localReply=mulTimestampDifference(ctx(1)->stamps[2],ctx(1)->stamps[1]);
+  TEST_ASSERT_INT64_WITHIN(511,replies[a]*MS,localReply);
+  TEST_ASSERT_EQUAL(3,radios[0].sends);TEST_ASSERT_EQUAL(2,radios[1].sends);
+  TEST_ASSERT_FALSE(ctx(0)->active);TEST_ASSERT_FALSE(ctx(1)->active);
+ }
+}
+void test_experimentalTwrAfterSpiLeadFailureAndTimeoutRecoverNextCycle(void) {
+ scenario(0,2131);multiConfig(4,0,10);mulSchedule_t *s=&multiConfiguration.mulSchedule;
+ mulScheduleExperimental(s);s->txLeadUs=500;s->rxBudgetUs=2000;s->airtimeUs=400;s->rangingFlags=5;
+ unsigned owner=mulScheduleSyncOwner(s,5,0);
+ TEST_ASSERT_TRUE(mulTwrConfigureSchedule(ctx(0),s,owner,0));TEST_ASSERT_TRUE(mulTwrConfigureSchedule(ctx(1),s,owner,0));
+ TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+ radios[1].setupLag=4*MS;transfer(0);
+ TEST_ASSERT_FALSE(ctx(1)->active);TEST_ASSERT_EQUAL(0,radios[1].sends);TEST_ASSERT_TRUE(radios[1].receiving);
+ advance(800*MS);dispatch(0,eventTimeout);TEST_ASSERT_FALSE(ctx(0)->active);
+ // A failed exchange must not poison the subsequent configured owner/cycle.
+ radios[1].setupLag=0;exchangeSequence=6;framePhysical=SEC;
+ origins[0]=clockAt(0,SEC);origins[1]=clockAt(1,SEC+flight);advance(SEC+630*MS);
+ owner=mulScheduleSyncOwner(s,6,0);
+ TEST_ASSERT_TRUE(mulTwrConfigureSchedule(ctx(0),s,owner,0));TEST_ASSERT_TRUE(mulTwrConfigureSchedule(ctx(1),s,owner,0));
+ TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,6,origins[0]));completeExchange();
+ TEST_ASSERT_TRUE(ctx(1)->delayValid);TEST_ASSERT_EQUAL(6,ctx(1)->estimateId);
+}
+
+void test_shortReplyMathIsExplicitAndCannotWeakenLegacyTimingAcceptance(void) {
+ const uint64_t t[6]={0,100,5*MS+100,5*MS+200,10*MS+200,10*MS+300};uint32_t tof=0;
+ TEST_ASSERT_FALSE(mulTwrCalculate(t,&tof));
+ TEST_ASSERT_TRUE(mulTwrCalculateReply(t,&tof,5));TEST_ASSERT_EQUAL(100,tof);
+ TEST_ASSERT_FALSE(mulTwrCalculateReply(t,&tof,7));
+}

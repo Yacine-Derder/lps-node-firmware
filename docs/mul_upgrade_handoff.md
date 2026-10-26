@@ -574,3 +574,37 @@ lead/processing/airtime/guard validation, preserved compatibility20/5/50 default
 and real adapter delayed-TX/fault tests. Then bind the deterministic planner,
 RLR roster/targets and versioned persistent plan to the radio owner instead of
 running fixed and generated reservations together. No pause for hardware required.
+
+## Stage D actual reply-interval integration
+
+LPS actual five-message TWR now uses profile3 configured20/10/5ms replies; the
+schedule stores selector in formerly reserved flags bits1..2 (code0/1/2,3 invalid),
+bit0AA retained. This is fingerprint-bound and old parsers reject new bits. Codec2
+and RF envelope3 remain; no silent old-node compatibility claim. Native tests
+prove defaults20, invalid selectors, budget rejection and fingerprint/codec binding.
+LPS RF-OFF `cfg set twr_reply_ms` persists through existing32-byte schedule TLV;
+AA on/off preserves reply bits. Preview/short USB help lines report the interval.
+
+Actual adapter min lead follows explicit experimental txLeadUs, checked before
+and after SPI; default/legacy profiles retain5ms. Experimental step deadline is
+reply+ceil(airtime+processing+guard), and final-window guard is that rounded tail.
+Historical20/5/50ms timing remains exactly for profiles1/2. Fixed150ms AA windows
+still own operations; automatic planner/ALR–RLR integration NOT complete.
+
+Audit found extra fixed20ms assumptions: math interval acceptance15..30ms and
+RESULT interval30..60ms. New mulTwrCalculateReply/mulTwrResultsReply scale those
+bounds for5/10/20 while old API wrappers call20 and retain acceptance. Equations,
+antenna timestamps and power correction unchanged; interval<=30ms still bounds
+64-bit products. New fake-radio tests exercise all five real messages at20/10/5ms
+with0/±150000ppb independent clocks, ToF, exact reply markers, configured500us lead,
+2ms processing budget,4ms SPI injected failure, timeout and next-cycle recovery.
+5ms math is accepted only by explicit API, rejected by old20ms wrapper.
+
+Portable sanitizer suite passes;221 production native+221 sanitizer tests pass10ms.
+Clean CH5 image text117168/data1056/bss11780; flash118224/free12848,
+RAM12828/free3556. No new state/stack/queue allocation. Logs:
+/tmp/mul-reply-final-tests.log,/tmp/mul-reply-core-final.log,
+/tmp/mul-reply-build.log,/tmp/mul-reply-resources.json.
+Next: commit/export shared core to STM32/ESP, add STM RF-OFF matching reply setter/
+preview/persistence/guards so its passive schedule fingerprint follows ALRs. Then
+connect versioned persistent plan and generated radio ownership, plus StageE RLR TX.

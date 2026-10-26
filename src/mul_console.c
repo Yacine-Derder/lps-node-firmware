@@ -103,13 +103,17 @@ static void command(void) {
  }
  if(count==2&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"show")){page=show;pageIndex=0;return;}
  if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&
-    (!strcmp(w[2],"tx_lead_us")||!strcmp(w[2],"rx_budget_us")||!strcmp(w[2],"airtime_us")||!strcmp(w[2],"guard_us")||!strcmp(w[2],"alr_alr_twr"))) {
+    (!strcmp(w[2],"tx_lead_us")||!strcmp(w[2],"rx_budget_us")||!strcmp(w[2],"airtime_us")||!strcmp(w[2],"guard_us")||!strcmp(w[2],"alr_alr_twr")||!strcmp(w[2],"twr_reply_ms"))) {
   if(uwbControlRequested()||uwbControlRunning()){reply("ERR timing requires RF OFF acknowledged");return;}
   mulSchedule_t spec;if(!cfgMulScheduleRead(node,&spec)||spec.profile!=MUL_PROFILE_EXPERIMENTAL){reply("ERR select profile experimental first");return;}
   if(!strcmp(w[2],"alr_alr_twr")) {
-   if(!strcmp(w[3],"on"))spec.rangingFlags=MUL_RANGING_ALR_ALR;
-   else if(!strcmp(w[3],"off"))spec.rangingFlags=0;
+   if(!strcmp(w[3],"on"))spec.rangingFlags|=MUL_RANGING_ALR_ALR;
+   else if(!strcmp(w[3],"off"))spec.rangingFlags&=~MUL_RANGING_ALR_ALR;
    else {reply("ERR alr_alr_twr: on/off");return;}
+  }else if(!strcmp(w[2],"twr_reply_ms")) {
+   unsigned code=!strcmp(w[3],"20")?0:!strcmp(w[3],"10")?2:!strcmp(w[3],"5")?4:255;
+   if(code==255){reply("ERR twr_reply_ms:20/10/5");return;}
+   spec.rangingFlags=(spec.rangingFlags&~MUL_RANGING_REPLY_MASK)|code;
   }else {
    uint32_t n;if(!revision(w[3],&n)||n>UINT16_MAX){reply("ERR invalid timing number");return;}
    if(!strcmp(w[2],"tx_lead_us"))spec.txLeadUs=(uint16_t)n;
@@ -258,7 +262,8 @@ bool mulConsolePoll(void) {
   "cfg set profile experimental; HW unverified",
   "cfg set tx_lead_us/rx_budget_us number",
   "cfg set airtime_us/guard_us number",
-  "cfg set alr_alr_twr on/off; RF OFF"};
+  "cfg set alr_alr_twr on/off; RF OFF",
+  "cfg set twr_reply_ms 20/10/5; RF OFF"};
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255;
  bool valid=saved(&node,&role,&ref,&fol),last=true,enabled=false;
  if(page==answer)snprintf(line,sizeof(line),"%s",message);
@@ -274,7 +279,7 @@ bool mulConsolePoll(void) {
  if(page==peers&&pageIndex>0) {
   mulSchedule_t spec;if(cfgMulScheduleRead(node,&spec)&&spec.profile==MUL_PROFILE_EXPERIMENTAL) {
    if(pageIndex==spec.count+3){snprintf(line,sizeof(line),"TIMING lead=%u process=%u air=%u us",spec.txLeadUs,spec.rxBudgetUs,spec.airtimeUs);last=false;}
-   else if(pageIndex==spec.count+4)snprintf(line,sizeof(line),"TIMING guard=%u AA=%u experimental=1",spec.guard100us*100,mulScheduleAlrRanging(&spec));
+   else if(pageIndex==spec.count+4)snprintf(line,sizeof(line),"TIMING guard=%u AA=%u reply=%u experimental=1",spec.guard100us*100,mulScheduleAlrRanging(&spec),mulScheduleReplyMs(&spec));
   }
  }
  if(page==clockPage) {

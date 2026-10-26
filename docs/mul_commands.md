@@ -458,3 +458,27 @@ This is board-design evidence, not inspection of each robot's fitted device.
 The legacy configuration allocation remains100 bytes; no extension region is
 written by the current firmware. New scheduler persistence must define its region,
 version, failure/rollback rules and hardware assumption explicitly.
+
+## Experimental five-message TWR reply timing
+
+Profile3 adds RF-OFF-only `cfg set twr_reply_ms 20|10|5`. Default remains20.
+The reply must cover configured TX lead, processing, airtime and guard while AA
+ranging is enabled.5ms therefore requires explicitly lower budgets; for example,
+lead1000/rx500/air1000/guard100us passes the software check. These remain unmeasured
+hardware budgets. Both before- and after-SPI delayed-TX lead checks are retained.
+The actual five-message adapter uses the selected interval, derives its step
+failure deadline and final-packet guard from the explicit experimental budgets,
+and validates received timing using the same interval. Legacy APIs/profiles retain
+20ms replies,5ms lead,50ms step timeout and their original timing acceptance.
+
+The32-byte schedule stays codec2, with flags bit0=AA and bits1..2 reply selector
+(0=20ms,1=10ms,2=5ms,3 invalid). Other bits remain rejected. Flags participate in
+the fingerprint; older decoders reject the newly assigned bits, and differently
+configured participants reject each other's frames. Update and configure all ALRs
+and the passive receiver consistently. Roster preview reports `reply` in ms.
+
+This milestone still uses the two original650/800ms maintenance windows. It does
+not yet enable generated reservations or active ALR–RLR ranging. Their integration
+must replace fixed-window ownership rather than run alongside it. Software tests
+cover complete20/10/5ms exchanges with±150ppm clocks, precise markers, after-SPI
+failure, timeout and recovery; they do not establish hardware reliability/accuracy.

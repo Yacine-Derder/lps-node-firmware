@@ -25,13 +25,27 @@ static const mulNetwork_t *networkFor(const mulTwr_t *twr,mulNetwork_t *pair) {
 #define twrNetwork networkFor(twr,&pairNetwork)
 static unsigned pollMs(const mulTwr_t *twr){return twr->multiProfile?mulScheduleSyncPollMs(twr->syncWindow):MUL_TWR_POLL_MS;}
 static unsigned endMs(const mulTwr_t *twr){return twr->multiProfile?mulScheduleSyncEndMs(twr->syncWindow):MUL_TWR_END_MS;}
+static const mulSchedule_t *experimental(const mulTwr_t *twr) {
+ const mulSchedule_t *s=twr->multiProfile?(const mulSchedule_t *)twrContext:NULL;
+ return s&&s->profile==MUL_PROFILE_EXPERIMENTAL?s:NULL;
+}
+static uint64_t leadDtu(const mulTwr_t *twr) {
+ const mulSchedule_t *s=experimental(twr);
+ return s?((uint64_t)s->txLeadUs*MUL_TWR_DTU_PER_MS+999)/1000:5*MUL_TWR_DTU_PER_MS;
+}
+static unsigned replyMs(const mulTwr_t *twr){return mulScheduleReplyMs(experimental(twr));}
+static unsigned tailMs(const mulTwr_t *twr) {
+ const mulSchedule_t *s=experimental(twr);
+ return s?(s->airtimeUs+s->rxBudgetUs+100u*s->guard100us+999)/1000:20;
+}
+static unsigned stepMs(const mulTwr_t *twr){return experimental(twr)?replyMs(twr)+tailMs(twr):MUL_TWR_STEP_MS;}
 static bool due(const mulTwr_t *twr,uint32_t cycle) {
  return twr->multiProfile?mulScheduleSyncOwner((const mulSchedule_t *)twrContext,cycle,twr->syncWindow)==twr->followerSlot:mulTwrDue(cycle);
 }
 static bool evaluate(mulTwr_t *twr)
 {
   uint32_t raw,corrected;
-  if (!mulTwrResults(twr->stamps,twr->power,&raw,&corrected)) return false;
+  if (!mulTwrResultsReply(twr->stamps,twr->power,&raw,&corrected,replyMs(twr))) return false;
   twr->rawTof=(uint16_t)raw;
   twr->candidatePowerCorrected=corrected != UINT32_MAX;
   twr->candidateTof=(uint16_t)(twr->candidatePowerCorrected ? corrected : raw);
@@ -97,8 +111,8 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   // Same raw-DX_TIME/live-TX_ANTD contract as Stage 2; never use immediate TX.
   uint16_t antenna = dwSpiRead16(dev, TX_ANTD, NO_SUB);
   dwTime_t raw = {.full=mulTimestampMask((mulTimestampMask(target-antenna)+511) & ~UINT64_C(511))};
-  if (mulTimestampDifference(raw.full, hardwareNow(dev)) < (int64_t)(5*MUL_TWR_DTU_PER_MS) ||
-      mulTimestampDifference(twr->windowEnd, target) < (int64_t)(20*MUL_TWR_DTU_PER_MS)) {
+  if (mulTimestampDifference(raw.full, hardwareNow(dev)) < (int64_t)leadDtu(twr) ||
+      mulTimestampDifference(twr->windowEnd, target) < (int64_t)(tailMs(twr)*MUL_TWR_DTU_PER_MS)) {
     mulTwrCancel(twr, dev, "late", false);
     return false;
   }
@@ -127,13 +141,13 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
     if(!mulMultiTwrEncode(frame,(const mulSchedule_t *)twrContext,twr->syncWindow,&packet))return false;
   } else if(!mulTwrEncodeNetwork(twrNetwork,frame,&packet))return false;
   dwSetData(dev,frame,length);
-  if (mulTimestampDifference(raw.full, hardwareNow(dev)) < (int64_t)(5*MUL_TWR_DTU_PER_MS)) {
+  if (mulTimestampDifference(raw.full, hardwareNow(dev)) < (int64_t)leadDtu(twr)) {
     mulTwrCancel(twr, dev, "late_setup", false);
     return false;
   }
   twr->stage = type;
   twr->txPending = true;
-  twr->deadline = mulTimestampMask(twr->expectedTx + MUL_TWR_STEP_MS*MUL_TWR_DTU_PER_MS);
+  twr->deadline = mulTimestampMask(twr->expectedTx + stepMs(twr)*MUL_TWR_DTU_PER_MS);
   dwStartTransmit(dev);
   if (dwSpiRead16(dev, SYS_STATUS, 3) & 0x0408) {
     mulTwrCancel(twr, dev, "delayed_start", false);
@@ -278,7 +292,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     // Commit acquisition time only after RESULT, backdated from stored P2.
     twr->stamps[0] = packet.stamps[0];
     twr->stamps[1] = capture.corrected; twr->power[0]=capture.power;
-    sendPacket(twr, dev, mulTwrResponse, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
+    sendPacket(twr, dev, mulTwrResponse, mulTimestampMask(rx.full+replyMs(twr)*MUL_TWR_DTU_PER_MS));
     return true;
   }
   unsigned int prefix = packet.type == mulTwrResponse ? 1 : packet.type == mulTwrFinal ? 3 :
@@ -291,27 +305,27 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     return true;
   }
   if (packet.type == mulTwrResponse) {
-    if (!interval(packet.stamps[2],packet.stamps[1])) {
+    if (!intervalReply(packet.stamps[2],packet.stamps[1],replyMs(twr))) {
       mulTwrCancel(twr, dev, "response_interval", true);
       return true;
     }
     twr->stamps[1] = packet.stamps[1]; twr->stamps[2] = packet.stamps[2]; twr->stamps[3] = capture.corrected;
     twr->power[0]=packet.power[0]; twr->power[1]=capture.power;
-    sendPacket(twr, dev, mulTwrFinal, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
+    sendPacket(twr, dev, mulTwrFinal, mulTimestampMask(rx.full+replyMs(twr)*MUL_TWR_DTU_PER_MS));
   } else if (packet.type == mulTwrFinal) {
     twr->stamps[3] = packet.stamps[3]; twr->stamps[4] = packet.stamps[4]; twr->stamps[5] = capture.corrected;
     twr->power[1]=packet.power[1]; twr->power[2]=capture.power;
     if (!evaluate(twr)) mulTwrCancel(twr, dev, "intervals", true);
-    else sendPacket(twr, dev, mulTwrReport, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
+    else sendPacket(twr, dev, mulTwrReport, mulTimestampMask(rx.full+replyMs(twr)*MUL_TWR_DTU_PER_MS));
   } else if (packet.type == mulTwrReport) {
     twr->stamps[5] = packet.stamps[5]; twr->power[2]=packet.power[2];
-    if (!interval(packet.txTimestamp,packet.stamps[5]) || !evaluate(twr))
+    if (!intervalReply(packet.txTimestamp,packet.stamps[5],replyMs(twr)) || !evaluate(twr))
       mulTwrCancel(twr, dev, "range", true);
-    else sendPacket(twr, dev, mulTwrResult, mulTimestampMask(rx.full+MUL_TWR_REPLY_MS*MUL_TWR_DTU_PER_MS));
+    else sendPacket(twr, dev, mulTwrResult, mulTimestampMask(rx.full+replyMs(twr)*MUL_TWR_DTU_PER_MS));
   } else if (packet.type == mulTwrResult) {
     int64_t resultInterval = mulTimestampDifference(packet.txTimestamp, twr->stamps[4]);
-    if (resultInterval < (int64_t)(30*MUL_TWR_DTU_PER_MS) ||
-        resultInterval > (int64_t)(60*MUL_TWR_DTU_PER_MS) ||
+    if (resultInterval < (int64_t)(3*replyMs(twr)*MUL_TWR_DTU_PER_MS/2) ||
+        resultInterval > (int64_t)(3*replyMs(twr)*MUL_TWR_DTU_PER_MS) ||
         !evaluate(twr) || twr->candidateTof != packet.tof) {
       mulTwrCancel(twr, dev, "result", true);
     } else {
