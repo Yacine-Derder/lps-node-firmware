@@ -660,3 +660,56 @@ Immediate next work is the rest of D/E, not another reply-only refactor:
 Goal remains active and overall work incomplete. This is a verified context
 checkpoint; user did not request a pause or a hardware checkpoint. Preserve the
 unrelated docs/mul_core.md edits. Other worktrees are clean once pushes complete.
+
+## Stage D full-plan journal and LPS backend checkpoint
+
+New canonical mul_plan_store.[ch] stores complete64-byte planner config plus
+selected-profile state in two96-byte records at128/256; old0..99 stays untouched.
+Header magic/version/selected/generation at0..11, plan12..75, CRC76, zero80..91,
+commit92. EEPROM inactive slot invalidation ->body ->commit-last ->exact readback.
+Byte-cut tests cover all100 write bytes for initial publication and three slot
+reuse rounds, old/new selected state, no-op idempotence, lost postcommit read ACK,
+generation32 rollover, CRC and IO failures. No physical EEPROM was accessed.
+
+LPS cfgMulPlanLoad/Save backend shares cfg.c writer lock and requires acknowledged
+RF OFF for physical IO; failed saves mark storage uncertain since commit may have
+succeeded despite a missing ACK. New forward headers/units compile production
+codecs and planner. TestMulConfig simulates8192-byte EEPROM and tests real cfg
+backend preservation of original100 bytes, reboot rollback, selection tombstones,
+no-op writes and RF guards. Native test dependency headers also updated in
+TestUsbConsole. Caller-owned192-byte IO workspace avoids large automatic arrays:
+Cortex-M0 -Os journal load144/save160/decode80 byte individual frames, object830B.
+Review complete caller stack before wiring CLI; individual frames are not a
+whole-call-chain bound. Earlier stack-heavy draft was replaced, not shipped.
+
+IMPORTANT: this is storage/backend integration, not live plan activation. No boot
+journal scan/cache, CLI plan editing/selection or generated RF owner is connected
+yet. The linker currently drops unreachable journal APIs/workspace, so firmware
+image size remains unchanged; this does NOT prove resource acceptance once active.
+Current STM32/ESP snapshots remain e7f3518; new journal APIs are not yet exported.
+
+Next concrete integration (do this rather than another utility-only unit):
+1. Load/cache selected journal once at boot while RF stopped; never perform its
+   I2C loads in deadline-critical UWB callbacks. Selected generated plan must block
+   legacy owner until the generated path is fully wired; IO/corruption fail closed.
+   Add bounded RF-OFF plan/roster/target/priority setters and preview. Define reset
+   semantics: cfgReset currently only resets legacy magic and must not leave an
+   unexpectedly selected journal active after full reset. Preserve old config.
+2. Bind full-plan fingerprint to new RF envelope/version and STM32 persistent
+   config. Do not rely on the broadcast-only fingerprint to bind RLR roster/rates.
+3. Replace fixed windows in ALR owner with actual generated start/poll/end and pair
+   ownership. Existing twr.syncWindow is1 bit and attempted/id assumes one operation
+   per cycle/window: support up to32 operation indices without replaying one cycle's
+   first operation. Session cycle+operation+participant binding must be explicit.
+4. Reuse five-message codec/math but keep protocol initiator/responder separate
+   from ALR reference/follower roles for ALR–RLR. Generic AR results must NOT overwrite
+   follower's committed AA propagation-delay cache; preserve source/epoch/age and
+   publish AR raw/quality separately. Implement DW3000 assigned-slot TX and faults.
+5. Then StageF MCS/noise/geometry/measured-step ESP EKF per user clarification, G.
+
+Tests/logs at this checkpoint: portable full sanitizer suite including journal
+passed (/tmp/mul-plan-store-core-final.log); LPS222 production native+222 sanitizer
+at10ms (/tmp/mul-plan-backend-final-tests.log); full native-source suite246 passes
+(/tmp/mul-plan-backend-reference.log).
+CH5 build/image check passes, unchanged flash118224/RAM12828 because new APIs are
+not reachable from the live radio/console yet. Goal remains active, D/E incomplete.

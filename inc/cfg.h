@@ -49,6 +49,10 @@ typedef enum {
 } ConfigField;
 
 void cfgInit();
+#include "mul_plan_store.h"
+// Separate EEPROM journal; physical load/save require acknowledged RF OFF.
+mulPlanStoreResult_t cfgMulPlanLoad(mulStoredPlan_t *stored);
+bool cfgMulPlanSave(const mulRangingPlan_t *plan,bool selected,uint32_t *generation);
 bool cfgPendingRestart(void);
 bool cfgStorageReady(void);
 bool cfgRfEnabled(bool *enabled);

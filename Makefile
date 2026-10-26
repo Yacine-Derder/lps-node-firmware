@@ -65,6 +65,8 @@ OBJS+=vendor/libdw1000/src/libdw1000.o vendor/libdw1000/src/libdw1000Spi.o
 
 OBJS+=src/mul_clock_fit.o src/mul_clock_workspace.o src/dwOps.o src/mul_schedule.o src/mul_multi_protocol.o
 
+OBJS+=src/mul_plan_store.o src/mul_ranging_plan.o
+
 ALL_BUILD_OBJS := $(OBJS)
 OBJS := $(filter-out src/uwb_twr_anchor.o src/uwb_twr_tag.o src/uwb_sniffer.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o src/lpp.o src/lps25h.o src/production_test.o,$(OBJS))
 

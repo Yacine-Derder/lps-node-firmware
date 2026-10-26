@@ -4,6 +4,8 @@
  * parser together; no duplicate RX implementation or emulated byte queue. */
 #include "unity.h"
 #include "cfg.h"
+#include "mul_plan_store.h"
+#include "mul_ranging_plan.h"
 #include "mul_common.h"
 #include "mul_schedule.h"
 #include "mul_console.h"

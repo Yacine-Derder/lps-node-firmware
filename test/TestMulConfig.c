@@ -3,6 +3,8 @@
 /* Actual legacy EEPROM TLV + additive role migration + console parser. */
 #include "unity.h"
 #include "cfg.h"
+#include "mul_plan_store.h"
+#include "mul_ranging_plan.h"
 #include "mul_common.h"
 #include "mul_schedule.h"
 #include "mul_console.h"
@@ -21,7 +23,7 @@ bool uwbSetEnabled(bool enabled){return uwbControlRequest(enabled);}
 void dwIdle(dwDevice_t *dev){(void)dev;TEST_ASSERT_TRUE(owner);stops++;}
 void dwClearAllStatus(dwDevice_t *dev){(void)dev;TEST_ASSERT_TRUE(owner);clears++;}
 bool usbcommTryWrite(const char *data,unsigned len){TEST_ASSERT_TRUE(len<=48);if(!txReady)return false;TEST_ASSERT_TRUE(strlen(output)+len<sizeof(output));strncat(output,data,len);return true;}
-static uint8_t memory[100];static unsigned writes;static int budget;static bool badRead,reenter;
+static uint8_t memory[8192];static unsigned writes;static int budget;static bool badRead,reenter;
 bool eepromRead(int address,void *data,size_t n) {if(badRead)return false;if(address<0||(size_t)address+n>sizeof(memory))return false;memcpy(data,memory+address,n);return true;}
 bool eepromWrite(int address,void *data,size_t n) {writes++;TEST_ASSERT_EQUAL(0,critical);if(reenter){reenter=false;TEST_ASSERT_FALSE(cfgWriteU8(cfgMode,0));TEST_ASSERT_FALSE(cfgStorageReady());TEST_ASSERT_TRUE(cfgPendingRestart());}if(budget==0)return false;if(budget>0)budget--;if(address<0||(size_t)address+n>sizeof(memory))return false;memcpy(memory+address,data,n);return true;}
 void HAL_Delay(uint32_t ms) {(void)ms;}
@@ -68,7 +70,7 @@ void test_fragmentedPrefixedConsoleCannotLeakIntoLegacyOrMutateOnOverflow(void) 
 }
 
 void test_tornExistingConfigurationIsRetainedAndRadioIdlesWithoutDefaultErase(void) {
- memory[20]^=1;uint8_t damaged[100];memcpy(damaged,memory,sizeof(memory));writes=0;
+ memory[20]^=1;uint8_t damaged[sizeof(memory)];memcpy(damaged,memory,sizeof(memory));writes=0;
  cfgInit();TEST_ASSERT_EQUAL(0,writes);TEST_ASSERT_EQUAL_MEMORY(damaged,memory,sizeof(memory));
  uint8_t mode=0;TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&mode));TEST_ASSERT_EQUAL(255,mode);
  uint8_t role,reference,follower;TEST_ASSERT_FALSE(cfgMulRead(0,&role,&reference,&follower));
@@ -82,7 +84,7 @@ void test_unreadableExistingConfigurationSelectsIdleWithoutWriting(void) {
 }
 
 void test_checksumValidTruncatedTlvCannotEscapeEepromImage(void) {
- memory[18]=255;checksum();uint8_t damaged[100];memcpy(damaged,memory,sizeof(memory));writes=0;
+ memory[18]=255;checksum();uint8_t damaged[sizeof(memory)];memcpy(damaged,memory,sizeof(memory));writes=0;
  cfgInit();TEST_ASSERT_EQUAL(0,writes);TEST_ASSERT_EQUAL_MEMORY(damaged,memory,sizeof(memory));
  uint8_t mode=0;TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&mode));TEST_ASSERT_EQUAL(255,mode);
  uint8_t role,reference,follower;TEST_ASSERT_FALSE(cfgMulRead(0,&role,&reference,&follower));
@@ -323,4 +325,23 @@ void test_replyFlagsAreFingerprintBoundAndReservedCodesFailClosed(void) {
  s.rangingFlags=5;TEST_ASSERT_NOT_NULL(mulScheduleValidate(&s));s.txLeadUs=500;s.rxBudgetUs=500;
  TEST_ASSERT_TRUE(mulScheduleEncode(bytes,&s));TEST_ASSERT_TRUE(mulScheduleDecode(bytes,&decoded));TEST_ASSERT_EQUAL(5,mulScheduleReplyMs(&decoded));
  s.rangingFlags=7;TEST_ASSERT_FALSE(mulScheduleEncode(bytes,&s));s.rangingFlags=8;TEST_ASSERT_FALSE(mulScheduleEncode(bytes,&s));
+}
+
+void test_fullPlanJournalBackendRequiresAcknowledgedOffAndPreservesLegacyBytes(void) {
+ mulRangingPlan_t p={.replyMs=20,.maxUtilization=70};
+ mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
+ uint32_t generation=0;mulStoredPlan_t loaded;
+ TEST_ASSERT_FALSE(cfgMulPlanSave(&p,true,&generation));
+ TEST_ASSERT_EQUAL(mulPlanIoError,cfgMulPlanLoad(&loaded));
+ send(":off\n");apply();uint8_t prefix[100];memcpy(prefix,memory,sizeof(prefix));
+ TEST_ASSERT_EQUAL(mulPlanAbsent,cfgMulPlanLoad(&loaded));
+ TEST_ASSERT_TRUE(cfgMulPlanSave(&p,true,&generation));TEST_ASSERT_EQUAL(1,generation);
+ TEST_ASSERT_EQUAL_MEMORY(prefix,memory,sizeof(prefix));
+ TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanLoad(&loaded));TEST_ASSERT_TRUE(loaded.selected);
+ unsigned before=writes;TEST_ASSERT_TRUE(cfgMulPlanSave(&p,true,&generation));TEST_ASSERT_EQUAL(before,writes);
+ budget=1;TEST_ASSERT_FALSE(cfgMulPlanSave(&p,false,&generation));TEST_ASSERT_FALSE(cfgStorageReady());budget=-1;
+ cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanLoad(&loaded));TEST_ASSERT_TRUE(loaded.selected);
+ TEST_ASSERT_EQUAL_MEMORY(prefix,memory,sizeof(prefix));
+ TEST_ASSERT_TRUE(cfgMulPlanSave(&p,false,&generation));TEST_ASSERT_EQUAL(2,generation);
+ TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanLoad(&loaded));TEST_ASSERT_FALSE(loaded.selected);
 }

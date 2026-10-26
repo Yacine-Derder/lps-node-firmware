@@ -42,3 +42,6 @@ cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-p
 cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-pie \
  -I. tests/test_ranging_plan.c mul_ranging_plan.c mul_schedule.c mul_common.c -o "$work/ranging_plan"
 "$work/ranging_plan"
+cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-pie \
+ -I. tests/test_plan_store.c mul_plan_store.c mul_ranging_plan.c mul_schedule.c mul_common.c -o "$work/plan_store"
+"$work/plan_store"

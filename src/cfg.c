@@ -30,6 +30,7 @@
 #include "cfg.h"
 #include "eeprom.h"
 #include "uwb.h"
+#include "uwb_control.h"
 #include "task.h"
 
 typedef struct {
@@ -429,4 +430,30 @@ bool cfgMulClockRead(mulClockFitConfig_t *config) {
 bool cfgMulClockWrite(const mulClockFitConfig_t *config) {
  uint8_t bytes[MUL_CLOCK_CONFIG_BYTES];
  return mulClockFitConfigEncode(bytes,config)&&config->periodMs==1000&&mulStore(cfgMulClock,bytes,sizeof(bytes));
+}
+
+/* Full ranging plans use a separate commit-last journal, never the legacy image. */
+static bool planRead(void *ctx,unsigned at,void *out,size_t n) {
+ (void)ctx;return eepromRead((int)at,out,n);
+}
+static bool planWrite(void *ctx,unsigned at,const void *data,size_t n) {
+ (void)ctx;return eepromWrite((int)at,(void *)data,n);
+}
+static mulPlanStoreWorkspace_t planWorkspace;
+static const mulPlanStore_t planStorage={NULL,planRead,planWrite,&planWorkspace};
+mulPlanStoreResult_t cfgMulPlanLoad(mulStoredPlan_t *stored) {
+ if(uwbControlRequested()||uwbControlRunning())return mulPlanIoError;
+ taskENTER_CRITICAL();bool busy=writing||mulStorageUncertain;if(!busy)writing=true;taskEXIT_CRITICAL();
+ if(busy)return mulPlanIoError;
+ mulPlanStoreResult_t result=mulPlanStoreLoad(&planStorage,stored);writing=false;return result;
+}
+bool cfgMulPlanSave(const mulRangingPlan_t *plan,bool selected,uint32_t *generation) {
+ if(!generation||mulRangingPlanValidate(plan,NULL)||uwbControlRequested()||uwbControlRunning())return false;
+ taskENTER_CRITICAL();bool busy=writing||mulStorageUncertain;if(!busy)writing=true;taskEXIT_CRITICAL();
+ if(busy)return false;
+ bool ok=mulPlanStoreSave(&planStorage,plan,selected,generation);
+ // A failed final readback may follow a committed new state. Block activation
+ // until reboot/reload rather than claiming the old plan is still current.
+ if(!ok)mulStorageUncertain=true;
+ writing=false;return ok;
 }
