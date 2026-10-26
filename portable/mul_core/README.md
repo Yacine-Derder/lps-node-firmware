@@ -329,3 +329,13 @@ Boot activation and CLI/generated-radio integration remain pending; current
 firmware does not scan/select this journal automatically. No physical extension
 region is written by current runtime paths. See the engineering handoff before
 connecting it to the scheduler; never run fixed and generated owners concurrently.
+
+
+`mulMultiReceiverInitPlan` optionally reconstructs passive TDoA cycles from the
+full-plan RF4 broadcast envelope. The caller retains an immutable plan until
+reinitialization; completed cycles carry the full-plan fingerprint. The legacy
+initializer still accepts only its prior RF2/3 envelopes. Receiver initialization
+does not authorize any RLR transmission. Link `mul_plan_protocol.c` and
+`mul_ranging_plan.c` when using `mul_multi_receiver.c`, including legacy users.
+Telemetry type8/9 still describes the prior profiles; adapters must add explicit
+versioned generated-plan labels before forwarding RF4 observations as telemetry.

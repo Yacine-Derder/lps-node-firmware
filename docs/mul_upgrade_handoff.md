@@ -777,3 +777,23 @@ Logs:/tmp/mul-plan-final-native.log,/tmp/mul-plan-final-core.log,
 Preserve unrelated docs/mul_core.md (16 additions/17 deletions). Canonical changes
 in this checkpoint have not yet been exported to STM32/ESP; export only after
 commit using the deterministic vendor tool, then test actual consumers.
+
+
+### Portable RF4 receiver preparation
+
+After LPS commit469baa5, canonical mulMultiReceiverInitPlan now optionally binds
+an immutable caller-owned full plan for passive reconstruction. Completed cycle
+fingerprint is the full plan hash; default initializer remains RF2/3 only. No
+RLR TX is authorized by this API. Legacy and planned test matrices cover2/3/4/8
+ALRs, timing/clock signs, wraps, partial/missing cycles, lost/reordered frames,
+capture age, duplicate/restart recovery and wrong RLR roster with identical
+broadcast schedule. Mismatch reason tracking also recognizes profile3 RF3, rather
+than checking only the old RF2 version. Canonical sanitizer suite passes at
+/tmp/mul-plan-receiver-final-core.log.
+
+Linking mul_multi_receiver.c now requires mul_plan_protocol.c and
+mul_ranging_plan.c even for legacy initialization; update consumer build/test
+source lists when exporting. Actual STM32 schema9/CLI/radio selection and new
+telemetry labels remain unimplemented. Do not publish new RF4 vectors using the
+old type8/9 profile labels. New API's plan must remain alive and immutable until
+receiver reinitialization (hybridConfig is suitable once adapter is wired).
