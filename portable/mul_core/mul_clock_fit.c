@@ -90,7 +90,7 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,mulClock_t *c
   int64_t error=phase-s->centerY-divide((x-s->centerX)*s->skewPpb*SCALE,BILLION);
   uint64_t gate=6*(uint64_t)s->rmsDtu;if(gate<c->gateDtu)gate=c->gateDtu;
   if(magnitude(error)>gate) {
-   s->rejected=sat(s->rejected);s->consecutive++;
+   s->rejected=sat(s->rejected);s->consecutive++;s->applied=0;s->fallback=mulClockFitOutlier;
    if(s->consecutive<3){clock->skewPpb=previous.skewPpb;clock->status=mulClockWarmup;return mulClockIgnored;}
    // A persistent oscillator/propagation transient must recover rather than lock out.
    seed(s,clock->epoch,p->txTimestamp,fittedRx,corrected);return result;
@@ -105,7 +105,19 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,mulClock_t *c
  s->x[s->next]=(int32_t)x;s->y[s->next]=(int32_t)phase;s->next=(s->next+1)%c->window;
  s->elapsed=elapsed;s->phase=phase;s->lastTx=p->txTimestamp;s->lastRx=fittedRx;s->accepted=sat(s->accepted);
  s->ready=fit(s,c);
- if(s->ready){clock->skewPpb=s->skewPpb;clock->status=mulClockValid;}
+ s->applied=0;s->fallback=mulClockFitWarmup;
+ if(s->ready) {
+  // A long linear window estimates its center frequency. Detect disagreement
+  // with the robust recent interval rate before applying it to a drifting clock.
+  uint32_t deviations[MUL_CLOCK_HISTORY];
+  for(unsigned i=0;i<clock->count;i++)deviations[i]=(uint32_t)magnitude((int64_t)clock->history[i]-clock->skewPpb);
+  for(unsigned i=1;i<clock->count;i++){uint32_t v=deviations[i];unsigned j=i;while(j&&deviations[j-1]>v){deviations[j]=deviations[j-1];j--;}deviations[j]=v;}
+  uint64_t scatter=clock->count?deviations[clock->count/2]:UINT32_MAX;
+  if(scatter<s->uncertaintyPpb)scatter=s->uncertaintyPpb;
+  uint64_t threshold=6*scatter;if(threshold<10)threshold=10;
+  if(clock->status==mulClockValid&&magnitude((int64_t)clock->skewPpb-s->skewPpb)>threshold)s->fallback=mulClockFitChangingRate;
+  else {clock->skewPpb=s->skewPpb;clock->status=mulClockValid;s->applied=1;s->fallback=mulClockFitUsed;}
+ }
  return result;
 }
 

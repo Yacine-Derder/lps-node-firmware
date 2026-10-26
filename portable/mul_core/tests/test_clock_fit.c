@@ -58,10 +58,29 @@ static void transient(void) {
  assert(mulClockObserveFitted(NULL,&clock,&fit,&c,&p,2000,120000,true,NULL)==mulClockIgnored);
  packet(&p,101,1000);assert(mulClockObserveFitted(NULL,&clock,&fit,&c,&p,2000,120000,true,NULL)==mulClockDiscontinuity);assert(clock.epoch!=epoch&&fit.count==1);
 }
+static void changing_rate_and_initial_outlier(void) {
+ mulClock_t clock;mulClockReset(&clock);mulClockFit_t fit;mulClockFitReset(&fit);mulClockFitConfig_t c;mulClockFitDefaults(&c);c.estimator=1;
+ unsigned fallback=0;
+ for(unsigned i=0;i<150;i++) {
+  int64_t t=(int64_t)i*1000*MS;
+  // Instantaneous skew is15000+2*i ppb; integrated phase is15000*t + i^2 seconds*1ppb.
+  int64_t rx=scale(t,15000)+(int64_t)i*i*MS/1000000;
+  mulTestPacket_t p;packet(&p,i,100000+t);
+  mulClockObserveFitted(NULL,&clock,&fit,&c,&p,mulTimestampMask(900000+rx),10000+i*1000,true,NULL);
+  if(i>40&&fit.fallback==mulClockFitChangingRate){fallback++;assert(!fit.applied);assert(abs(clock.skewPpb-(15000+2*(int)i))<=6);}
+ }
+ assert(fallback>80&&fit.ready);
+ mulClockReset(&clock);mulClockFitReset(&fit);
+ for(unsigned i=0;i<40;i++) {
+  int64_t t=(int64_t)i*1000*MS;mulTestPacket_t p;packet(&p,i,100000+t);
+  mulClockObserveFitted(NULL,&clock,&fit,&c,&p,mulTimestampMask(900000+scale(t,-15000)+(i==2?20000:0)),10000+i*1000,true,NULL);
+  if(i>=12)assert(fit.ready&&abs(clock.skewPpb+15000)<=1);
+ }
+}
 int main(void) {
  const unsigned periods[]={100,500,1000,2000};
  for(unsigned i=0;i<4;i++) {
   unsigned p=periods[i];stationary(p,15000,24);stationary(p,-45000,32);stationary(p,150000,8);
  }
- mobile();transient();puts("Clock fit: centered bounded integers, long-run rollover/gaps, median fallback, outliers/transients, period variants and mobile propagation compensation passed");return 0;
+ mobile();transient();changing_rate_and_initial_outlier();puts("Clock fit: centered bounded integers, long-run rollover/gaps, median fallback, outliers/transients, period variants and mobile propagation compensation passed");return 0;
 }

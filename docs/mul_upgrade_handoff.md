@@ -117,3 +117,32 @@ settings with old-schema migration, select the estimator in both receiver paths,
 add diagnostics and persistence/power-cut/native tests, then offline replay. Clock
 stage is not fully complete until these integrations/builds pass. Later stagesC–G
 remain as listed above; do not infer they were implemented by this checkpoint.
+
+## Replay evidence and adaptive fallback
+
+`python3 tools/mul_clock_replay.py --summary ../uwb_logs/alr13{3,4,5}.log`
+compiles the real production C clocks into a host library and reads existing
+REF_RX timestamps without modifying logs. It also compares held-out linear and
+quadratic phase forecasts; quadratic remains offline only. Three Python tests
+cover the ABI, outlier behavior, parser/reset/domains and held-out polynomial fit.
+
+Field captures contain204/201/199 reference observations. With a24-point window,
+plain linear fits lag the changing apparent rate: last fitted-minus-recent-median
+is approximately-26/-38/-38ppb. Their one-step phase forecast RMS is about
+37898/39681/40449DTU, versus4308/4297/4605DTU for offline quadratics. This is
+apparent timing evidence, not identified oscillator drift or a proof of the
+15ppb slot-bias hypothesis. Device/geometry/propagation effects remain confounded.
+
+Production regression now falls back to the recent median when their difference
+exceeds max(10ppb,6*max(interval median absolute deviation, conditional fit sigma)).
+This avoids applying a stale center-of-window frequency to a changing oscillator.
+Fit formation and actual application are distinct diagnostic flags. Fallback codes:
+0 used,1 warmup,2 changing rate,3 outlier. Synthetic2ppb/s drift tests verify recovery
+and fallback; startup-outlier tests verify robust initialization. In these logs the
+regression is applied only31/27/27 fitted observations; most remaining observations
+correctly choose median. Default estimator is still median. Conditional fit sigma
+is not a physical uncertainty bound. Native context remains336 bytes.
+
+Adaptive LPS channel5 build passed: text128216/data1128/bss15244; RAM margin remains
+20 bytes with unchanged task/queue reservations. After pin refresh, STM32/ESP must
+use this adaptive core revision rather than the earlier d8505db import.

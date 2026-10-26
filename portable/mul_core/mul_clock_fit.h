@@ -6,6 +6,7 @@
 #define MUL_CLOCK_FIT_DEFAULT 24u
 #define MUL_CLOCK_CONFIG_BYTES 12u
 enum {mulClockEstimatorMedian=0,mulClockEstimatorRegression=1};
+enum {mulClockFitUsed=0,mulClockFitWarmup=1,mulClockFitChangingRate=2,mulClockFitOutlier=3};
 typedef struct {
  uint16_t periodMs,gateDtu;
  uint8_t estimator,window,minSamples,compensate;
@@ -19,7 +20,7 @@ typedef struct {
  int64_t phase;
  int32_t skewPpb,centerX,centerY;
  uint32_t accepted,rejected,resets,rmsDtu,uncertaintyPpb;
- uint8_t count,next,inliers,consecutive,compensated,ready;
+ uint8_t count,next,inliers,consecutive,compensated,ready,applied,fallback;
 } mulClockFit_t;
 void mulClockFitDefaults(mulClockFitConfig_t *c);
 bool mulClockFitConfigValid(const mulClockFitConfig_t *c);

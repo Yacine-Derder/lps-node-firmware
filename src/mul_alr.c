@@ -444,9 +444,9 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
            (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
            armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED", (unsigned int)mulNetworkSlotMs(alrNetwork));
     const mulClockWorkspace_t *workspace=mulClockWorkspace();
-    if(workspace->config.estimator)printf("MUL FIT: window=%u n=%u in=%u ppb=%ld rms_dtu=%lu rejected=%lu fit_sigma_ppb=%lu compensated=%u ready=%u\r\n",
+    if(workspace->config.estimator)printf("MUL FIT: window=%u n=%u in=%u ppb=%ld rms_dtu=%lu rejected=%lu fit_sigma_ppb=%lu compensated=%u ready=%u applied=%u fallback=%u\r\n",
       workspace->config.window,workspace->fit.count,workspace->fit.inliers,(long)workspace->fit.skewPpb,
-      (unsigned long)workspace->fit.rmsDtu,(unsigned long)workspace->fit.rejected,(unsigned long)workspace->fit.uncertaintyPpb,workspace->fit.compensated,workspace->fit.ready);
+      (unsigned long)workspace->fit.rmsDtu,(unsigned long)workspace->fit.rejected,(unsigned long)workspace->fit.uncertaintyPpb,workspace->fit.compensated,workspace->fit.ready,workspace->fit.applied,workspace->fit.fallback);
     int32_t ppb = followerClock.skewPpb;
     uint32_t magnitude = (uint32_t)(ppb < 0 ? -ppb : ppb);
     printf("MUL ALR: CLOCK src=0x%02X seq=%" PRIu32 " skew_ppm=%s%" PRIu32 ".%03" PRIu32
