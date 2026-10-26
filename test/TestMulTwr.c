@@ -1102,3 +1102,69 @@ void test_committedAaDelaySurvivesArRoleChangeCompletionAndFaults(void) {
  TEST_ASSERT_EQUAL(mulPropagationInvalidated,mulTwrPropagationState(ctx(1),&model,ticks));
  mulTwrInvalidateAa(ctx(1));TEST_ASSERT_FALSE(ctx(1)->aa.valid);TEST_ASSERT_FALSE(mulTwrDelay(ctx(1),&model,&after));
 }
+
+void test_actualAlrReferenceInitiatesAssignedArOnlyOperation(void) {
+ setUp();scenario(150000,2131);multiConfig(2,0,10);
+ mulRangingPlan_t p={.replyMs=5,.maxUtilization=70,.enabled=MUL_PLAN_AR,.arMilliHz=1000,.rlrCount=1,.rlrs={141}};
+ p.broadcast=multiConfiguration.mulSchedule;mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
+ p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;
+ multiConfiguration.mulSchedule=p.broadcast;multiConfiguration.mulPlan=&p;simulationPlan=&p;
+ useAlr[0]=true;advance(-20*(int64_t)MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[0].device);dispatch(0,eventTimeout);
+ int64_t reference=sendTime(0);advance(reference+MS);radios[0].armed=false;dispatch(0,eventPacketSent);
+ exchangeSequence=pendingSequence;origins[0]=pendingTimestamp;origins[1]=clockAt(1,reference+flight);
+ unsigned ar=99;mulRangingOperation_t op;
+ for(unsigned i=0;i<mulRangingPlanCount(&p,exchangeSequence);i++){TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,exchangeSequence,i,&op));if(op.initiator==132)ar=i;}
+ TEST_ASSERT_NOT_EQUAL(99,ar);TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,exchangeSequence,ar,&op));
+ advance(reference+(int64_t)op.startUs*MS/1000);dispatch(0,eventTimeout);
+ TEST_ASSERT_TRUE(ranging.active);TEST_ASSERT_EQUAL(ar,ranging.operation);TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(1),&p,exchangeSequence,ar));
+ completeExchange();TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_UINT32_WITHIN(1,flight,ranging.candidateTof);
+ TEST_ASSERT_FALSE(ranging.aa.valid);unsigned sends=radios[0].sends;dispatch(0,eventTimeout);TEST_ASSERT_EQUAL(sends,radios[0].sends);
+}
+
+void test_actualFollowerArInitiatorUsesMappedLocalTargetsWithoutAaDependency(void) {
+ for(unsigned compensated=0;compensated<2;compensated++) {
+ setUp();scenario(-150000,2131);multiConfig(2,1,10);
+ mulRangingPlan_t p={.replyMs=5,.maxUtilization=70,.enabled=MUL_PLAN_AR|(compensated?MUL_PLAN_AA:0),.aaMilliHz=1000,.arMilliHz=1000,.rlrCount=1,.rlrs={141}};
+ p.broadcast=multiConfiguration.mulSchedule;mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
+ p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;
+ multiConfiguration.mulSchedule=p.broadcast;multiConfiguration.mulPlan=&p;simulationPlan=&p;
+ useAlr[1]=true;protocolRole[0]=mulAlrFollower;advance(MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+ injectMulti(1,0,5,origins[0],origins[1]);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ // The six reference observations in scenario() establish the receiver's affine
+ // clock. No AA propagation measurement is present in this AR-only plan.
+ followerClock=model;TEST_ASSERT_FALSE(ranging.aa.valid);
+ if(compensated) {
+  // Seed the previous cycle's completed AA context, not a new AR-only context.
+  mulRangingOperation_t previous;
+  for(unsigned i=0;i<mulRangingPlanCount(&p,4);i++) {
+   TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,4,i,&previous));
+   if(previous.kind==MUL_PLAN_AA){TEST_ASSERT_TRUE(mulTwrConfigurePlan(&ranging,&p,4,i));ranging.attempted=true;break;}
+  }
+  ranging.aa=(mulTwrAa_t){.epoch=model.epoch,.measuredMs=model.observedMs-1000,.sequence=4,.tof=(uint16_t)flight,.reference=132,.follower=135,.valid=true};
+ }
+ unsigned ar=99;mulRangingOperation_t op;
+ for(unsigned i=0;i<mulRangingPlanCount(&p,5);i++){TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,i,&op));if(op.initiator==135)ar=i;}
+ TEST_ASSERT_NOT_EQUAL(99,ar);TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,ar,&op));
+ advance((int64_t)op.startUs*MS/1000+MS);dispatch(1,eventTimeout);TEST_ASSERT_TRUE(ranging.active);TEST_ASSERT_EQUAL(ar,ranging.operation);
+ uint64_t expected=clockAt(1,(int64_t)op.pollUs*MS/1000+(compensated?0:flight));
+ TEST_ASSERT_INT_WITHIN(1024,0,mulTimestampDifference(ranging.expectedTx,expected));
+ TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,5,ar));transfer(1);transfer(0);transfer(1);transfer(0);transfer(1);
+ TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_UINT32_WITHIN(1,flight,ranging.candidateTof);TEST_ASSERT_EQUAL(compensated,ranging.aa.valid);
+ unsigned sends=radios[1].sends;dispatch(1,eventTimeout);TEST_ASSERT_EQUAL(sends,radios[1].sends);
+}
+}
+
+void test_explicitLocalArTargetsRejectForeignClockAndAfterSpiLateness(void) {
+ setUp();scenario(150000,2131);
+ mulRangingPlan_t p={.replyMs=5,.maxUtilization=70,.enabled=MUL_PLAN_AR,.arMilliHz=1000,.rlrCount=1,.rlrs={141}};
+ mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
+ p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;
+ simulationPlan=&p;mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,0,&op));
+ advance((int64_t)op.startUs*MS/1000);TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,5,0));
+ uint64_t poll=mulTimestampMask(origins[0]+(uint64_t)op.pollUs*MS/1000),end=mulTimestampMask(origins[0]+(uint64_t)op.endUs*MS/1000);
+ TEST_ASSERT_FALSE(mulTwrStartTargets(ctx(0),&radios[0].device,5,mulTimestampMask(origins[1]+op.pollUs*MS/1000),mulTimestampMask(origins[1]+op.endUs*MS/1000)));
+ TEST_ASSERT_FALSE(ctx(0)->attempted);TEST_ASSERT_EQUAL(0,radios[0].sends);
+ radios[0].setupLag=4*MS;TEST_ASSERT_FALSE(mulTwrStartTargets(ctx(0),&radios[0].device,5,poll,end));
+ TEST_ASSERT_TRUE(ctx(0)->attempted);TEST_ASSERT_FALSE(ctx(0)->active);TEST_ASSERT_EQUAL(0,radios[0].sends);
+ radios[0].setupLag=0;TEST_ASSERT_FALSE(mulTwrStartTargets(ctx(0),&radios[0].device,5,poll,end));TEST_ASSERT_EQUAL(0,radios[0].sends);
+}

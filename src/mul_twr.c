@@ -190,6 +190,19 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   return true;
 }
 
+bool mulTwrStartTargets(mulTwr_t *twr,dwDevice_t *dev,uint32_t cycle,uint64_t poll,uint64_t end) {
+ if(!twr||!twr->planned||poll>MUL_TIMESTAMP_MASK||end>MUL_TIMESTAMP_MASK||!due(twr,cycle)||
+    twr->active||(twr->attempted&&twr->id==cycle))return false;
+ int64_t ahead=mulTimestampDifference(poll,hardwareNow(dev));
+ if(ahead<=0||ahead>(int64_t)(plannedSession.plan->broadcast.periodMs*MUL_TWR_DTU_PER_MS))return false;
+ int64_t span=mulTimestampDifference(end,poll);
+ if(span<(int64_t)(4*replyMs(twr)*MUL_TWR_DTU_PER_MS+tailDtu(twr))||
+    span>(int64_t)(plannedSession.plan->broadcast.periodMs*MUL_TWR_DTU_PER_MS))return false;
+ twr->id=cycle;twr->attempted=twr->active=true;twr->windowEnd=end;
+ memset(twr->stamps,0,sizeof(twr->stamps));memset(twr->power,0,sizeof(twr->power));
+ return sendPacket(twr,dev,mulTwrPoll,poll);
+}
+
 bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t origin)
 {
   if (!due(twr,sequence) || twr->active || (twr->attempted && twr->id == sequence)) return false;
@@ -243,7 +256,9 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     return true;
   }
   int64_t phase = mulTimestampDifference(hardwareNow(dev), origin);
-  if (twr->active && (phase < 0 || phase >= (int64_t)(endOffset(twr)) ||
+  bool expired=twr->planned?mulTimestampDifference(hardwareNow(dev),twr->windowEnd)>=0:
+    phase<0||phase>=(int64_t)endOffset(twr);
+  if (twr->active && (expired ||
       sequence != twr->id || (role == mulAlrFollower && epoch != twr->epoch))) {
     mulTwrCancel(twr, dev, "window_or_epoch", role == mulAlrFollower && epoch != twr->epoch);
   }
@@ -401,7 +416,7 @@ uint32_t mulTwrWait(const mulTwr_t *twr, dwDevice_t *dev, uint64_t origin, uint3
   if (!twr->active) return fallback;
   uint64_t now = hardwareNow(dev);
   int64_t step = mulTimestampDifference(twr->deadline, now);
-  int64_t end = mulTimestampDifference(mulTimestampMask(origin+endOffset(twr)), now);
+  int64_t end = mulTimestampDifference(twr->planned?twr->windowEnd:mulTimestampMask(origin+endOffset(twr)), now);
   if (end < step) step = end;
   uint32_t wait = step <= 0 ? 1 : (uint32_t)(((uint64_t)step+MUL_TWR_DTU_PER_MS-1)/MUL_TWR_DTU_PER_MS);
   return wait < fallback ? wait : fallback;

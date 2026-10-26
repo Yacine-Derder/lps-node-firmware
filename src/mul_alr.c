@@ -157,7 +157,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
       (void)mulSchedulePair(schedule,index?index:1,&config->mulNetwork);
       if(mulNetworkRole(alrNetwork,source)!=alrRole)alrRole=mulAlrUnsupported;}
   }
-  if(activePlan&&(!multiMode||mulRangingPlanValidate(activePlan,NULL)||(activePlan->enabled&MUL_PLAN_AR)||mulScheduleFingerprint(&activePlan->broadcast)!=mulScheduleFingerprint(&config->mulSchedule)))alrRole=mulAlrUnsupported;
+  if(activePlan&&(!multiMode||mulRangingPlanValidate(activePlan,NULL)||mulScheduleFingerprint(&activePlan->broadcast)!=mulScheduleFingerprint(&config->mulSchedule)))alrRole=mulAlrUnsupported;
   if(!multiMode&&!mulScheduleTag(mulNetworkSlotMs(alrNetwork)))alrRole=mulAlrUnsupported;
 #if !MUL_HYBRID_CH5
   if(multiMode&&schedule->profile==MUL_PROFILE_EXPERIMENTAL&&(config->lowBitrate||config->longPreamble))alrRole=mulAlrUnsupported;
@@ -286,6 +286,76 @@ static void abortFollowerTx(dwDevice_t *dev)
   flags.tx = false;
 }
 
+typedef struct {uint64_t start,poll,end;bool compensated;} mulLocalReservation_t;
+static bool mapReservation(const mulRangingOperation_t *op,uint32_t now,mulLocalReservation_t *out) {
+ mulClockDelay_t delay;bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
+ uint32_t offsets[3]={op->startUs,op->pollUs,op->endUs};uint64_t targets[3];
+ bool compensated=supplied&&mulClockDelayStatusNetwork(alrNetwork,&followerClock,&delay,now)==mulClockDelayValid;
+ for(unsigned i=0;i<3;i++) {
+  uint64_t ref=mulTimestampMask(refTx()+((uint64_t)offsets[i]*MUL_DTU_PER_MS+999)/1000);
+  if(compensated) {
+   mulClockCorrectedMapping_t mapped;
+   if(!mulClockMapRefToFollowerSimultaneousNetwork(alrNetwork,&followerClock,ref,&delay,now,&mapped))return false;
+   targets[i]=mapped.timestamp;
+  }else {
+   // Same arrival-aligned convention as TDMA. No true offset/physical bound is
+   // asserted; this permits AR-only plans without inventing an AA measurement.
+   mulClockMapping_t mapped;
+   if(!mulClockMapRefToFollower(&followerClock,ref,now,&mapped))return false;
+   targets[i]=mapped.timestamp;
+  }
+ }
+ *out=(mulLocalReservation_t){.start=targets[0],.poll=targets[1],.end=targets[2],.compensated=compensated};return true;
+}
+static bool plannedFollowerOperation(dwDevice_t *dev,uwbEvent_t event,mulAlrRole_t *role) {
+ uint64_t now=readHardwareTime(dev);uint32_t ms=(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS;
+ unsigned count=mulRangingPlanCount(activePlan,refSequence());
+ for(unsigned index=0;index<count;index++) {
+  mulRangingOperation_t op;(void)mulRangingPlanOperation(activePlan,refSequence(),index,&op);
+  if(op.kind==MUL_PLAN_AA&&op.responder==source[0]) {
+   int64_t phase=mulTimestampDifference(now,refRx());
+   if(phase>=(int64_t)((uint64_t)op.startUs*MUL_DTU_PER_MS/1000)&&phase<(int64_t)((uint64_t)op.endUs*MUL_DTU_PER_MS/1000)) {
+    if(ranging.active&&(ranging.id!=refSequence()||ranging.operation!=index))mulTwrCancel(&ranging,dev,"reservation_turnaround",false);
+    *role=mulAlrFollower;return mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index);
+   }
+  }else if(op.kind==MUL_PLAN_AR&&op.initiator==source[0]) {
+   mulLocalReservation_t local;if(!mapReservation(&op,ms,&local))continue;
+   if(mulTimestampDifference(now,local.end)>=0){servedOperations|=UINT32_C(1)<<index;continue;}
+   if(mulTimestampDifference(now,local.start)<0)continue;
+   *role=mulAlrReference;
+   if(ranging.active&&(ranging.id!=refSequence()||ranging.operation!=index))mulTwrCancel(&ranging,dev,"reservation_turnaround",false);
+   uint32_t bit=UINT32_C(1)<<index;
+   if(event==eventTimeout&&!(servedOperations&bit)) {
+    servedOperations|=bit;
+    if(mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index))
+      mulTwrStartTargets(&ranging,dev,refSequence(),local.poll,local.end);
+   }
+   return ranging.planned&&ranging.active&&ranging.id==refSequence()&&ranging.operation==index;
+  }
+ }
+ return false;
+}
+static uint32_t plannedFollowerWait(dwDevice_t *dev,uint32_t fallback) {
+ if(!referenceAcquired)return fallback;
+ uint64_t now=readHardwareTime(dev);uint32_t ms=(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS;
+ unsigned count=mulRangingPlanCount(activePlan,refSequence());
+ for(unsigned index=0;index<count;index++) {
+  mulRangingOperation_t op;(void)mulRangingPlanOperation(activePlan,refSequence(),index,&op);uint64_t start;
+  if(op.kind==MUL_PLAN_AA&&op.responder==source[0]) {
+   if(ranging.planned&&ranging.attempted&&ranging.id==refSequence()&&ranging.operation>=index)continue;
+   uint64_t end=mulTimestampMask(refRx()+(uint64_t)op.endUs*MUL_DTU_PER_MS/1000);
+   if(mulTimestampDifference(now,end)>=0)continue;
+   start=mulTimestampMask(refRx()+(uint64_t)op.startUs*MUL_DTU_PER_MS/1000);
+  }else if(op.kind==MUL_PLAN_AR&&op.initiator==source[0]&&!(servedOperations&(UINT32_C(1)<<index))) {
+   mulLocalReservation_t local;if(!mapReservation(&op,ms,&local)||mulTimestampDifference(now,local.end)>=0)continue;start=local.start;
+  }else continue;
+  int64_t remaining=mulTimestampDifference(start,now);
+  uint32_t wait=remaining<=0?1:(uint32_t)(((uint64_t)remaining+MUL_DTU_PER_MS-1)/MUL_DTU_PER_MS);
+  if(wait<fallback)fallback=wait;
+ }
+ return fallback;
+}
+
 static uint32_t followerWait(dwDevice_t *dev)
 {
   mulTwrFlush(&ranging);
@@ -309,6 +379,7 @@ static uint32_t followerWait(dwDevice_t *dev)
       wait = txWait;
     }
   }
+  if(activePlan&&!flags.tx)wait=plannedFollowerWait(dev,wait);
   wait = mulTwrDelayWait(&ranging, nowMs, wait);
   return mulTwrWait(&ranging, dev, refRx(), wait);
 }
@@ -377,26 +448,19 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     return followerWait(dev);
   }
 
-  bool selected=true;
+  bool selected=true;mulAlrRole_t exchangeRole=mulAlrFollower;
   if(multiMode&&referenceAcquired) {
     selected=false;
     if(activePlan) {
-      int64_t phase=mulTimestampDifference(readHardwareTime(dev),refRx());
       if(ranging.active&&event==eventPacketReceived&&(dwGetDataLength(dev)==40||dwGetDataLength(dev)==80))mulTwrCancel(&ranging,dev,NULL,false);
-      unsigned count=mulRangingPlanCount(activePlan,refSequence());
-      for(unsigned index=0;index<count;index++) {
-        mulRangingOperation_t op;(void)mulRangingPlanOperation(activePlan,refSequence(),index,&op);
-        if(op.kind==MUL_PLAN_AA&&op.responder==source[0]&&phase>=(int64_t)((uint64_t)op.startUs*MUL_DTU_PER_MS/1000)&&phase<(int64_t)((uint64_t)op.endUs*MUL_DTU_PER_MS/1000)) {
-          selected=mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index);break;
-        }
-      }
+      selected=plannedFollowerOperation(dev,event,&exchangeRole);
       if(!selected&&ranging.active)mulTwrCancel(&ranging,dev,"reservation_end",false);
     }else for(unsigned window=0;window<MUL_SYNC_WINDOWS;window++)if(mulScheduleSyncOwner(schedule,refSequence(),window)==localSlot) {
       selected=mulTwrConfigureSchedule(&ranging,schedule,localSlot,window);break;
     }
     if(!selected&&event==eventPacketReceived&&dwGetDataLength(dev)==MUL_MULTI_TWR_BYTES){mulRxRearm(dev);return followerWait(dev);}
   }
-  if (referenceAcquired && selected && mulTwrOnEvent(&ranging, dev, event, mulAlrFollower,
+  if (referenceAcquired && selected && mulTwrOnEvent(&ranging, dev, event, exchangeRole,
       refSequence(), refRx(), refTx(),
       followerClock.epoch, (uint32_t)now * portTICK_PERIOD_MS)) {
     return followerWait(dev);
@@ -431,7 +495,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       result=mulObservePacket(&followerReference,&packet,arrival);
     }
     if (result != mulSequenceDuplicate && result != mulSequenceOld) {
-      fresh = true;
+      fresh = true;servedOperations=0;
       acquiredNow = !referenceAcquired;
       referenceAcquired = true;
       lastReferenceTick = now;
@@ -510,7 +574,7 @@ static uint32_t plannedReferenceService(dwDevice_t *dev,bool start) {
    servedOperations|=bit;
    if(ranging.active)mulTwrCancel(&ranging,dev,"reservation_turnaround",false);
    int follower=mulScheduleIndex(schedule,op.responder);
-   if(op.kind==MUL_PLAN_AA&&op.initiator==source[0]&&follower>0&&(followerSeen&(1u<<follower))&&
+   if(op.initiator==source[0]&&(op.kind==MUL_PLAN_AR||(follower>0&&(followerSeen&(1u<<follower))))&&
       phase<(int64_t)((uint64_t)op.pollUs*MUL_DTU_PER_MS/1000)-(int64_t)minimumLeadDtu()&&
       mulTwrConfigurePlan(&ranging,activePlan,pendingSequence,index))mulTwrStart(&ranging,dev,pendingSequence,pendingTimestamp);
   }else {

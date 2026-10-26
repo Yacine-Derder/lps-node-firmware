@@ -66,6 +66,9 @@ void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool inval
 void mulTwrFlush(mulTwr_t *twr);
 bool mulTwrDue(uint32_t referenceSequence);
 bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t origin);
+// Generated initiator targets are already in THIS radio's hardware clock.
+// Caller maps the reference reservation before calling; no foreign-clock origin.
+bool mulTwrStartTargets(mulTwr_t *twr,dwDevice_t *dev,uint32_t cycle,uint64_t localPoll,uint64_t localEnd);
 // Caller never dispatches here while a broadcast TX is armed. A normal broadcast
 // is left unread for the ALR path and cancels any exchange, giving it priority.
 bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_t role,

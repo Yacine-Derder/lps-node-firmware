@@ -1189,3 +1189,28 @@ unplanned behavior retains its existing fields. The bounded MUL role reservation
 is now at most160 bytes (linked144 versus prior128); no stack/USB queues were cut.
 This is a prerequisite for active AR ownership, which remains disabled pending
 LPS scheduling and DW3000 responder integration. It does not authorize radio TX.
+
+
+### Generated AR radio ownership (software implementation, activation gated)
+
+The LPS reference can initiate assigned AR operations without waiting for an ALR
+follower observation. A data follower instead maps reference reservation start,
+poll and end into its own hardware clock before initiating AR. The explicit local
+target API rejects out-of-cycle/far-future targets and retains both delayed-TX lead
+checks, exact marker verification and one-attempt ownership. Active deadlines use
+the stored local end rather than re-adding reference offsets to a foreign clock.
+
+When fresh AA propagation is available, mapping uses the simultaneous-coordinate
+API. AR-only operation can use the existing arrival-aligned affine convention
+once its clock model is valid; this does not establish a true offset or physical
+uncertainty bound. Missing/stale mappings skip transmissions. The mapping path
+keeps physical uncertainty unknown rather than treating estimator scatter as a
+bound. Broadcast priority and the committed AA cache remain independent of AR.
+
+The STM32 DW3000 responder implements the matching five-message RF4 transaction
+with assigned-slot/pair/hash validation and verified delayed RESPONSE/REPORT TX.
+Its committed result preserves clock-domain identities and raw ToF; DW3000 power
+bias correction remains explicitly unsupported. Both firmware activation gates
+still reject AR plans until versioned range/quality telemetry and complete
+cross-platform delivery are connected and verified. No physical validation is
+asserted by the native adapter tests.

@@ -1004,3 +1004,90 @@ broadcast preemption, multiple RLRs and raw/quality telemetry before removing ga
 Then remaining D priorities/freshness, F abstract USB noisy poses/geometry and
 measured-wheel optional ESP EKF, and G. Goal active and full scope unfinished.
 Preserve unrelated LPS docs/mul_core.md edits16/17. No flash/operate permission.
+
+
+## Stage E actual radio adapters checkpoint (AR activation STILL gated)
+
+LPS now has mulTwrStartTargets for already-mapped LOCAL hardware poll/end targets.
+It checks masked time, future-within-cycle, positive bounded reservation, one
+attempt and the existing before/after-SPI lead guards. Planned active expiry/wait
+uses stored local windowEnd rather than re-adding reference offsets to a foreign
+clock. Reference owner initiates its assigned AR operations without ALR follower
+seen gating. Follower owner separates per-operation initiator role from data role,
+maps start/poll/end with its affine clock, retires each attempted/missed AR slot,
+preempts stale exchanges and preserves mandatory broadcasts/AA cache. Wakeups are
+bounded and expired reservations cannot create a perpetual1ms service loop.
+
+Mapping policy: valid fresh AA uses simultaneous-coordinate mapping. AR-only plans
+may use the existing arrival-aligned affine convention once clock mapping is
+valid. No true offset or finite physical bound is asserted in the fallback;
+missing/stale mappings skip rather than invent timing. Do not interpret convergence
+or scheduling success as calibrated synchronization. Future StageF geometry-source
+selection must feed this mapping policy as well as clock/positioning correction.
+
+Native TestMulTwr tests actual reference AR owner, actual follower AR initiation
+with independent clocks and both arrival-only/AA-corrected targets, complete
+exchanges, preserved AA cache, foreign-clock target rejection and late-SPI/no-retry.
+The corrected-path fixture seeds a previous completed AA context, including its
+planned state/previous cycle; setting cache fields alone in an unplanned context
+would exercise the legacy getter and is not a valid setup.
+LPS233 native at10/50/500ms and233 ASan/UBSan at10ms pass:
+/tmp/mul-ar-owner-final-tests.log,/tmp/mul-ar-owner-matrix.log.
+Clean CH5/6s build/image: flash117924/free13148, RAM13564/free2820; main/UWB1600,
+idle800, linker2048, USB512 retained. Logs:/tmp/mul-ar-owner-final-build.log,
+/tmp/mul-ar-owner-final-resources.json. Static frame reports copied to
+/tmp/mul_alr-ar.su,/tmp/mul_twr-ar.su,/tmp/mul_clock-ar.su,
+/tmp/mul_plan_protocol-ar.su,/tmp/mul_ranging_plan-ar.su; source .su files removed.
+Frames: mulAlrOnEvent256, followerWait104, mapReservation272, correctedCoordinate224,
+TwrOnEvent312, sendPacket288; reviewed chains remain within1600 with conservative
+context allowance, but dynamic watermarks remain final physical campaign work.
+
+STM adds Core/Src/mul_plan_radio.c + public result API, called by hybrid RX owner.
+It binds fresh reference/cycle/epoch/operation/pair/full hash, responds only for its
+assigned RLR, uses arrival-aligned reference mapping for local window checks and
+local RX timestamps for delayed RESPONSE/REPORT. Exact raw512 alignment, live
+antenna and DX_TIME readback, pre/post-SPI lead, exact TX marker, all5 messages,
+prefix/power/timing/ToF RESULT agreement and backdated P2 acquisition time are tested.
+DW3000 power status explicitly Unsupported; no DW1000 table was copied. Successful
+results have a committed snapshot (mixed-clock stamps, power, raw ToF, identity,
+cycle/op/hash/time), so a new reference cannot relabel an undelivered result.
+TX-first coalesced events work. Broadcast RX is left frozen for the TDMA handler
+BEFORE timeout cleanup, including expired exchanges; wrong/stale/unarmed TX,
+late SPI, missing IRQ/deadline/hash/other-RLR assignments and RX rearm failure all
+return to bounded recovery. One attempt retires its operation until next cycle.
+
+The responder's normal configuration/activation is not yet enabled: both LPS and
+STM persistent validation still reject AR RF ON. The new take_result API is not
+called by production telemetry yet. Do NOT claim delivered AR ranges or full E.
+Tests invoke the real adapter with simulated registers behind the gate.
+Test fixture now supports90-byte TX and high32 delayed-time register; no real
+robot/radio/motor/link policy was changed. Full response tests cover5/10/20ms,
+±150ppm RLR and independent±35/45ppm initiator clocks plus separate/coalesced IRQs.
+Full STM runtime sanitizer suite, frequency and standalone ADS regressions pass:
+/tmp/mul-ar-final-stm-tests.log,/tmp/mul-ar-final-frequency.log,
+/tmp/mul-ar-ads-regression.log. Clean Universal build+ELF-sector check pass:
+text155200,data768,bss38560, linker FLASH156024/RAM39328;
+/tmp/mul-ar-final-stm-build.log. ESP unchanged/clean, shared pin staysf5bbbec.
+
+Also fixed a real schema9 RF-ON reboot bug in STM commit13bf088: decode_base used
+the retained roster before loading verified plan selection, rejecting an enabled
+plan with different ALRs/peers. Nested plan/selection now binds before RF eligibility
+validation. A failing-before/passing-after config regression and actual RF-ON
+adapter reboot checks acrossN2/4/8 prove restoration without writes. Public128
+rejection and old1..8/mixed journal cut tests remain. Before evidence:
+/tmp/mul-plan-enabled-reboot-before.log; actual adapter check additionally at
+/tmp/mul-ar-selected-reboot.log (also included in final full suite).
+
+Next coherent unit MUST finish AR data delivery/activation, not another utility:
+add versioned planned-range/quality telemetry (likely newtype13), raw90 tracing,
+committed measurement timestamp/clock-domain/unknown-uncertainty/source metadata,
+essential priority through STM/ESP and collector/replay. Expose responder counters
+and failures and make reset/status truthful; current generic help/status still says
+passive, appropriate only while the gate remains. Retain raw ToF/stamps/power and
+never apply ADS-only correction silently. Verify mixed AA/AR/multiple-RLR fault
+campaign and delivery, then remove BOTH AR RF activation guards and document that
+RLR role can transmit only assigned responder slots. Re-run compatibility/default
+no-TX tests. Complete remaining D priorities/freshness, F abstract USB pose/geometry
+and measured-step optional ESP EKF, then G. ROS/Pi bridge remains OUT OF SCOPE;
+no hardware operations or Pi access. Goal active; preserve unrelated LPS
+ docs/mul_core.md16/17 and do not stage it.
