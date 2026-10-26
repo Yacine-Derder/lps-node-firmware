@@ -409,3 +409,42 @@ Optional research diagnostics: `cfg set clock_estimator regression`,
 `clock show` reports current state. The default estimator remains median. Clock
 telemetry type10 v2 includes raw40-bit timestamps, actual period and capture age;
 v1 remains readable with unknown capture age. Routine logs preserve both.
+
+## MUL-only production image
+
+Current `make` builds only the MUL production image (mode5 ALR, mode6 passive RLR).
+The original combined firmware remains at Git revision `fd44002`, with its original
+mode implementations and configuration history. The current target intentionally
+rejects `MUL_ONLY=0`; native stock-mode regression tests still build their original
+API without the production define. No upstream mode sources were deleted.
+
+The production image excludes original tag/anchor TWR, sniffer, TDoA2/TDoA3,
+LPP handlers, pressure-sensor startup and factory-test commands. It retains the
+DW1000 driver, calibrated antenna timing, MUL five-message TWR, reference/follower
+roles, passive RLR, diagnostics, EEPROM recovery, USB console, PHY and power controls.
+Old EEPROM bytes and mode IDs are not rewritten at boot. Stored0..4 or invalid
+modes remain RF OFF; select an appropriate MUL role/mode explicitly. `:mode
+anchor/tag/sniffer/tdoa2/tdoa3` and the old single-character aliases cannot activate
+removed engines. The `m` menu lists only5/6. New uninitialized storage defaults idle.
+
+```sh
+make clean
+make -j4 REV=B BOOTLOAD=0 EXTRA_CFLAGS='-DMUL_HYBRID_CH5=1 -DMUL_PROP_MAX_AGE_MS=6000'
+python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
+python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000
+```
+
+These commands build/test only. The checker verifies that removed engines and the
+TDoA3 overlay are absent, the explicit344-byte MUL clock workspace exists, required
+MUL engines remain, stack/USB queue allocations are retained, and flash/RAM fit.
+It does not prove physical timing or dynamic stack safety. No image is flashed by
+these commands. `--mul-only` runs only MUL fixtures under the production define;
+without it the test helper also runs useful stock-source regressions. Test outputs
+are cleaned between profiles to prevent stale summary results.
+
+The final CH5 cleanup image uses117392 flash bytes and12828 RAM bytes including
+the2048-byte linker stack, leaving13680 flash and3556 RAM. Compared with the prior
+combined CH5 image, savings are12904 flash and3376 RAM bytes. Both builds use the
+same compiler/optimization flags; LTO was not needed. The core UWB/main/idle task
+stacks and USB queue sizes were not cut. No mode-specific task existed to remove;
+all retained tasks serve MUL, console or the kernel. Timers were already disabled.

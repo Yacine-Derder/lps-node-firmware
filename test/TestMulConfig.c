@@ -122,7 +122,12 @@ void test_pendingRestartAndPassiveRoleCannotEnableOldTransmitter(void) {
  send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(6,boot.mode);
  send(":role standalone\n");apply();TEST_ASSERT_FALSE(uwbControlRunning());
  TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&mode));TEST_ASSERT_EQUAL(255,mode);
- send(":mode tag\n");TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&mode));TEST_ASSERT_EQUAL(1,mode);
+ send(":mode tag\n");TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&mode));
+#if MUL_ONLY
+ TEST_ASSERT_EQUAL(255,mode);
+#else
+ TEST_ASSERT_EQUAL(1,mode);
+#endif
  TEST_ASSERT_FALSE(uwbControlRequested());
 }
 void test_lineSessionInvalidSyntaxAndBackpressureDoNotLeakOrMutate(void) {
@@ -147,13 +152,20 @@ void test_committedButUnreadableOffStaysOffAfterRebootAndInvalidRfIsRejected(voi
 
 void test_everyStockModeRetainsLegacyEnabledBootAndMalformedRequiredFieldsFailClosed(void) {
  for(uint8_t mode=0;mode<5;mode++) {
-  legacy(0x84);TEST_ASSERT_TRUE(cfgWriteU8(cfgMode,mode));cfgInit();boot.mode=mode;uwbControlInit(&boot);
+  legacy(0x84);
+#if MUL_ONLY
+  unsigned before=writes;TEST_ASSERT_FALSE(cfgWriteU8(cfgMode,mode));TEST_ASSERT_EQUAL(before,writes);
+  memory[10]=mode;checksum();cfgInit();boot.mode=mode;uwbControlInit(&boot);
+  TEST_ASSERT_FALSE(uwbControlRequested());TEST_ASSERT_FALSE(uwbControlCanEnable());
+#else
+  TEST_ASSERT_TRUE(cfgWriteU8(cfgMode,mode));cfgInit();boot.mode=mode;uwbControlInit(&boot);
   TEST_ASSERT_TRUE(uwbControlRequested());TEST_ASSERT_TRUE(uwbControlCanEnable());
+#endif
  }
  legacy(0x84);memory[9]=0;memory[10]=200;checksum();cfgInit();boot.mode=0;uwbControlInit(&boot);
  TEST_ASSERT_FALSE(uwbControlRequested());TEST_ASSERT_FALSE(uwbControlCanEnable());
  // An invalid explicit passive roster must not fall back to a stock transmitter.
- legacy(0x84);TEST_ASSERT_TRUE(cfgWriteU8(cfgMode,0));
+ legacy(0x84);memory[10]=0;checksum();cfgInit();
  unsigned at=5+memory[3];memory[at]=cfgMulNetwork;memory[at+1]=3;memory[at+2]=3;memory[at+3]=0x84;memory[at+4]=0x84;memory[3]+=5;checksum();
  cfgInit();boot.mode=0;uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlRequested());TEST_ASSERT_FALSE(uwbControlCanEnable());
 }
@@ -279,4 +291,14 @@ void test_experimentalNumericalTimingRequiresExplicitBudgetsAndRfOff(void) {
  before=writes;send(":cfg set slot_ms 5\n:cfg set tx_lead_us 2000\n");TEST_ASSERT_EQUAL(before,writes);
  send(":off\n");apply();send(":cfg set slot_ms 10\n:cfg set cycle_ms 1000\n:cfg set profile multi\n");
  TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&spec));TEST_ASSERT_EQUAL(MUL_PROFILE_MULTI,spec.profile);TEST_ASSERT_EQUAL(0,spec.txLeadUs);
+}
+
+void test_mulOnlyRemovedModeCommandsNeverMutateOrEnableRadio(void) {
+#if MUL_ONLY
+ const char *commands[]={":mode anchor\n",":mode tag\n",":mode sniffer\n",":mode tdoa2\n",":mode tdoa3\n"};
+ unsigned before=writes;
+ for(unsigned i=0;i<5;i++){send(commands[i]);TEST_ASSERT_EQUAL(before,writes);}
+ uint8_t mode=0;TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&mode));TEST_ASSERT_EQUAL(5,mode);
+ for(unsigned i=0;i<7;i++){memory[10]=i<5?i:i==5?200:255;checksum();cfgInit();boot.mode=memory[10];uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlRequest(true));}
+#endif
 }

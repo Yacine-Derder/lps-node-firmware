@@ -17,6 +17,11 @@ task :unit do
   run_tests(get_unit_test_files)
 end
 
+# Production uses the same MUL fixtures/codecs, without stock-mode dependencies.
+task :unit_mul do
+  run_tests(get_unit_test_files.select { |file| File.basename(file).start_with?('TestMul') })
+end
+
 desc "Generate test summary"
 task :summary do
   report_summary

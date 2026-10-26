@@ -56,7 +56,6 @@ The implementation must handle
 
 #include "cfg.h"
 #include "lpp.h"
-#include "mul_clock_workspace.h"
 
 #define debug(...) printf(__VA_ARGS__)
 
@@ -160,10 +159,7 @@ struct ctx_s {
   // The maximum system tx frequency
   float systemTxFreq;
 };
-static union {struct ctx_s stock;mulClockWorkspace_t mul;} modeState;
-#define ctx modeState.stock
-typedef char mulWorkspaceMustFitStock[(sizeof(mulClockWorkspace_t)<=sizeof(struct ctx_s))?1:-1];
-mulClockWorkspace_t *uwbTdoa3ClockWorkspace(void){return &modeState.mul;}
+static struct ctx_s ctx;
 
 // Packet formats
 #define PACKET_TYPE_TDOA3 0x30

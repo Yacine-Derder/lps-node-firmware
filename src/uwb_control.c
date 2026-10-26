@@ -25,12 +25,21 @@ void uwbControlInit(const uwbConfig_t *c) {
 bool uwbControlCanEnable(void) {
  mulSchedule_t schedule;mulClockFitConfig_t clockConfig;
  const uwbConfig_t *c=uwbGetConfig();
+#if MUL_ONLY
+ if(c->mode!=MODE_MUL_ALR&&c->mode!=MODE_MUL_RLR)return false;
+#endif
  if(!cfgMulClockRead(&clockConfig))return false;
  if(cfgPendingRestart()||!cfgMulScheduleRead(c->address[0],&schedule))return false;
 #if PHY_INTEROP_ROLE || MUL_DIAG_ROLE || MUL_TWR_ROLE
  if(schedule.profile>=MUL_PROFILE_MULTI)return false;
 #endif
- if(c->mode<MODE_MUL_ALR)return allowed;
+ if(c->mode<MODE_MUL_ALR){
+#if MUL_ONLY
+  return false;
+#else
+  return allowed;
+#endif
+ }
 #if !MUL_HYBRID_CH5
  if(schedule.profile==MUL_PROFILE_EXPERIMENTAL&&(c->lowBitrate||c->longPreamble))return false;
 #endif

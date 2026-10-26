@@ -160,8 +160,12 @@ static void command(void) {
 #endif
  if(!valid&&!(legacy&&count==4&&!strcmp(w[0],"setup"))){reply("ERR invalid roster; use :mul setup");return;}
  if(count==2&&!strcmp(w[0],"mode")) {
+#if MUL_ONLY
+  value=255;
+#else
   value=!strcmp(w[1],"anchor")?0:!strcmp(w[1],"tag")?1:!strcmp(w[1],"sniffer")?2:
     !strcmp(w[1],"tdoa2")?3:!strcmp(w[1],"tdoa3")?4:255;
+#endif
   if(!strcmp(w[1],"hybrid")) {
    if(role==3&&MUL_EXPERIMENTAL_STATIONARY_RLR_RATE){reply("ERR static image; use mode hybrid_static");return;}
    value=role==3?6:role<2?5:255;
@@ -232,7 +236,11 @@ bool mulConsolePoll(void) {
  static const char *const helps[]={
   "UWB: :command newline; :console for lines",
   "help show status on off save legacy",
+#if MUL_ONLY
+  "MUL-only: mode hybrid; role ref/follower/rlr",
+#else
   "mode anchor/tag/sniffer/tdoa2/tdoa3/hybrid",
+#endif
   "role ref/follower/rlr/standalone; addr id",
   "reference id; follower id; peer list",
   "cal show; diag [reset]; :mul aliases retained",

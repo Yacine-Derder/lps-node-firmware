@@ -5,6 +5,22 @@ See [the roadmap](../PLAN.md) for milestone status and
 [AGENTS.md](../AGENTS.md) for repository operating rules.
 The code defines implemented behavior; planned extensions below are not firmware features.
 
+## MUL-only production ownership
+
+The production target excludes stock modes0..4, their state machines and legacy
+LPP/pressure/factory-test paths. Their source remains for reference/native tests;
+revision `fd44002` preserves the original combined image. Mode IDs5/6 and MUL
+protocol compatibility remain stable. Existing EEPROM is read without migration
+writes; unsupported stored modes remain idle. See [build/verification](mul_commands.md).
+Clock-fit state is an explicit MUL-owned344-byte object; stock TDoA3 has its own
+original context and is not linked into production. Shared radio/console/kernel
+tasks remain; no stack or USB queue reductions were used to obtain the savings.
+
+StageF consumes timestamped MCS/ROS poses in a known common frame, with supplied
+covariance and deterministic synthetic noise. Downstream geometry/filter interfaces
+receive noisy observations only; pristine truth is reserved for evaluation. No
+SLAM implementation, alignment or uncertainty inference is part of this campaign.
+
 ## Configurable multi-ALR extension
 
 The current implementation extends the preserved legacy two-node path with a

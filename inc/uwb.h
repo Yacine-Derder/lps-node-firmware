@@ -35,6 +35,14 @@
 
 #define MAX_ANCHORS 6
 
+/* Native/upstream builds retain their historical API unless explicitly selected. */
+#ifndef MUL_ONLY
+#define MUL_ONLY 0
+#endif
+#if MUL_ONLY != 0 && MUL_ONLY != 1
+#error MUL_ONLY must be 0 or 1
+#endif
+
 typedef struct uwbConfig_s {
   uint8_t mode;
   mulNetwork_t mulNetwork;
@@ -43,10 +51,12 @@ typedef struct uwbConfig_s {
   mulAlrRole_t mulRole;
   bool mulConfigured;
   uint8_t address[8];
+#if !MUL_ONLY
   uint8_t anchorListSize;
   uint8_t anchors[MAX_ANCHORS];
   float position[3];
   bool positionEnabled;
+#endif
 
   bool smartPower;
   bool forceTxPower;

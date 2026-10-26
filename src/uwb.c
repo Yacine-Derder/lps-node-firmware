@@ -65,11 +65,18 @@ struct {
   uwbAlgorithm_t *algorithm;
   char *name;
 } availableAlgorithms[] = {
+#if MUL_ONLY
+  // Preserve persisted mode numbers without linking any stock state machine.
+  {&dummyAlgorithm, "Unavailable"}, {&dummyAlgorithm, "Unavailable"},
+  {&dummyAlgorithm, "Unavailable"}, {&dummyAlgorithm, "Unavailable"},
+  {&dummyAlgorithm, "Unavailable"},
+#else
   {.algorithm = TABLE_ALGORITHM(uwbTwrAnchorAlgorithm), .name = "TWR Anchor"},
   {.algorithm = TABLE_ALGORITHM(uwbTwrTagAlgorithm),    .name = "TWR Tag"},
   {.algorithm = TABLE_ALGORITHM(uwbSnifferAlgorithm),   .name = "Sniffer"},
   {.algorithm = TABLE_ALGORITHM(uwbTdoa2Algorithm),     .name = "TDoA Anchor V2"},
   {.algorithm = TABLE_ALGORITHM(uwbTdoa3Algorithm),     .name = "TDoA Anchor V3"},
+#endif
   {.algorithm = TABLE_ALGORITHM(mulAlrAlgorithm),       .name = "MUL ALR"},
   {.algorithm = TABLE_ALGORITHM(mulRlrAlgorithm),       .name = "MUL RLR"},
   {NULL, NULL},
@@ -142,10 +149,13 @@ void uwbInit()
     config.mulRole=slot==0?mulAlrReference:slot>0?mulAlrFollower:mulAlrUnsupported;
   }
   if(!cfgMulClockRead(&config.mulClockConfig)){config.mulConfigured=false;config.mulRole=mulAlrUnsupported;}
+#if !MUL_ONLY
   cfgFieldSize(cfgAnchorlist, &config.anchorListSize);
   if (config.anchorListSize <= MAX_ANCHORS) {
     cfgReadU8list(cfgAnchorlist, config.anchors, config.anchorListSize);
   }
+
+#endif
 
   if (config.mode < uwbAlgorithmCount()) {
     algorithm = availableAlgorithms[config.mode].algorithm;
@@ -153,7 +163,9 @@ void uwbInit()
     algorithm = &dummyAlgorithm;
   }
 
+#if !MUL_ONLY
   config.positionEnabled = cfgReadFP32list(cfgAnchorPos, config.position, 3);
+#endif
 
   dwAttachSentHandler(dwm, txcallback);
   dwAttachReceivedHandler(dwm, rxcallback);

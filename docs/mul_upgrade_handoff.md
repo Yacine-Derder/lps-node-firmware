@@ -461,3 +461,82 @@ STM32 HEAD/origin main80e1ce0 and ESP32 HEAD/origin main1373433 agree and trees
 are clean. The only intentionally unstaged file in LPS is the pre-existing
 unrelated docs/mul_core.md edit. Planner APIs/tool/tests are committed in the
 checkpoint containing this section; obtain its exact revision with git log -1.
+
+## User clarification: MUL-only production and MCS-based Stage F
+
+Source request: attachment8bbb0bdb-a15e-495e-9f24-4b5c58a8f385/Pasted text.txt.
+The user's explicit new instruction supersedes earlier stock-mode preservation in
+production. Keep original sources/history; prioritize cleanup before more D/E radio
+features. No hardware authorization was added. StageF is MCS/ROS poses in a known
+common frame, plus configurable reproducible synthetic noise and supplied known
+covariance. SLAM/map alignment/uncertainty inference are OUT OF SCOPE.
+
+Cleanup implemented: Make production is MUL_ONLY=1, excludes stock TWR anchor/tag,
+sniffer, TDoA2/3, LPP, pressure sensor startup and factory-test handlers. No upstream
+source deleted. Original combined build remains Git fd44002 (already published).
+Current target rejects MUL_ONLY=0: when tested, a combined build with explicit new
+workspace overflowed SRAM by164 bytes. Do not reintroduce the inactive-context
+memory overlay to make this optional build fit. Use the historical revision for
+that image; current native stock-source regression tests still pass independently.
+
+Explicit344-byte static MUL workspace replaces all TDoA3 overlay use. TDoA3 source
+now owns its original plain ctx and is absent from production. Production config
+omits old anchor-list/position fields; EEPROM data/field IDs remain readable and
+are not deleted or migrated. Stored0..4 and invalid modes including200/255 cannot
+request RF; mode edits reject removed values with no write. New uninitialized
+config defaults idle rather than a stock transmitter. Main menu lists5/6 only;
+old stock-mode aliases/binary/factory commands are compiled out. PHY/power controls,
+antenna timing, drivers, diagnostics, MUL TWR and passive RLR remain.
+
+Task audit: only shared main/console and UWB owner tasks plus kernel idle are
+needed and retained. No stock-mode-specific task was present. Timers were already
+disabled; unused callback is excluded. UWB1600/main800/idle800 stacks, USB TX512
+queue and useful startup diagnostic1024 buffer remain unchanged. No stack or queue
+cut accounts for savings. Explicit production image checker verifies symbol
+absence/presence, owned workspace, retained allocations and linked flash/RAM bounds.
+
+Final clean CH5/6s build: text116336/data1056/bss11780; actual flash117392 and
+RAM(data+bss+2048 linker stack)12828, free flash13680/RAM3556. Against prior combined
+CH5 image: savings12904 flash and3376 RAM bytes. Clean default PHY image also passes:
+text116048/data1056/bss11780; flash117104, free13968. No LTO needed. These measured
+margins remove the prior planner-integration flash blocker; continue D/E now.
+
+MUL production matrix:212 native and212 ASan/UBSan tests each at10/50/500ms, real
+radio/EEPROM/console code, OBS bounds and invalid compile-time slot checks. After
+adding final invalid-mode200/255 guards, production10ms native+sanitizer rerun
+passes212/212. Original/native combined API suite236 tests at10ms also passes.
+The test tool now cleans result files between profiles: the previous unclean
+filtered summary included24 stale stock results; reported production counts above
+are from isolated clean runs. Compiler build/profile/header dependencies avoid
+retaining old combined-image objects. No hardware was operated.
+
+Reproduce:
+```
+make clean
+make -j4 REV=B BOOTLOAD=0 EXTRA_CFLAGS='-DMUL_HYBRID_CH5=1 -DMUL_PROP_MAX_AGE_MS=6000'
+python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
+python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000
+python3 tools/test/mul_slots.py --slot 10 --prop-age 6000
+```
+Logs: /tmp/mul-only-final-clean-build.log,/tmp/mul-only-final-resources.json,
+/tmp/mul-only-default-build.log,/tmp/mul-only-matrix.log,
+/tmp/mul-only-guards-tests.log,/tmp/mul-only-reference-native.log.
+Current bin is CH5/6s build; it was not flashed. Unrelated docs/mul_core.md remains
+untouched/unstaged. STM32/ESP32 remain clean at80e1ce0/1373433, same wire pin a36af2b.
+
+Updated Stage F acceptance/work plan:
+- ROS-compatible timestamped ALR pose ingress, known robot/frame IDs, explicit
+  freshness/validity. Same replaceable observation interface for future pose sources.
+- Deterministic seeded independent Gaussian noise initially; optional correlated
+  noise. Publish supplied covariance and noise metadata; preserve clean MCS truth
+  in a strictly separate evaluation/log stream. No truth fallback on missing noise.
+- Noisy geometry -> pair distances/delay with covariance, timestamp consistency,
+  stale/missing rejection. Explicit source none/TWR/MCS-noisy. No fusion required.
+- Measured wheel steps from epuck_link (fields20/21) need timestamp/rollover audit.
+  Portable host-tested state[x,y,theta] EKF should execute on ESP32 if practical;
+  keep STM32 timing-critical path lightweight. Raw UWB/steps retained, default off.
+- Measurement uncertainty includes supplied noisy ALR covariance and common-anchor
+  correlations; asynchronous/gated updates, missing/outlier handling, deterministic
+  replay, compare TDoA-only/TDoA+TWR/EKF. Do not estimate frame alignment or SLAM error.
+- Continue scheduler/reply/active ALR–RLR integration first, then MCS-noise/geometry/
+  odometry/EKF and consolidated A–G campaign. No intermediate hardware checkpoint.

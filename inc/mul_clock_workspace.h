@@ -3,7 +3,6 @@
 #define MUL_CLOCK_WORKSPACE_H
 #include "mul_clock_fit.h"
 typedef struct {mulClockFit_t fit;mulClockFitConfig_t config;} mulClockWorkspace_t;
-/* Only the boot-selected MUL radio owner may use this workspace. Embedded
- * storage overlays inactive stock TDoA3 state; no task/queue buffer is reduced. */
+/* Explicit MUL-owned storage; only the boot-selected radio owner may use it. */
 mulClockWorkspace_t *mulClockWorkspace(void);
 #endif

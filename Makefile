@@ -2,6 +2,12 @@ OPENOCD           ?= openocd
 OPENOCD_INTERFACE ?= interface/stlink.cfg
 OPENOCD_CMDS      ?=
 REV               ?= B
+# Production contains MUL only. Original combined image: Git revision fd44002.
+MUL_ONLY          := 1
+ifneq ($(MUL_ONLY),1)
+$(error This production target is MUL-only; use Git revision fd44002 for the original combined image)
+endif
+.DEFAULT_GOAL := all
 PYTHON           ?= python3
 # CFLAGS          += -fdiagnostics-color=auto
 # CFLAGS += -DUSE_FTDI_UART
@@ -59,8 +65,11 @@ OBJS+=vendor/libdw1000/src/libdw1000.o vendor/libdw1000/src/libdw1000Spi.o
 
 OBJS+=src/mul_clock_fit.o src/mul_clock_workspace.o src/dwOps.o src/mul_schedule.o src/mul_multi_protocol.o
 
+ALL_BUILD_OBJS := $(OBJS)
+OBJS := $(filter-out src/uwb_twr_anchor.o src/uwb_twr_tag.o src/uwb_sniffer.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o src/lpp.o src/lps25h.o src/production_test.o,$(OBJS))
+
 CFLAGS+=$(PROCESSOR) $(INCLUDES) -O3 -g3 -Wall -Wno-pointer-sign -std=gnu11
-CFLAGS+=$(EXTRA_CFLAGS)
+CFLAGS+=$(EXTRA_CFLAGS) -DMUL_ONLY=$(MUL_ONLY)
 LDFLAGS+=$(PROCESSOR) --specs=nano.specs --specs=nosys.specs -lm -lc -u _printf_float
 
 ifeq ($(strip $(BOOTLOAD)),0)
@@ -93,7 +102,13 @@ all: check_submodules bin/lps-node-firmware.elf bin/lps-node-firmware.dfu
 # Makefile has no compiler-generated header dependencies: invalidate objects on
 # any portable core input change so incremental builds cannot keep a stale core.
 MUL_CORE_INPUTS := $(wildcard portable/mul_core/*.[ch])
-$(OBJS): $(MUL_CORE_INPUTS)
+# First production build invalidates objects from the old combined image.
+BUILD_PROFILE := bin/.mul-only-$(MUL_ONLY)
+$(BUILD_PROFILE):
+	@mkdir -p bin
+	@rm -f bin/.mul-only-*
+	@touch $@
+$(OBJS): $(MUL_CORE_INPUTS) $(BUILD_PROFILE) Makefile inc/uwb.h inc/mul_clock_workspace.h
 
 bin/lps-node-firmware.elf: $(OBJS)
 	$(LD) -o $@ $^ $(LDFLAGS)
@@ -101,7 +116,7 @@ bin/lps-node-firmware.elf: $(OBJS)
 	@echo BOOTLOADER Support: $(BOOTLOAD)
 
 clean:
-	rm -f bin/lps-node-firmware.elf bin/lps-node-firmware.dfu bin/.map $(OBJS)
+	rm -f bin/lps-node-firmware.elf bin/lps-node-firmware.dfu bin/.map $(ALL_BUILD_OBJS) bin/.mul-only-*
 
 flash:
 	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets -c "reset halt" \

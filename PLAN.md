@@ -12,6 +12,21 @@ See [AGENTS.md](AGENTS.md) for operating rules and
 [the architecture](docs/mul_architecture.md) for durable technical decisions.
 Source code remains authoritative for what is actually implemented.
 
+## Production cleanup and IPIN scope
+
+The current production build is MUL-only, as explicitly requested after the
+initial compatibility campaign. Original stock-mode sources remain in Git; the
+last combined image is revision `fd44002`. Production retains mode IDs5/6 and
+MUL timing/protocol compatibility, but stored modes0..4 remain idle and their
+commands are rejected. Clock fitting owns its storage rather than overlaying
+TDoA3. See [production build details](docs/mul_commands.md).
+
+StageF uses timestamped MCS/ROS ALR poses in a known common frame, with deterministic
+synthetic noise and supplied covariance. Uncorrupted MCS truth stays separate for
+evaluation. SLAM, map alignment and inferred SLAM uncertainty are out of scope.
+Optional measured-wheel-step EKF should prefer ESP32, retain raw data and default
+off. Continue D/E/F/G without physical checkpoints; hardware remains unauthorized.
+
 ## Current software upgrade campaign
 
 Stages A/B and numerical timing integration are software-tested across LPS,

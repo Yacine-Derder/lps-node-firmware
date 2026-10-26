@@ -104,6 +104,7 @@ static void main_task(void *pvParameters) {
   }
   printf("\r\n");
 
+#if !MUL_ONLY
   // Initializing pressure sensor (if present ...)
   lps25hInit(&hi2c1);
   testSupportPrintStart("Initializing pressure sensor");
@@ -117,6 +118,8 @@ static void main_task(void *pvParameters) {
 
   testSupportPrintStart("Pressure sensor self-test");
   testSupportReport(&selftestPasses, lps25hSelfTest());
+
+#endif
 
   // Initializing i2c eeprom
   eepromInit(&hi2c1);
@@ -144,6 +147,7 @@ static void main_task(void *pvParameters) {
   struct uwbConfig_s * uwbConfig = uwbGetConfig();
   printf("CONFIG\t: Address is 0x%X\r\n", uwbConfig->address[0]);
   printf("CONFIG\t: Mode is %s\r\n", uwbAlgorithmName(uwbConfig->mode));
+#if !MUL_ONLY
   printf("CONFIG\t: Tag mode anchor list (%i): ", uwbConfig->anchorListSize);
   for (i = 0; i < uwbConfig->anchorListSize; i++) {
     printf("0x%02X ", uwbConfig->anchors[i]);
@@ -156,6 +160,7 @@ static void main_task(void *pvParameters) {
                                                       uwbConfig->position[1],
                                                       uwbConfig->position[2]);
   }
+#endif
   printf("CONFIG\t: SmartPower enabled: %s\r\n", uwbConfig->smartPower?"True":"False");
   printf("CONFIG\t: Force TX power: %s\r\n", uwbConfig->forceTxPower?"True":"False");
   if(uwbConfig->forceTxPower) {
@@ -256,9 +261,11 @@ static void handleMenuMain(char ch, MenuState* menuState) {
       menuState->configChanged = false;
       menuState->tempId = 0;
       break;
+#if !MUL_ONLY
     case 'a': changeMode(MODE_ANCHOR); break;
     case 't': changeMode(MODE_TAG); break;
     case 's': changeMode(MODE_SNIFFER); break;
+#endif
     case 'm':
       printModeList();
       printf("Type 0-9 to choose new mode...\r\n");
@@ -276,6 +283,7 @@ static void handleMenuMain(char ch, MenuState* menuState) {
       help();
       menuState->configChanged = false;
       break;
+#if !MUL_ONLY
     case 'b':
       cfgSetBinaryMode(true);
       menuState->configChanged = false;
@@ -285,6 +293,7 @@ static void handleMenuMain(char ch, MenuState* menuState) {
       printf("System halted, reset to continue\r\n");
       while(true){}
       break;
+#endif
     case 'p':
          printPowerHelp();
          menuState->currentMenu = powerMenu;
@@ -474,6 +483,9 @@ static void changeAddress(uint8_t addr) {
 }
 
 static void changeMode(unsigned int newMode) {
+#if MUL_ONLY
+    if(newMode!=MODE_MUL_ALR&&newMode!=MODE_MUL_RLR){printf("ERR MUL-only image: mode5/6 required\r\n");return;}
+#endif
     printf("Previous device mode: ");
     printMode();
 
@@ -526,7 +538,7 @@ static void printModeList()
 
   printf("-------------------\r\n");
   printf("Available UWB modes:\r\n");
-  for (int i=0; i<count; i++) {
+  for (int i=MUL_ONLY?MODE_MUL_ALR:0; i<count; i++) {
     printf(" %d - %s%s\r\n", i, uwbAlgorithmName(i),
                              (i == current_mode)?" (Current mode)":"");
   }
@@ -578,7 +590,7 @@ static void printRadioModeList()
   cfgReadU8(cfgLongPreamble, &longPreamble);
 
   printf("-------------------\r\n");
-  printf("NOTE: only change if you use TDoA3. Other modes will stop working if changed from the default mode.\r\n");
+  printf("NOTE: PHY must match all MUL participants; experimental timing requires fast PHY.\r\n");
   printf("\r\n");
   printf("Current mode is "); printRadioMode();
   printf("\r\n");
@@ -604,9 +616,11 @@ static void help() {
   printf("-------------------\r\n");
   printf("0-9 - set address (node ID)\r\n");
   printf("i   - set node ID from 0 to 255\r\n");
+#if !MUL_ONLY
   printf("a   - anchor mode\r\n");
   printf("t   - tag mode\r\n");
   printf("s   - sniffer mode\r\n");
+#endif
   printf("m   - List and change mode\r\n");
   printf("r   - List and change UWB radio settings\r\n");
   printf("p   - change power mode\r\n");
@@ -614,8 +628,10 @@ static void help() {
   printf("u   - enter BSL (DFU mode)\r\n");
   printf("h   - This help\r\n");
   printf(":mul show - persistent MUL role/roster commands (newline)\r\n");
+#if !MUL_ONLY
   printf("---- For machine only\r\n");
   printf("b   - Switch to binary mode (sniffer only)\r\n");
+#endif
 }
 
 static StaticTask_t xMainTask;
@@ -670,6 +686,7 @@ void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackTy
   *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
 }
 
+#if configUSE_TIMERS
 void vApplicationGetTimerTaskMemory( StaticTask_t **ppxTimerTaskTCBBuffer, StackType_t **ppxTimerTaskStackBuffer, uint32_t *pulTimerTaskStackSize )
 {
   static StaticTask_t xTimerTaskTCB;
@@ -678,6 +695,8 @@ void vApplicationGetTimerTaskMemory( StaticTask_t **ppxTimerTaskTCBBuffer, Stack
   *ppxTimerTaskStackBuffer = uxTimerTaskStack;
   *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
 }
+
+#endif
 
 void vAssertCalled( unsigned long ulLine, const char * const pcFileName )
 {

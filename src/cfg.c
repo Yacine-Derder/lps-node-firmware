@@ -145,7 +145,9 @@ static bool check_content(void) {
 }
 
 static bool write_defaults(void) {
+#if !MUL_ONLY
   uint8_t default_anchor_list[] = {1, 2, 3, 4, 5, 6};
+#endif
 
   buffer[0] = MAGIC;
   buffer[1] = 1; // Major version
@@ -154,8 +156,12 @@ static bool write_defaults(void) {
   buffer[4] = 0; // Length of TLV
   buffer[5] = buffer[0] + buffer[1];
   // Write the default address
+#if MUL_ONLY
+  if(!cfgWriteU8(cfgAddress,0)||!cfgWriteU8(cfgMode,255)||!cfgWriteU32(cfgMulSlotMs,10))return false;
+#else
   if(!cfgWriteU8(cfgAddress, 0)||!cfgWriteU8(cfgMode, MODE_ANCHOR)||!cfgWriteU32(cfgMulSlotMs,10)||
      !cfgWriteU8list(cfgAnchorlist, default_anchor_list, sizeof(default_anchor_list)))return false;
+#endif
   write_crc();
   if (!eepromWrite(0, buffer, 7))
     return false;
@@ -228,6 +234,9 @@ bool cfgReadU8(ConfigField field, uint8_t * value) {
 }
 
 bool cfgWriteU8(ConfigField field, uint8_t value) {
+#if MUL_ONLY
+ if(field==cfgMode&&value!=MODE_MUL_ALR&&value!=MODE_MUL_RLR&&value!=255)return false;
+#endif
  return mulStore(field,&value,1);
 }
 
