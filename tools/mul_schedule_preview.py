@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Preview production-C ranging reservations without connecting to hardware.
 
-LPS persists these plans and runs generated AA reservations; active AR and
-matching STM32 reception are still under development.
+LPS runs generated AA reservations; matching STM32/ESP receive and telemetry
+paths are connected. Active ALR-RLR ranging remains under development.
 Target rates are per participant pair in integer milliHz (500 means0.5Hz).
 """
 import argparse

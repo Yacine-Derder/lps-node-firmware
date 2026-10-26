@@ -889,3 +889,70 @@ Sanitizer matrix coversN2..8/policies/wrap/raw sizes/markers/hash/type rejection
 /tmp/mul-plan-telemetry-core.log. Next export committed core, update STM/ESP priority
 and timestamps, Python labels/compact/replay, then activate passive STM RF4 only
 with actual adapter tests. No AR TX is implied by these codecs.
+
+
+## Current cross-platform generated AA/RF4 milestone (supersedes pending receiver gates)
+
+Published compatible software set: LPS coref5bbbecd68eb3bf34f83718539a654cefa276a6c
+(full plan2/RF4/type11/12), STM2bfdc3a, ESP46a80d8. STM schema9 persistence was
+committed inabd3048. LPS selected AA generation was469baa5. Latest root docs-only
+commits do not change the shared pin. Both consumer snapshots verify unchanged.
+
+STM selected AA-only plans now initialize mulMultiReceiverInitPlan against the
+immutable hybridConfig.plan, using the selected broadcast schedule and effective
+clock period. Retained schedule/clock settings remain separately persisted; no
+alias rewriting. RF activation still refuses enabled AR plans, because active
+ALR–RLR is NOT implemented. Selected eligibility uses the plan roster rather than
+requiring unrelated retained legacy peers. Mode4 keeps unknown rate; mode5 is the
+existing stationary opt-in. No physical acceptance or dynamic accuracy claimed.
+
+Planned vector11/raw12 quality4 uses fullplan hash. STM preserves cycle observation
+uptime for11 and gives it essential USB/Wi-Fi queue priority. ESP gives11 matching
+priority. Python uses explicit profile4 and fingerprint_scope=ranging_plan;
+compact vectors preserve those labels. Raw12 verifies RF4/hash/index and retains
+native bytes. Types8/9 keep prior profiles/markers; old parsers reject11/12.
+Preview capability metadata now reports LPS_AA and RLR_receive true, AR false.
+
+Verification:
+- Full canonical portable sanitizer suite passed /tmp/mul-plan-telemetry-core.log.
+- STM full runtime-config suite including schema9 word cuts/CLI and new actual
+  DW3000 adapter passes /tmp/mul-plan-activation-final-native.log. New fixture
+  test_plan_radio.c coversN2/4/8,100/200/1000ms, independent skews/signed paths,
+  wrong fullplan hash, missing frames, bad capture age, native40/cycle32/uptime32
+  wraps, selected reboot, preserved observation uptime, saturated essential queues
+  and zero TX. Fixture health summaries are allowed alongside raw/clock records.
+- Frequency suite /tmp/mul-plan-activation-frequency.log passes. Clean Universal
+  build /tmp/mul-plan-activation-build.log: text151748,data768,bss38320; ELF-sector
+  check passes, RAM39088. No radio task/queue cuts.
+- ESP C protocol/transport sanitizers plus87 Python tests pass at
+  /tmp/mul-plan-activation-esp-host.log. New test_uwb_plan.py compiles actual core
+  emitter forN2..8/raw40/80/90, strict markers/hash and compact labels.
+- 52 actual-adapter records replay through ESP UART/parser/priority queues/TCP
+  reconnect/collector at /tmp/mul-plan-e2e-final.log. Raw debug rows compare exact
+  native bytes/hash, then compact transformation checks profile4/vectors including
+  missing/wrong-plan reasons. Input /tmp/mul-plan-rf4.uart (final rerun trace also
+  /tmp/mul-plan-rf4-final.uart). Command in ESP:
+  python3 tools/verify_multi_replay.py --planned /tmp/mul-plan-rf4-final.uart
+- ESP IDF UwbReview build /tmp/mul-plan-activation-esp-build.log passes; app820464
+  bytes (0xc84f0) in1MiB partition. Use venv/bin/python for that cache, notpython3.
+
+No hardware commands, flash, radio operation or Raspberry Pi access occurred.
+Latest StageF boundary above remains authoritative: ROS-agnostic LPS USB pose
+interface/geometry and host synthetic replay only, external Pi bridge OUT OF SCOPE.
+
+Next substantive implementation: actual StageE generated ALR–RLR ranging, plus
+remaining D priorities/freshness configuration. RF4 generic TWR codec/mulTwr can
+bind assigned AA/AR pairs, but current ALR owner only initiates reference-follower
+AA and DW3000 adapter only receives broadcasts. Build scheduled RLR responder TX
+with verified delayed-TX stamps/lead, all5 messages, assigned cycle/op/pair/hash,
+lost/error/late/cancellation recovery and bounded raw/quality outputs. Keep ALR
+reference/follower data roles separate from per-operation initiator/responder.
+Follower ALR AR initiators must map reference reservation times into their LOCAL
+hardware clock; never subtract an initiator P1 from a different reference clock.
+Before reusing the AA context for AR, preserve an independent committed AA delay
+cache with source/epoch/age so AR cannot overwrite synchronization geometry.
+Only then remove AR activation refusal, with actual adapter and cross-platform
+fault tests. Continue F abstract USB poses/downstream geometry/measured-step
+portable optional ESP EKF, then G consolidated experiment campaign. Goal ACTIVE;
+all of D/E/F/G must be completed, not just RF4 receive. Unrelated docs/mul_core.md
+in LPS remains16 additions/17 deletions and must not be staged.

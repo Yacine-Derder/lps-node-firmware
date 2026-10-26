@@ -518,10 +518,13 @@ active ALR–RLR adapters are implemented. Selected plans currently require mode
 roster membership and the known fast PHY. Diagnostics cannot override them.
 
 **Compatibility:** generated-plan RF envelope4 is deliberately distinct from
-profile3's RF3 and legacy frames. The current STM32/ESP snapshot does not yet
-support RF4 reception, persistence or vector labels. A generated LPS plan must
-therefore not be treated as an end-to-end deployable configuration. Unselected
-profiles retain their previous protocols. No hardware has been operated here.
+profile3's RF3 and legacy frames. Matching STM32 schema9 now persists/selects
+independent plans and receives RF4 passively; ESP/collector supports new planned
+vector/raw types11/12 with quality4, full-plan fingerprint and explicit profile4.
+All participants must have the same full plan, including RLR roster/rates. Old
+decoders reject the new types. This path is software-tested; physical timing and
+interoperability remain unverified. Unselected profiles retain their protocols.
+No hardware has been operated here.
 
 The64-byte plan codec2 embeds the32-byte broadcast codec2, RLR roster, AA/AR
 rates, enabled classes, reply and utilization. The broadcast's legacy ranging flags

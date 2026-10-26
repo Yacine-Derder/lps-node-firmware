@@ -14,7 +14,7 @@ class SchedulePreview(unittest.TestCase):
         result = planner.preview(config, cycles=4)
         self.assertEqual(result['version'], 2)
         self.assertEqual(result['planner_version'], 2)
-        self.assertEqual(result['radio_integration'], dict(lps_aa=True, rlr_receive=False, alr_rlr=False))
+        self.assertEqual(result['radio_integration'], dict(lps_aa=True, rlr_receive=True, alr_rlr=False))
         self.assertEqual((result['aa_pairs'], result['ar_pairs']), (3, 8))
         self.assertEqual(result['requested_millihz'], 17500)
         self.assertEqual(sum(len(c['operations']) for c in result['cycles']), 70)
