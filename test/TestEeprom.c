@@ -7,8 +7,9 @@ static int devAddr = 0xA0;
 
 static I2C_HandleTypeDef handle;
 static uint8_t data[96] = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi ut eleifend purus, at massa nunc.";
-static int address = 0x4711;
-static size_t length = 4711;
+// Exercise successful bus calls with a valid device address and real buffer size.
+static int address = 0x0711;
+static size_t length = sizeof(data);
 
 static bool ernableDelayTest = false;
 static int vTaskDelayCallCount = 0;

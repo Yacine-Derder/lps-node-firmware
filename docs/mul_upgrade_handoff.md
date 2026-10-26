@@ -608,3 +608,55 @@ RAM12828/free3556. No new state/stack/queue allocation. Logs:
 Next: commit/export shared core to STM32/ESP, add STM RF-OFF matching reply setter/
 preview/persistence/guards so its passive schedule fingerprint follows ALRs. Then
 connect versioned persistent plan and generated radio ownership, plus StageE RLR TX.
+
+## Reply timing compatible revision set and final verification
+
+LPS `e7f3518` is published; STM32 `09f7300` and ESP32 `b1353a9` import its canonical
+core deterministically (verified UPSTREAM pin e7f351836c74a88453d843825365393b16f21e50).
+STM32 adds matching RF-OFF twr_reply_ms scalar, preview, budget validation and
+schema8 persistence. AA toggles preserve selector. All64-word append/rotation
+power-cut tests exercise5ms settings; actual passive RX adapter uses persisted5ms
+fingerprints across2/3/5/7/17ms broadcasts and100..2000ms cycles, with0 RLR TX.
+ESP imports shared codec/math/planner without changing telemetry layouts;85-test
+host suite and IDF build pass. Actual cross-platform bridge replay passes87 raw/
+clock/vector records including invalid captures, reconnect and config fingerprints.
+
+Latest verification: LPS221 production native+221 ASan/UBSan tests at each10/50/
+500ms; portable suite passed. The full legacy/native-source API suite245 tests
+at10ms passes after correcting old TestEeprom read fixtures: address0x4711 was
+outside the8KiB device and its4711-byte length exceeded its96-byte array; successful
+I2C mocks now use valid address0x0711 and sizeof(data). Out-of-range inputs remain
+covered explicitly in TestMulEeprom and guards were NOT relaxed to satisfy mocks.
+
+Clean CH5 LPS: text117168,data1056,bss11780; linked flash118224/free12848,
+RAM12828/free3556. STM32 Universal RAM38800,flash146100 and ELF sectors checked.
+ESP app0xc8260 in1MiB partition (22% free). These are software builds, not hardware
+performance or measured short-reply interoperability. No device was opened/flashed.
+
+Logs:/tmp/mul-reply-final-tests.log,/tmp/mul-reply-matrix.log,
+/tmp/mul-reply-reference-native.log,/tmp/mul-reply-core-final.log,
+/tmp/mul-reply-stm-final-tests.log,/tmp/mul-reply-stm-build.log,
+/tmp/mul-reply-esp-tests.log,/tmp/mul-reply-esp-build.log,
+/tmp/mul-reply-bridge.log. Current bin artifacts remain CH5/6s; no flash action.
+
+Immediate next work is the rest of D/E, not another reply-only refactor:
+- Define versioned persistent full ranging plan (RLR roster, per-pair target rates,
+  priorities/freshness), preserving old100-byte EEPROM image. External chip design
+  evidence now supports a separately bounded region with explicit board assumption;
+  implement commit-last/CRC/readback and interrupted-write rollback in native tests.
+  Avoid growing cfg.c's100-byte buffer and its stack-local copies blindly.
+- Bind full plan fingerprint and generated reservation ownership into actual ALR
+  radio owner/mul_twr, with fresh version/envelope rejection by old participants;
+  replace fixed windows, do not overlap two schedulers. Carry per-operation start,
+  poll,end and participant pair through TWR guards/timeouts. Cache/precompute bounded
+  timing outside deadline-critical callbacks where useful; native planner APIs are
+  already available in all three core snapshots but NOT used by live firmware.
+- Implement scheduled DW3000 RLR participation and compatible five-message protocol,
+  multiple RLRs, raw/quality telemetry, lost-packet/deadline/CRC/cancellation recovery.
+- StageF must follow user clarification above: MCS+seeded noise known common frame,
+  separate pristine truth, geometry correction source none/TWR/MCS-noisy; measured
+  step counters and optional portable ESP EKF, no SLAM/frame alignment. Then G.
+
+Goal remains active and overall work incomplete. This is a verified context
+checkpoint; user did not request a pause or a hardware checkpoint. Preserve the
+unrelated docs/mul_core.md edits. Other worktrees are clean once pushes complete.
