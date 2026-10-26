@@ -271,3 +271,34 @@ Next concrete actions:
    sample period for replay. Pin only a committed shared revision into consumers.
 5. Test actual adapters at3/5/2ms with simulated setup lag, missing packets, failed
    delayed-TX, period changes and power cuts; rebuild all targets. Then proceedD–G.
+
+## LPS experimental adapter progress (Stage C consumers pending)
+
+LPS now has opt-in `cfg set profile experimental`, numerical `slot_ms`,
+`cycle_ms`100..2000 step10, `tx_lead_us`, `rx_budget_us`, `airtime_us`, `guard_us`
+(step100) and `alr_alr_twr on/off`, all RF-OFF-only. `cfg roster show` includes
+budgets/guard/AA flag and experimental marker. Default experimental budgets are
+5ms lead+2ms processing+1ms airtime+100us guard, so3ms is rejected unless explicitly
+lowering budgets. Example3ms software model: lead1000/rx500/air1000/guard100us.
+Actual minimum-lead checks before and after SPI remain; simulated3ms SPI delay
+still skips a short slot without transmitting. Only known fast PHY is permitted
+for experimental activation (the CH5 build forces it; non-CH5 long/low-rate modes
+fail closed). These are configured software budgets, not measured capabilities.
+
+Actual ALR tests cover2/3/5/7/17ms spacing,100/200/1000/2000ms reference periods,
+all8 slot offsets, clock period consistency, after-SPI deadline failure and no TWR
+activity at old fixed windows when AA is disabled.234 native tests pass. Default
+protocol1/2 behavior is unchanged; experimental metadata has version3 envelopes.
+Current LPS build text129104/data1136/bss15076 fits. Application/HAL/USB middleware
+and standard kernel C use-Os; architecture-specific RTOS port and radio driver
+retain-O3. No stack/queue reductions. Stock TWR config snapshots remain owned and
+cover precisely the fields those engines use, preserving mode behavior.
+
+The shared type8/type9 codec now requires quality marker3 for numerical experimental
+spacing/cycles; old unmarked records retain their constraints. Type10 clock-record
+version2 adds explicit capture-age at90..91, version tag2 at88 (89 reserved), to
+avoid replaying invalid RX captures as valid. New decoders must also accept old
+version1 records with zero88..149, labeling capture age unknown. Clock sample period
+uses the common transaction field in version2 (0 means compatibility1000ms).
+Consumer parser/publication update and STM32 schema8 are next; no StageC completion
+claim until the complete compatible revision set/builds/replays pass.

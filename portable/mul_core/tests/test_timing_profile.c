@@ -1,4 +1,5 @@
 #include "mul_multi_receiver.h"
+#include "mul_telemetry.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +36,11 @@ static void synthetic(unsigned count,unsigned spacing,unsigned period) {
    mulMultiBroadcast_t ignored;assert(!mulMultiBroadcastDecode(&old,frame,n,&ignored));
   }
   mulMultiCycle_t result;assert(mulMultiReceiverPoll(&receiver,now+(count-1)*spacing+20,&result));
+  mulTelemetry_t telemetry={.type=mulTlmVector,.node=141,.radio=2,.role=2,.mode=5,.epoch=7,.quality=3,.ratePolicy=1,.vector=result};
+  char line[MUL_TLM_LINE];mulTelemetry_t recovered;
+  assert(mulTelemetryEncode(line,sizeof(line),&telemetry)&&mulTelemetryDecode(line,&recovered));
+  assert(recovered.quality==3&&recovered.vector.slotMs==spacing&&recovered.vector.periodMs==period);
+  if(spacing!=10&&spacing!=50&&spacing!=500){telemetry.quality=0;assert(!mulTelemetryEncode(line,sizeof(line),&telemetry));}
   if(step>=5)for(unsigned slot=1;slot<count;slot++) {
    if(result.values[slot-1].status!=mulDownlinkAvailable)fprintf(stderr,"timing N=%u spacing=%u period=%u step=%u slot=%u status=%u reason=%u rate=%u\n",count,spacing,period,step,slot,result.values[slot-1].status,result.values[slot-1].reason,receiver.rate.status);
    assert(result.values[slot-1].status==mulDownlinkAvailable);

@@ -14,7 +14,7 @@
 static const void *twrContext=&mulDefaultNetwork;
 void mulTwrConfigureNetwork(const mulNetwork_t *network) {twrContext=network?network:&mulDefaultNetwork;}
 bool mulTwrConfigureSchedule(mulTwr_t *twr,const mulSchedule_t *schedule,unsigned slot,unsigned window) {
- if(!twr||mulScheduleValidate(schedule)||schedule->profile!=MUL_PROFILE_MULTI||!slot||slot>=schedule->count||window>=MUL_SYNC_WINDOWS)return false;
+ if(!twr||mulScheduleValidate(schedule)||schedule->profile<MUL_PROFILE_MULTI||!slot||slot>=schedule->count||window>=MUL_SYNC_WINDOWS)return false;
  twrContext=schedule;twr->multiProfile=1;twr->syncWindow=window;twr->followerSlot=slot;return true;
 }
 static const mulNetwork_t *networkFor(const mulTwr_t *twr,mulNetwork_t *pair) {

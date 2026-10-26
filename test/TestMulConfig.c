@@ -260,3 +260,23 @@ void test_clockEstimatorSettingsPersistenceAndRfOffGuards(void) {
  send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(1,c.estimator);
  send(":off\n");apply();send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(0,c.estimator);
 }
+void test_experimentalNumericalTimingRequiresExplicitBudgetsAndRfOff(void) {
+ send(":off\n");apply();send(":cfg set slot_ms 10\n:cfg roster set 0x84 0x85 0x86 0x87\n:cfg set profile experimental\n");
+ mulSchedule_t spec;TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&spec));TEST_ASSERT_EQUAL(MUL_PROFILE_EXPERIMENTAL,spec.profile);
+ unsigned before=writes;send(":cfg set slot_ms 3\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":cfg set tx_lead_us 1000\n:cfg set rx_budget_us 500\n:cfg set slot_ms 3\n");
+ TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&spec));TEST_ASSERT_EQUAL(3,spec.slotMs);TEST_ASSERT_EQUAL(1000,spec.txLeadUs);
+ before=writes;send(":cfg set cycle_ms 200\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":cfg set alr_alr_twr off\n:cfg set cycle_ms 200\n");cfgInit();
+ TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&spec));TEST_ASSERT_EQUAL(200,spec.periodMs);TEST_ASSERT_FALSE(mulScheduleAlrRanging(&spec));
+ send(":cfg roster show\n");TEST_ASSERT_NOT_NULL(strstr(output,"experimental=1"));TEST_ASSERT_NOT_NULL(strstr(output,"process=500"));
+ send(":clock show\n");TEST_ASSERT_NOT_NULL(strstr(output,"CLOCK period=200"));
+#if !MUL_HYBRID_CH5
+ boot.lowBitrate=true;TEST_ASSERT_FALSE(uwbControlCanEnable());boot.lowBitrate=false;
+#endif
+ before=writes;send(":cfg set tx_lead_us 499\n:cfg set guard_us 13\n:cfg set cycle_ms 201\n:cfg set profile legacy\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(3,boot.mulNetwork.slotMs);TEST_ASSERT_EQUAL(200,boot.mulSchedule.periodMs);
+ before=writes;send(":cfg set slot_ms 5\n:cfg set tx_lead_us 2000\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");apply();send(":cfg set slot_ms 10\n:cfg set cycle_ms 1000\n:cfg set profile multi\n");
+ TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&spec));TEST_ASSERT_EQUAL(MUL_PROFILE_MULTI,spec.profile);TEST_ASSERT_EQUAL(0,spec.txLeadUs);
+}

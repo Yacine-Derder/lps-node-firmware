@@ -16,9 +16,9 @@
 
 // DW1000 time units: 499.2 MHz * 128. These are not STM32 milliseconds.
 #define MUL_DTU_PER_MS UINT64_C(63897600)
-#define MUL_TX_PERIOD_DTU (1000 * MUL_DTU_PER_MS)
+#define MUL_TX_PERIOD_DTU (transmitPeriodDtu())
 #define MUL_TX_LEAD_DTU (20 * MUL_DTU_PER_MS)
-#define MUL_TX_MIN_LEAD_DTU (5 * MUL_DTU_PER_MS)
+#define MUL_TX_MIN_LEAD_DTU (minimumLeadDtu())
 #define MUL_TX_COMPLETION_MS 100
 #define MUL_TX_ALIGNMENT UINT64_C(512)
 
@@ -57,6 +57,9 @@ static TickType_t lastReferenceTick;
 #define followerClock mulRoleIo.alr.clock
 #define ranging mulRoleScratch.twr
 static uint8_t followerSeen;
+
+static uint64_t transmitPeriodDtu(void){return (uint64_t)(multiMode?schedule->periodMs:1000)*MUL_DTU_PER_MS;}
+static uint64_t minimumLeadDtu(void){return ((uint64_t)(multiMode?mulScheduleLeadUs(schedule):5000)*MUL_DTU_PER_MS+999)/1000;}
 
 #define MUL_REFERENCE_LOSS_MS MUL_SOURCE_TIMEOUT_MS
 
@@ -143,7 +146,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   }
   if(!mulNetworkValid(alrNetwork)||mulNetworkRole(alrNetwork,source)!=alrRole)alrRole=mulAlrUnsupported;
   memset(&referenceState,0,sizeof(referenceState));
-  multiMode=config->mulConfigured&&config->mulSchedule.profile==MUL_PROFILE_MULTI;
+  multiMode=config->mulConfigured&&config->mulSchedule.profile>=MUL_PROFILE_MULTI;
   if(multiMode) {
     schedule=&config->mulSchedule;int index=mulScheduleIndex(schedule,source[0]);
     if(mulScheduleValidate(schedule)||index<0)alrRole=mulAlrUnsupported;
@@ -152,11 +155,15 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
       if(mulNetworkRole(alrNetwork,source)!=alrRole)alrRole=mulAlrUnsupported;}
   }
   if(!multiMode&&!mulScheduleTag(mulNetworkSlotMs(alrNetwork)))alrRole=mulAlrUnsupported;
+#if !MUL_HYBRID_CH5
+  if(multiMode&&schedule->profile==MUL_PROFILE_EXPERIMENTAL&&(config->lowBitrate||config->longPreamble))alrRole=mulAlrUnsupported;
+#endif
   referenceAcquired = false;
   mulClockReset(&followerClock);
   mulClockWorkspace_t *workspace=mulClockWorkspace();mulClockFitReset(&workspace->fit);
   workspace->config=config->mulClockConfig;
   if(!mulClockFitConfigValid(&workspace->config))mulClockFitDefaults(&workspace->config);
+  if(multiMode)workspace->config.periodMs=schedule->periodMs;
   mulTwrInit(&ranging);mulTwrConfigureNetwork(alrNetwork);
   followerSeen = false;
   printf("MUL ALR: Mode initialized role=%s src=0x%02X slot_ms=%u\r\n",
@@ -209,6 +216,7 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
     if(multiMode)length=mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,localSlot,pendingSequence,pendingTimestamp,&relation);
     else {mulRelationEncode(txFrame,&packet,&relation);length=MUL_RELATION_FRAME_LENGTH;}
   }
+  if(!length){dwIdle(dev);printf("MUL ALR: invalid TX payload; skipped\r\n");return false;}
   dwSetData(dev, txFrame, length);
 
   // Check again after SPI setup, before arming. Leave room for preamble/power-up.

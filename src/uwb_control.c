@@ -28,10 +28,12 @@ bool uwbControlCanEnable(void) {
  if(!cfgMulClockRead(&clockConfig))return false;
  if(cfgPendingRestart()||!cfgMulScheduleRead(c->address[0],&schedule))return false;
 #if PHY_INTEROP_ROLE || MUL_DIAG_ROLE || MUL_TWR_ROLE
- if(schedule.profile==MUL_PROFILE_MULTI)return false;
+ if(schedule.profile>=MUL_PROFILE_MULTI)return false;
 #endif
- if(schedule.profile==MUL_PROFILE_EXPERIMENTAL)return false; // New adapter integration checkpoint pending.
  if(c->mode<MODE_MUL_ALR)return allowed;
+#if !MUL_HYBRID_CH5
+ if(schedule.profile==MUL_PROFILE_EXPERIMENTAL&&(c->lowBitrate||c->longPreamble))return false;
+#endif
  uint8_t storedBytes;
  if(schedule.profile==MUL_PROFILE_LEGACY&&!cfgFieldSize(cfgMulSchedule,&storedBytes))return allowed;
  uint8_t mode,node;
@@ -62,7 +64,7 @@ bool uwbControlApply(dwDevice_t *dev,uwbAlgorithm_t *algorithm) {
        c->mulRole=c->mode==MODE_MUL_ALR?(slot?mulAlrFollower:mulAlrReference):mulAlrUnsupported;c->mulConfigured=true;}
    }
  }
- if(uwbGetConfig()->mulSchedule.profile==MUL_PROFILE_MULTI&&!uwbControlCanEnable())requested=false;
+ if(uwbGetConfig()->mulSchedule.profile>=MUL_PROFILE_MULTI&&!uwbControlCanEnable())requested=false;
  if(requested==running)return false;
  dwIdle(dev);dwClearAllStatus(dev);running=false;
  if(requested){algorithm->init(uwbGetConfig(),dev);running=true;}

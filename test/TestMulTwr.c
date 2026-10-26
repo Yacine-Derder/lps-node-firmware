@@ -908,3 +908,43 @@ void test_mulMultiFollowerRegressionWindowAndOutlierNeverSuppressScheduledBroadc
  TEST_ASSERT_TRUE(mulClockWorkspace()->fit.ready);TEST_ASSERT_EQUAL(24,mulClockWorkspace()->fit.count);
  TEST_ASSERT_EQUAL_UINT32(1,mulClockWorkspace()->fit.rejected);TEST_ASSERT_INT_WITHIN(1,15000,followerClock.skewPpb);
 }
+static void experimentalConfig(unsigned slot,unsigned spacing,unsigned period) {
+ multiConfig(8,slot,10);mulScheduleExperimental(&multiConfiguration.mulSchedule);
+ multiConfiguration.mulSchedule.slotMs=spacing;multiConfiguration.mulSchedule.periodMs=period;
+ multiConfiguration.mulSchedule.txLeadUs=500;multiConfiguration.mulSchedule.rxBudgetUs=500;
+ multiConfiguration.mulSchedule.airtimeUs=400;multiConfiguration.mulSchedule.rangingFlags=0;
+}
+void test_experimentalFollowerUsesNumericalSpacingAndActualCycleClockPeriod(void) {
+ const unsigned spacings[]={2,3,5,7,17},periods[]={100,200,1000,2000};
+ for(unsigned a=0;a<5;a++)for(unsigned b=0;b<4;b++) {
+  setUp();experimentalConfig(7,spacings[a],periods[b]);if(mulScheduleValidate(&multiConfiguration.mulSchedule))continue;
+  useAlr[1]=true;skew=15000;flight=1000;advance(MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+  for(unsigned i=0;i<10;i++) {
+   int64_t at=(int64_t)i*periods[b]*MS;advance(at+flight+MS);uint64_t rx=clockAt(1,at+flight);
+   injectMulti(1,0,100+i,clockAt(0,at),rx);TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_EQUAL_UINT(80,radios[1].txLength);
+   TEST_ASSERT_INT64_WITHIN(512,(int64_t)7*spacings[a]*MS,mulTimestampDifference(radios[1].actual,rx));
+   TEST_ASSERT_EQUAL_UINT8(3,radios[1].tx[34]);TEST_ASSERT_FALSE(ranging.attempted);
+   advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+  }
+  TEST_ASSERT_EQUAL(periods[b],followerClock.periodMs);TEST_ASSERT_EQUAL(mulClockValid,followerClock.status);
+ }
+}
+void test_experimentalShortSlotStillSkipsInsufficientAfterSpiLead(void) {
+ experimentalConfig(1,3,100);useAlr[1]=true;advance(MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+ radios[1].setupLag=3*MS;injectMulti(1,0,1,clockAt(0,0),clockAt(1,0));
+ TEST_ASSERT_FALSE(flags.tx);TEST_ASSERT_EQUAL_UINT(0,radios[1].sends);TEST_ASSERT_TRUE(radios[1].receiving);
+}
+void test_experimentalReferencePeriodAndDisabledRangingDoNotUseFixedWindows(void) {
+ experimentalConfig(0,3,2000);useAlr[0]=true;advance(-20*(int64_t)MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[0].device);
+ uint64_t first=0;int64_t origin=0;
+ for(unsigned i=0;i<5;i++) {
+  if(i)advance(origin+2000*MS-20*MS);
+  dispatch(0,eventTimeout);TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_FALSE(ranging.active);
+  if(!i)first=pendingTimestamp;
+  TEST_ASSERT_EQUAL_INT64((int64_t)i*2000*MS,mulTimestampDifference(pendingTimestamp,first));
+  TEST_ASSERT_EQUAL_UINT(40,radios[0].txLength);TEST_ASSERT_EQUAL_UINT8(3,radios[0].tx[34]);
+  origin=sendTime(0);advance(origin+MS);radios[0].armed=false;dispatch(0,eventPacketSent);
+  unsigned sent=radios[0].sends;advance(origin+630*MS);dispatch(0,eventTimeout);advance(origin+780*MS);dispatch(0,eventTimeout);
+  TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_EQUAL_UINT(sent,radios[0].sends);
+ }
+}

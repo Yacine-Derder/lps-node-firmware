@@ -74,8 +74,8 @@ endif
 # Remove un-used functions and global variables from output file
 CFLAGS += -ffunction-sections -fdata-sections
 # Size-optimize application code for the 128KB/16KB LPS target. Stock radio
-# engines/HAL keep their source behavior; RTOS and libdw1000 retain -O3.
-$(filter src/%.o hal/%.o,$(OBJS)): CFLAGS += -Os
+# engines/HAL retain source behavior. Port assembly and radio driver retain-O3.
+$(filter src/%.o hal/%.o Middlewares/%.o,$(OBJS)) $(filter-out lib/freertos/src/port.o,$(foreach mod,$(FREERTOS_OBJS),lib/freertos/src/$(mod).o)): CFLAGS += -Os
 LDFLAGS+=-Wl,-Map=bin/$(PROG).map,--cref,--gc-sections
 
 
