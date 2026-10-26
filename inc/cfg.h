@@ -29,6 +29,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "mul_schedule.h"
+#include "mul_clock_fit.h"
 
 typedef enum {
   cfgAddress = 0,
@@ -44,12 +45,15 @@ typedef enum {
   cfgRfEnable, // Optional one-byte boolean; absent retains legacy enabled behavior.
   cfgMulSlotMs, // Additive uint32 delay TLV; absent old EEPROM retains 500ms.
   cfgMulSchedule, // Optional canonical32-byte schedule, including its CRC.
+  cfgMulClock, // Additive versioned12-byte clock estimator configuration.
 } ConfigField;
 
 void cfgInit();
 bool cfgPendingRestart(void);
 bool cfgStorageReady(void);
 bool cfgRfEnabled(bool *enabled);
+bool cfgMulClockRead(mulClockFitConfig_t *config);
+bool cfgMulClockWrite(const mulClockFitConfig_t *config);
 bool cfgMulSlotRead(uint16_t *slotMs);
 bool cfgMulSlotWrite(uint16_t slotMs);
 bool cfgMulScheduleRead(uint8_t node,mulSchedule_t *schedule);

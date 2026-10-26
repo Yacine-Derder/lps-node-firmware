@@ -108,3 +108,15 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,mulClock_t *c
  if(s->ready){clock->skewPpb=s->skewPpb;clock->status=mulClockValid;}
  return result;
 }
+
+bool mulClockFitConfigEncode(uint8_t out[MUL_CLOCK_CONFIG_BYTES],const mulClockFitConfig_t *c) {
+ if(!out||!mulClockFitConfigValid(c))return false;
+ uint8_t b[MUL_CLOCK_CONFIG_BYTES]={1,c->estimator,c->window,c->minSamples,c->periodMs&255,c->periodMs>>8,c->gateDtu&255,c->gateDtu>>8,c->compensate,0,0,0};
+ memcpy(out,b,sizeof(b));return true;
+}
+bool mulClockFitConfigDecode(const uint8_t in[MUL_CLOCK_CONFIG_BYTES],mulClockFitConfig_t *c) {
+ if(!in||!c||in[0]!=1||in[9]||in[10]||in[11])return false;
+ mulClockFitConfig_t candidate={.estimator=in[1],.window=in[2],.minSamples=in[3],.periodMs=(uint16_t)(in[4]|in[5]<<8),.gateDtu=(uint16_t)(in[6]|in[7]<<8),.compensate=in[8]};
+ if(!mulClockFitConfigValid(&candidate))return false;
+ *c=candidate;return true;
+}

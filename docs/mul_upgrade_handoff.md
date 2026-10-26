@@ -88,3 +88,32 @@ window8/24/32, gaps, noisy timestamps,32/40-bit rollover, outliers, oscillator
 transients, and changing propagation. Under this synthetic noise model fit absolute
 frequency errors are no worse than median; this is not evidence for the field bias
 hypothesis. Full selectable firmware/persistence/replay acceptance is still pending.
+
+## LPS adapter checkpoint
+
+Regression is selectable through RF-OFF settings: `cfg set clock_estimator
+median|regression`, `cfg set clock_window 8..32`, `cfg set clock_compensate on|off`,
+`clock show` (prefix commands with `:` outside console session). Settings use a
+versioned12-byte optional EEPROM TLV; absent means unchanged median/window24/
+compensation-off. On applies settings and resets fit state. Invalid data fails
+closed. `MUL FIT` lines report window/count/inliers/ppb/RMS/rejections/conditional
+fit sigma and compensation/ready flags; physical mapping uncertainty remains
+unknown. A rejected clock-fit sample still produces its correctly numbered TDMA
+broadcast, publishing unavailable correction rather than an old sequence.
+
+The336-byte fit plus settings overlays the inactive1200-byte stock TDoA3 context
+through a typed union. The stock context's field layout and algorithms are retained;
+only boot-selected MUL mode uses the alternate member. Native tests use separate
+host storage. Application and HAL objects use-Os to fit; RTOS/libdw1000 keep-O3.
+Clean channel5 build passed: text127872/data1128/bss15244 (`size` includes2048-byte
+linker stack reservation); map actual.data1120 +.bss13196 +2048=16364,20 bytes spare.
+No stacks or queues reduced. Timing/stack high-water remains hardware-unverified.
+Native10ms suite passes228 tests, including settings persistence/RF-OFF guards and
+actual50-cycle follower regression/outlier handling. Shared hybrid and multi RLR
+now accept the same caller-owned fit configuration, still median by default.
+
+Next: pin this shared core into both consumers; add STM32 schema7 extended clock
+settings with old-schema migration, select the estimator in both receiver paths,
+add diagnostics and persistence/power-cut/native tests, then offline replay. Clock
+stage is not fully complete until these integrations/builds pass. Later stagesC–G
+remain as listed above; do not infer they were implemented by this checkpoint.

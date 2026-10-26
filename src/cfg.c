@@ -329,7 +329,7 @@ static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length) {
   ok=eepromWrite(0,buffer,sizeof(buffer));HAL_Delay(10);
   if(ok)ok=readData()&&!memcmp(expected,buffer,sizeof(buffer));
   if(!ok){memcpy(buffer,previous,sizeof(buffer));mulStorageUncertain=true;}
-  else if(field!=cfgRfEnable&&field!=cfgMulSlotMs&&field!=cfgMulSchedule)pendingRestart=true;
+  else if(field!=cfgRfEnable&&field!=cfgMulSlotMs&&field!=cfgMulSchedule&&field!=cfgMulClock)pendingRestart=true;
 done:
   writing=false;return ok;
 }
@@ -407,4 +407,16 @@ bool cfgMulScheduleWrite(uint8_t node,const mulSchedule_t *schedule) {
  if(mulScheduleValidate(schedule)||mulScheduleIndex(schedule,node)<0)return false;
  uint8_t bytes[MUL_SCHEDULE_BYTES];if(!mulScheduleEncode(bytes,schedule))return false;
  return mulStore(cfgMulSchedule,bytes,sizeof(bytes));
+}
+
+bool cfgMulClockRead(mulClockFitConfig_t *config) {
+ if(!config||!cfgStorageReady())return false;
+ uint8_t size;
+ if(!cfgFieldSize(cfgMulClock,&size)){mulClockFitDefaults(config);return true;}
+ uint8_t bytes[MUL_CLOCK_CONFIG_BYTES];
+ return size==sizeof(bytes)&&cfgReadU8list(cfgMulClock,bytes,sizeof(bytes))&&mulClockFitConfigDecode(bytes,config);
+}
+bool cfgMulClockWrite(const mulClockFitConfig_t *config) {
+ uint8_t bytes[MUL_CLOCK_CONFIG_BYTES];
+ return mulClockFitConfigEncode(bytes,config)&&config->periodMs==1000&&mulStore(cfgMulClock,bytes,sizeof(bytes));
 }

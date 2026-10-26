@@ -1,3 +1,5 @@
+#include "mul_clock_fit.h"
+#include "mul_clock.h"
 /* Actual legacy EEPROM TLV + additive role migration + console parser. */
 #include "unity.h"
 #include "cfg.h"
@@ -245,4 +247,16 @@ void test_multiScheduleScalarCliAndShadowBindingGuards(void) {
  TEST_ASSERT_EQUAL(2,boot.mulSchedule.count);TEST_ASSERT_EQUAL(MUL_PROFILE_MULTI,boot.mulSchedule.profile);
  send(":off\n");apply();send(":cfg set profile legacy\n:on\n");apply();
  TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(MUL_PROFILE_LEGACY,boot.mulSchedule.profile);
+}
+void test_clockEstimatorSettingsPersistenceAndRfOffGuards(void) {
+ unsigned before=writes;send(":cfg set clock_estimator regression\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");apply();send(":cfg set slot_ms 10\n:cfg roster set 0x84 0x85 0x86 0x87\n");
+ send(":cfg set clock_estimator regression\n:cfg set clock_window 30\n:cfg set clock_compensate on\n");
+ mulClockFitConfig_t c;TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(1,c.estimator);TEST_ASSERT_EQUAL(30,c.window);TEST_ASSERT_EQUAL(1,c.compensate);
+ before=writes;cfgInit();TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(before,writes);
+ send(":cfg set clock_window 7\n:cfg set clock_window 33\n:cfg set clock_estimator quadratic\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":clock show\n");TEST_ASSERT_NOT_NULL(strstr(output,"method=1 window=30"));
+ send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(30,boot.mulClockConfig.window);
+ send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(1,c.estimator);
+ send(":off\n");apply();send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(0,c.estimator);
 }

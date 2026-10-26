@@ -1,3 +1,6 @@
+#include "mul_clock_workspace.h"
+#include "mul_clock_fit.h"
+#include "mul_clock.h"
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "unity.h"
 #include "mul_timing.h"
@@ -5,7 +8,6 @@
 #include "mul_rx.h"
 #include "task.h"
 #include "mul_common.h"
-#include "mul_clock.h"
 #include "mul_twr.h"
 #include "mul_schedule.h"
 #include "mul_multi_protocol.h"

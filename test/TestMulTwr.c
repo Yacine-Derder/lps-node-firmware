@@ -1,3 +1,6 @@
+#include "mul_clock_fit.h"
+#include "mul_clock.h"
+#include "mul_clock_workspace.h"
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "unity.h"
 #include "mul_twr.h"
@@ -11,10 +14,8 @@
 #include "mul_observation.h"
 #include <math.h>
 #include "mul_common.h"
-#include "mul_clock.h"
 #include "mul_rx.h"
 
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -890,4 +891,20 @@ void test_mulMultiReferenceVisitsTwoOwnersDespiteFirstWindowFailure(void) {
  TEST_ASSERT_EQUAL_UINT(40,radios[0].txLength);
  TEST_ASSERT_EQUAL_UINT32(2,pendingSequence);
  TEST_ASSERT_EQUAL_INT64(SEC,mulTimestampDifference(pendingTimestamp,clockAt(0,origin)));
+}
+void test_mulMultiFollowerRegressionWindowAndOutlierNeverSuppressScheduledBroadcast(void) {
+ multiConfig(4,1,10);mulClockFitDefaults(&multiConfiguration.mulClockConfig);multiConfiguration.mulClockConfig.estimator=1;
+ useAlr[1]=true;skew=15000;flight=1000;advance(MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+ for(unsigned i=0;i<50;i++) {
+  int64_t at=(int64_t)i*SEC;advance(at+flight+MS);
+  uint64_t rx=clockAt(1,at+flight);if(i==35)rx=mulTimestampMask(rx+100000);
+  injectMulti(1,0,100+i,clockAt(0,at),rx);
+  TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_EQUAL_UINT(80,radios[1].txLength);
+  mulMultiBroadcast_t decoded;TEST_ASSERT_TRUE(mulMultiBroadcastDecode(&multiConfiguration.mulSchedule,radios[1].tx,80,&decoded));
+  TEST_ASSERT_EQUAL_UINT32(100+i,decoded.packet.sequence);
+  if(i==35)TEST_ASSERT_FALSE(decoded.relation.available);
+  advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ }
+ TEST_ASSERT_TRUE(mulClockWorkspace()->fit.ready);TEST_ASSERT_EQUAL(24,mulClockWorkspace()->fit.count);
+ TEST_ASSERT_EQUAL_UINT32(1,mulClockWorkspace()->fit.rejected);TEST_ASSERT_INT_WITHIN(1,15000,followerClock.skewPpb);
 }

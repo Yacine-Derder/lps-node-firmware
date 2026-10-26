@@ -7,6 +7,7 @@
 #include "mul_relation.h"
 #include "mul_role_state.h"
 #include "mul_timing.h"
+#include "mul_clock_workspace.h"
 #include "task.h"
 
 #include <inttypes.h>
@@ -152,6 +153,9 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   }
   referenceAcquired = false;
   mulClockReset(&followerClock);
+  mulClockWorkspace_t *workspace=mulClockWorkspace();mulClockFitReset(&workspace->fit);
+  workspace->config=config->mulClockConfig;
+  if(!mulClockFitConfigValid(&workspace->config))mulClockFitDefaults(&workspace->config);
   mulTwrInit(&ranging);mulTwrConfigureNetwork(alrNetwork);
   followerSeen = false;
   printf("MUL ALR: Mode initialized role=%s src=0x%02X slot_ms=%u\r\n",
@@ -409,7 +413,9 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       lastReferenceTick = now;
       // Build metadata from THIS reference observation before encoding TX.
       // Bounded integer estimation does not steer the hardware slot.
-      clockResult=mulClockObserveNetwork(alrNetwork,&followerClock,&packet,arrival,(uint32_t)now*portTICK_PERIOD_MS,true);
+      mulClockWorkspace_t *workspace=mulClockWorkspace();mulClockDelay_t delay;
+      bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
+      clockResult=mulClockObserveFitted(alrNetwork,&followerClock,&workspace->fit,&workspace->config,&packet,arrival,(uint32_t)now*portTICK_PERIOD_MS,true,supplied?&delay:NULL);
       if (clockResult==mulClockDiscontinuity || acquiredNow) {
         mulTwrCancel(&ranging,dev,"clock_epoch",true); ranging.attempted=false;
       }
@@ -437,6 +443,10 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
            alrNetwork->addresses[0][0],packet.sequence, (unsigned int)(packet.txTimestamp >> 32),
            (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
            armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED", (unsigned int)mulNetworkSlotMs(alrNetwork));
+    const mulClockWorkspace_t *workspace=mulClockWorkspace();
+    if(workspace->config.estimator)printf("MUL FIT: window=%u n=%u in=%u ppb=%ld rms_dtu=%lu rejected=%lu fit_sigma_ppb=%lu compensated=%u ready=%u\r\n",
+      workspace->config.window,workspace->fit.count,workspace->fit.inliers,(long)workspace->fit.skewPpb,
+      (unsigned long)workspace->fit.rmsDtu,(unsigned long)workspace->fit.rejected,(unsigned long)workspace->fit.uncertaintyPpb,workspace->fit.compensated,workspace->fit.ready);
     int32_t ppb = followerClock.skewPpb;
     uint32_t magnitude = (uint32_t)(ppb < 0 ? -ppb : ppb);
     printf("MUL ALR: CLOCK src=0x%02X seq=%" PRIu32 " skew_ppm=%s%" PRIu32 ".%03" PRIu32

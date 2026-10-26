@@ -141,6 +141,7 @@ void uwbInit()
     int slot=mulScheduleIndex(&config.mulSchedule,config.address[0]);
     config.mulRole=slot==0?mulAlrReference:slot>0?mulAlrFollower:mulAlrUnsupported;
   }
+  if(!cfgMulClockRead(&config.mulClockConfig)){config.mulConfigured=false;config.mulRole=mulAlrUnsupported;}
   cfgFieldSize(cfgAnchorlist, &config.anchorListSize);
   if (config.anchorListSize <= MAX_ANCHORS) {
     cfgReadU8list(cfgAnchorlist, config.anchors, config.anchorListSize);

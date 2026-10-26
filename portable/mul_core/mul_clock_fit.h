@@ -4,6 +4,7 @@
 #include "mul_clock.h"
 #define MUL_CLOCK_FIT_MAX 32u
 #define MUL_CLOCK_FIT_DEFAULT 24u
+#define MUL_CLOCK_CONFIG_BYTES 12u
 enum {mulClockEstimatorMedian=0,mulClockEstimatorRegression=1};
 typedef struct {
  uint16_t periodMs,gateDtu;
@@ -22,6 +23,8 @@ typedef struct {
 } mulClockFit_t;
 void mulClockFitDefaults(mulClockFitConfig_t *c);
 bool mulClockFitConfigValid(const mulClockFitConfig_t *c);
+bool mulClockFitConfigEncode(uint8_t out[MUL_CLOCK_CONFIG_BYTES],const mulClockFitConfig_t *c);
+bool mulClockFitConfigDecode(const uint8_t in[MUL_CLOCK_CONFIG_BYTES],mulClockFitConfig_t *c);
 void mulClockFitReset(mulClockFit_t *s);
 /* The baseline median always runs. Regression overrides only the frequency;
  * mapping origins remain RAW arrival-aligned timestamps, so downstream delay

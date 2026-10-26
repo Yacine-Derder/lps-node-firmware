@@ -56,6 +56,7 @@ The implementation must handle
 
 #include "cfg.h"
 #include "lpp.h"
+#include "mul_clock_workspace.h"
 
 #define debug(...) printf(__VA_ARGS__)
 
@@ -133,7 +134,7 @@ typedef struct {
 } anchorContext_t;
 
 // This context struct contains all the required global values of the algorithm
-static struct ctx_s {
+struct ctx_s {
   int anchorId;
 
   // Information about latest transmitted packet
@@ -158,7 +159,11 @@ static struct ctx_s {
 
   // The maximum system tx frequency
   float systemTxFreq;
-} ctx;
+};
+static union {struct ctx_s stock;mulClockWorkspace_t mul;} modeState;
+#define ctx modeState.stock
+typedef char mulWorkspaceMustFitStock[(sizeof(mulClockWorkspace_t)<=sizeof(struct ctx_s))?1:-1];
+mulClockWorkspace_t *uwbTdoa3ClockWorkspace(void){return &modeState.mul;}
 
 // Packet formats
 #define PACKET_TYPE_TDOA3 0x30

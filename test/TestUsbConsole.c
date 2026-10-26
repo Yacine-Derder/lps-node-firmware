@@ -1,3 +1,5 @@
+#include "mul_clock_fit.h"
+#include "mul_clock.h"
 /* Execute the actual USB callbacks, packet reader and prefixed configuration
  * parser together; no duplicate RX implementation or emulated byte queue. */
 #include "unity.h"

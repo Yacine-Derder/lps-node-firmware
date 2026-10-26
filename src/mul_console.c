@@ -16,7 +16,7 @@ static uint8_t used,page,pageIndex;
 static const char *message;
 /* Up to eight hexadecimal roster IDs; output remains bounded to48 bytes. */
 static char line[56];
-enum {none,answer,help,show,status,peers,diag,cal};
+enum {none,answer,help,show,status,peers,diag,cal,clockPage};
 static void reply(const char *text) {message=text;page=answer;pageIndex=0;}
 static bool id(const char *s,uint8_t *value) {
  unsigned n=0,base=10;if(s[0]=='0'&&s[1]=='x'){base=16;s+=2;}
@@ -69,6 +69,24 @@ static void command(void) {
    if(!cfgWriteU8(cfgRfEnable,1)){uwbSetEnabled(false);reply("RF OFF requested; EEPROM unconfirmed");return;}
    reply(uwbSetEnabled(true)?"RF ON requested":"ERR on blocked; inspect status");return;
   }
+ }
+ if(count==2&&!strcmp(w[0],"clock")&&!strcmp(w[1],"show")){page=clockPage;pageIndex=0;return;}
+ if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&
+    (!strcmp(w[2],"clock_estimator")||!strcmp(w[2],"clock_window")||!strcmp(w[2],"clock_compensate"))) {
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR clock change requires RF OFF");return;}
+  mulClockFitConfig_t spec;if(!cfgMulClockRead(&spec)){reply("ERR invalid stored clock settings");return;}
+  if(!strcmp(w[2],"clock_estimator")) {
+   if(!strcmp(w[3],"median"))spec.estimator=0;
+   else if(!strcmp(w[3],"regression"))spec.estimator=1;
+   else {reply("ERR clock_estimator: median/regression");return;}
+  }else if(!strcmp(w[2],"clock_window")) {
+   uint8_t n;if(!id(w[3],&n)||n<8||n>32){reply("ERR clock_window: 8..32");return;}spec.window=n;
+  }else {
+   if(!strcmp(w[3],"on"))spec.compensate=1;
+   else if(!strcmp(w[3],"off"))spec.compensate=0;
+   else {reply("ERR clock_compensate: on/off");return;}
+  }
+  reply(cfgMulClockWrite(&spec)?"SAVED clock settings; ON applies":"ERR clock/EEPROM unconfirmed");return;
  }
  if(count>=3&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"roster")) {
   mulSchedule_t schedule;
@@ -202,7 +220,10 @@ bool mulConsolePoll(void) {
   "cfg roster show/set id0 id1 [..id7]",
   "cfg set profile legacy/multi; RF OFF",
   "cfg set cycle_ms 1000; RF OFF",
-  "cfg set schedule_revision 1..4294967295"};
+  "cfg set schedule_revision 1..4294967295",
+  "cfg set clock_estimator median/regression",
+  "cfg set clock_window 8..32; clock show",
+  "cfg set clock_compensate on/off; RF OFF"};
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255;
  bool valid=saved(&node,&role,&ref,&fol),last=true,enabled=false;
  if(page==answer)snprintf(line,sizeof(line),"%s",message);
@@ -214,6 +235,12 @@ bool mulConsolePoll(void) {
   else if(pageIndex==1){snprintf(line,sizeof(line),"SCHEDULE cycle_ms=%u rev=%lu",schedule.periodMs,(unsigned long)schedule.revision);last=false;}
   else if(pageIndex==2){snprintf(line,sizeof(line),"SCHEDULE hash=%08lX ref=0x%02X",(unsigned long)mulScheduleFingerprint(&schedule),schedule.ids[0]);last=false;}
   else if(pageIndex<=schedule.count+2){unsigned slot=pageIndex-3;snprintf(line,sizeof(line),"ALR slot=%u id=0x%02X offset_ms=%u",slot,schedule.ids[slot],mulScheduleOffsetMs(&schedule,slot));last=pageIndex==schedule.count+2;}
+ }
+ if(page==clockPage) {
+  mulClockFitConfig_t c;
+  if(!cfgMulClockRead(&c))snprintf(line,sizeof(line),"ERR invalid stored clock settings");
+  else if(pageIndex==0){snprintf(line,sizeof(line),"CLOCK method=%u window=%u minimum=%u",c.estimator,c.window,c.minSamples);last=false;}
+  else snprintf(line,sizeof(line),"CLOCK period=%u gate_dtu=%u compensate=%u",c.periodMs,c.gateDtu,c.compensate);
  }
  if(page==show) {
   if(!valid)snprintf(line,sizeof(line),"ERR invalid roster; EEPROM retained");

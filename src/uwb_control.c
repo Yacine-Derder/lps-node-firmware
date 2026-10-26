@@ -23,8 +23,9 @@ void uwbControlInit(const uwbConfig_t *c) {
  requested=uwbControlCanEnable()&&cfgRfEnabled(&enabled)&&enabled;running=false;
 }
 bool uwbControlCanEnable(void) {
- mulSchedule_t schedule;
+ mulSchedule_t schedule;mulClockFitConfig_t clockConfig;
  const uwbConfig_t *c=uwbGetConfig();
+ if(!cfgMulClockRead(&clockConfig))return false;
  if(cfgPendingRestart()||!cfgMulScheduleRead(c->address[0],&schedule))return false;
 #if PHY_INTEROP_ROLE || MUL_DIAG_ROLE || MUL_TWR_ROLE
  if(schedule.profile==MUL_PROFILE_MULTI)return false;
@@ -52,6 +53,7 @@ bool uwbControlApply(dwDevice_t *dev,uwbAlgorithm_t *algorithm) {
  if(!running) {
    uwbConfig_t *c=uwbGetConfig();
    (void)cfgMulScheduleRead(c->address[0],&c->mulSchedule);
+   (void)cfgMulClockRead(&c->mulClockConfig);
    c->mulNetwork.slotMs=requestedSlot;
    if(c->mode>=MODE_MUL_ALR&&c->mode<=MODE_MUL_RLR) {
      int slot=mulScheduleIndex(&c->mulSchedule,c->address[0]);
