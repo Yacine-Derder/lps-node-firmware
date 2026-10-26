@@ -875,3 +875,17 @@ Logs:/tmp/mul-schema9-final-runtime.log,/tmp/mul-schema9-frequency.log,
 canonical core, consumer export/decoders/essential-priority/compact labeling,
 then wire STM hybridConfig plan to passive RF4 receive and remove pending gate
 only with end-to-end tests. AR remains unsupported until StageE adapter work.
+
+
+### Planned telemetry codec boundary
+
+Canonical UWB3 types11/12 are implemented with required header quality4; vector
+and raw payload geometry remains152 bytes, fullplan hash in the corresponding
+fingerprint field. Legacy8/9 accepts only quality0/3. Type12 verifies RF4 marker,
+metadata fingerprint agreement and TWR operation<32, preserving40/80/90 native
+bytes. Type11 uses numerical100..2000ms timing and next-reference20ms reserve;
+actual budget validation remains the full plan's job, not inferred from a vector.
+Sanitizer matrix coversN2..8/policies/wrap/raw sizes/markers/hash/type rejection:
+/tmp/mul-plan-telemetry-core.log. Next export committed core, update STM/ESP priority
+and timestamps, Python labels/compact/replay, then activate passive STM RF4 only
+with actual adapter tests. No AR TX is implied by these codecs.
