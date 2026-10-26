@@ -68,3 +68,23 @@ sh tests/run_host.sh
 
 Update this document with verified commits, acceptance results and exact next work
 at every coherent campaign checkpoint. No new physical acceptance is asserted.
+
+## Clock core checkpoint (portable, adapter integration next)
+
+Added `mul_clock_fit.[ch]`: selectable median/regression, centered integerQ24 slope,
+8..32 observations (default24), fit-scatter diagnostics, guarded outliers and
+three-rejection transient recovery. Fit coordinates rebase when evicting points;
+raw40-bit counters are unwrapped only across bounded accepted intervals. Mapping
+origins remain raw even when timestamped propagation is subtracted from fit inputs.
+Switching propagation availability resets the window. Fallback retains the median;
+rejected samples explicitly invalidate the current mapping instead of publishing a
+relation against an old sequence. Added explicit-period clock API; old wrappers
+retain1000ms semantics. A fit context costs336 bytes on the host, so LPS integration
+must use mode-exclusive storage, not a new global allocation.
+
+Verified shared ASan/UBSan tests and226 native10ms regression tests. New deterministic
+clock tests run2000 observations per case at100/500/1000/2000ms, signed skews,
+window8/24/32, gaps, noisy timestamps,32/40-bit rollover, outliers, oscillator
+transients, and changing propagation. Under this synthetic noise model fit absolute
+frequency errors are no worse than median; this is not evidence for the field bias
+hypothesis. Full selectable firmware/persistence/replay acceptance is still pending.
