@@ -14,7 +14,7 @@ typedef union {
   mulTwr_t twr;
   mulAdsDwState_t ads;
   mulDiagDwState_t diag;
-  phyDiagState_t interop; // Experimental role shares existing 128-byte reservation.
+  phyDiagState_t interop; // Experimental role shares the bounded MUL reservation.
   struct { mulRelation_t relation; mulClock_t rate; } rlr;
 } mulRoleScratch_t;
 extern mulRoleScratch_t mulRoleScratch;

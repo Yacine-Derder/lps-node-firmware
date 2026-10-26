@@ -51,6 +51,7 @@ static uint64_t offsets[3], origins[2];
 static uint32_t exchangeSequence;
 static TickType_t ticks;
 static bool useAlr[2];
+static mulAlrRole_t protocolRole[2];
 static const mulSchedule_t *simulationSchedule;
 static const mulRangingPlan_t *simulationPlan;
 static const uint8_t identities[2][8] = {{0x84,0,0,0,0,0,0xcf,0xbc},{0x85,0,0,0,0,0,0xcf,0xbc}};
@@ -133,7 +134,7 @@ static mulTwr_t *ctx(int node) { return useAlr[node] ? &ranging : &contexts[node
 static mulClock_t *followerModel(void) { return useAlr[1] ? &followerClock : &model; }
 static uint32_t dispatch(int node, uwbEvent_t event) {
   if (useAlr[node]) return mulAlrAlgorithm.onEvent(&radios[node].device,event);
-  mulTwrOnEvent(ctx(node), &radios[node].device,event,(mulAlrRole_t)node,exchangeSequence,
+  mulTwrOnEvent(ctx(node), &radios[node].device,event,protocolRole[node],exchangeSequence,
     origins[node],origins[0],followerModel()->epoch,ticks);
   return mulTwrWait(ctx(node),&radios[node].device,origins[node],3000);
 }
@@ -166,6 +167,7 @@ void setUp(void) {
   observationCount=0; offsets[2]=MUL_TIMESTAMP_MASK-5000*MS;
   offsets[0]=MUL_TIMESTAMP_MASK-660*MS; offsets[1]=UINT64_C(0x723456789a);
   skew=0; flight=0; physical=framePhysical=0; ticks=5000;
+  protocolRole[0]=mulAlrReference;protocolRole[1]=mulAlrFollower;
   exchangeSequence=5; mulClockReset(&model);
 }
 void tearDown(void) {}
@@ -1061,4 +1063,42 @@ void test_actualAlrFollowerUsesAssignedGeneratedOperationsAndRetainsAaDelay(void
   mulClockDelay_t delay;TEST_ASSERT_TRUE(mulTwrDelay(&ranging,&followerClock,&delay));TEST_ASSERT_EQUAL(132,delay.reference[0]);TEST_ASSERT_EQUAL(135,delay.follower[0]);
  }
  TEST_ASSERT_EQUAL(5,radios[1].sends); // One data broadcast plus two response/report pairs.
+}
+
+void test_committedAaDelaySurvivesArRoleChangeCompletionAndFaults(void) {
+ setUp();scenario(-150000,2131);
+ mulRangingPlan_t p={.replyMs=5,.maxUtilization=70,.enabled=MUL_PLAN_AA|MUL_PLAN_AR,.aaMilliHz=1000,.arMilliHz=1000,.rlrCount=1,.rlrs={141}};
+ mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
+ p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;simulationPlan=&p;
+ mulRangingOperation_t op;unsigned aa=99,ar=99;
+ for(unsigned i=0;i<mulRangingPlanCount(&p,5);i++){TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,i,&op));if(op.kind==MUL_PLAN_AA)aa=i;}
+ TEST_ASSERT_NOT_EQUAL(99,aa);TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,aa,&op));advance((int64_t)op.startUs*MS/1000);
+ TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,5,aa));TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(1),&p,5,aa));
+ mulTwrInvalidateAa(ctx(1));TEST_ASSERT_EQUAL(mulPropagationInvalidated,mulTwrPropagationState(ctx(1),&model,ticks));
+ TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));completeExchange();
+ mulClockDelay_t before,after;TEST_ASSERT_TRUE(mulTwrDelay(ctx(1),&model,&before));
+ TEST_ASSERT_EQUAL(132,before.reference[0]);TEST_ASSERT_EQUAL(133,before.follower[0]);TEST_ASSERT_EQUAL(5,before.referenceSequence);
+ bool corrected=mulTwrDelayPowerCorrected(ctx(1));
+ // The former follower now initiates an AR operation. Data role and exchange
+ // role are independent; both radios still have different physical clocks.
+ exchangeSequence=6;origins[0]=clockAt(0,SEC);origins[1]=clockAt(1,SEC+flight);
+ protocolRole[0]=mulAlrFollower;protocolRole[1]=mulAlrReference;
+ for(unsigned i=0;i<mulRangingPlanCount(&p,6);i++){TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,6,i,&op));if(op.kind==MUL_PLAN_AR&&op.initiator==133)ar=i;}
+ TEST_ASSERT_NOT_EQUAL(99,ar);TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,6,ar,&op));advance(SEC+(int64_t)op.startUs*MS/1000);
+ TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,6,ar));TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(1),&p,6,ar));
+ TEST_ASSERT_TRUE(mulTwrDelay(ctx(1),&model,&after));TEST_ASSERT_EQUAL(before.measuredMs,after.measuredMs);
+ TEST_ASSERT_TRUE(mulTwrStart(ctx(1),&radios[1].device,6,origins[1]));
+ transfer(1);transfer(0);transfer(1);transfer(0);transfer(1);
+ TEST_ASSERT_FALSE(ctx(1)->active);TEST_ASSERT_FALSE(ctx(0)->active);
+ TEST_ASSERT_TRUE(mulTwrDelay(ctx(1),&model,&after));TEST_ASSERT_EQUAL(before.epoch,after.epoch);
+ TEST_ASSERT_EQUAL(before.measuredMs,after.measuredMs);TEST_ASSERT_EQUAL(before.oneWayDtu,after.oneWayDtu);
+ TEST_ASSERT_EQUAL_MEMORY(before.reference,after.reference,8);TEST_ASSERT_EQUAL_MEMORY(before.follower,after.follower,8);
+ TEST_ASSERT_EQUAL(5,after.referenceSequence);TEST_ASSERT_EQUAL(corrected,mulTwrDelayPowerCorrected(ctx(1)));
+ mulTwrCancel(ctx(1),&radios[1].device,"AR_failure",true);
+ TEST_ASSERT_TRUE(mulTwrDelay(ctx(1),&model,&after));
+ TEST_ASSERT_EQUAL(mulPropagationExpired,mulTwrPropagationState(ctx(1),&model,before.measuredMs+MUL_PROP_MAX_AGE_MS+1));
+ TEST_ASSERT_EQUAL(1,mulTwrDelayWait(ctx(1),before.measuredMs+MUL_PROP_MAX_AGE_MS,100));
+ mulClockReset(&model);TEST_ASSERT_FALSE(mulTwrDelay(ctx(1),&model,&after));
+ TEST_ASSERT_EQUAL(mulPropagationInvalidated,mulTwrPropagationState(ctx(1),&model,ticks));
+ mulTwrInvalidateAa(ctx(1));TEST_ASSERT_FALSE(ctx(1)->aa.valid);TEST_ASSERT_FALSE(mulTwrDelay(ctx(1),&model,&after));
 }

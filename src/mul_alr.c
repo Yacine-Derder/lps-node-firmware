@@ -213,7 +213,7 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
     mulClockDelay_t delay;
     bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
     mulRelation_t relation=mulRelationPublishNetwork(alrNetwork,&followerClock,supplied ? &delay : NULL,
-      pendingTimestamp,readHardwareTime(dev),(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,ranging.powerCorrected);
+      pendingTimestamp,readHardwareTime(dev),(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,mulTwrDelayPowerCorrected(&ranging));
     if (relation.version==2 && !supplied)
       relation.delayState=mulTwrPropagationState(&ranging,&followerClock,(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS);
     mulTestPacket_t packet={.sequence=pendingSequence,.txTimestamp=pendingTimestamp,.slotMs=mulNetworkSlotMs(alrNetwork)}; memcpy(packet.source,source,8);
@@ -342,7 +342,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   if (lostNow) {
     referenceAcquired = false;
     mulClockReset(&followerClock);
-    mulTwrCancel(&ranging, dev, "reference_lost", true);
+    mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging, dev, "reference_lost", true);
     ranging.attempted = false;
     if (flags.tx) {
       abortFollowerTx(dev);
@@ -408,7 +408,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   if(valid&&!mulNetworkScheduleMatches(alrNetwork,packet.slotMs)) {
     printf("MUL ALR: slot_mismatch expected=%u advertised=%u; slot skipped\r\n",mulNetworkSlotMs(alrNetwork),packet.slotMs);
     valid=false;referenceAcquired=false;mulClockReset(&followerClock);
-    mulTwrCancel(&ranging,dev,"slot_mismatch",true);
+    mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"slot_mismatch",true);
   }
   bool fresh = false;
   bool acquiredNow = false;
@@ -441,7 +441,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
       clockResult=mulClockObserveFitted(alrNetwork,&followerClock,&workspace->fit,&workspace->config,&packet,arrival,(uint32_t)now*portTICK_PERIOD_MS,true,supplied?&delay:NULL);
       if (clockResult==mulClockDiscontinuity || acquiredNow) {
-        mulTwrCancel(&ranging,dev,"clock_epoch",true); ranging.attempted=false;
+        mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"clock_epoch",true); ranging.attempted=false;
       }
       armed = scheduleFollowerTx(dev, arrival);
     }

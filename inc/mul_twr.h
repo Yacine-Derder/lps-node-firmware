@@ -9,6 +9,16 @@
 
 #include "../portable/mul_core/mul_legacy_twr.h"
 
+// Committed AA propagation data survives AR exchanges using the same radio.
+// Small IDs expand to the existing fixed MAC prefix when exporting a delay.
+typedef struct {
+  uint64_t epoch;
+  uint32_t measuredMs,sequence;
+  uint16_t tof;
+  uint8_t reference,follower;
+  bool valid,powerCorrected,invalidated;
+} mulTwrAa_t;
+
 // Bounded radio/measurement state. Packet buffers live on the UWB task stack.
 typedef struct {
   uint64_t stamps[6];
@@ -40,6 +50,7 @@ typedef struct {
   uint8_t followerSlot:3;
   uint8_t planned:1;
   uint8_t operation;
+  mulTwrAa_t aa;
 } mulTwr_t;
 
 void mulTwrEncode(uint8_t frame[MUL_TWR_FRAME_LENGTH], const mulTwrPacket_t *packet);
@@ -60,6 +71,8 @@ bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t ori
 bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_t role,
   uint32_t sequence, uint64_t localOrigin, uint64_t referenceOrigin, uint64_t epoch, uint32_t nowMs);
 uint32_t mulTwrWait(const mulTwr_t *twr, dwDevice_t *dev, uint64_t localOrigin, uint32_t fallback);
+void mulTwrInvalidateAa(mulTwr_t *twr);
+bool mulTwrDelayPowerCorrected(const mulTwr_t *twr);
 bool mulTwrDelay(const mulTwr_t *twr, const mulClock_t *clock, mulClockDelay_t *delay);
 mulPropagationState_t mulTwrPropagationState(const mulTwr_t *twr, const mulClock_t *clock, uint32_t nowMs);
 void mulTwrSync(mulTwr_t *twr, const mulClock_t *clock, uint32_t nowMs, bool force);

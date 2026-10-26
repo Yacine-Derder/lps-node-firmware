@@ -25,6 +25,14 @@ bool mulTwrConfigurePlan(mulTwr_t *twr,const mulRangingPlan_t *plan,uint32_t cyc
  twr->planned=true;twr->multiProfile=true;twr->id=cycle;twr->operation=(uint8_t)index;
  plannedSession.plan=plan;plannedSession.op=op;plannedSession.cycle=cycle;return true;
 }
+static bool aaOperation(const mulTwr_t *twr) {
+ return !twr->planned||plannedSession.op.kind==MUL_PLAN_AA;
+}
+void mulTwrInvalidateAa(mulTwr_t *twr) {
+ if(twr->planned)twr->syncDirty=true;
+ twr->aa.invalidated=true;twr->aa.valid=false;
+}
+bool mulTwrDelayPowerCorrected(const mulTwr_t *twr) {return twr->planned?twr->aa.powerCorrected:twr->powerCorrected;}
 void mulTwrConfigureNetwork(const mulNetwork_t *network) {twrContext=network?network:&mulDefaultNetwork;}
 bool mulTwrConfigureSchedule(mulTwr_t *twr,const mulSchedule_t *schedule,unsigned slot,unsigned window) {
  if(!twr||mulScheduleValidate(schedule)||schedule->profile<MUL_PROFILE_MULTI||!slot||slot>=schedule->count||window>=MUL_SYNC_WINDOWS)return false;
@@ -103,6 +111,7 @@ void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool inval
   bool wasActive = twr->active;
   twr->active = twr->txPending = false;
   if (invalidateDelay) {
+    if(twr->planned&&aaOperation(twr))mulTwrInvalidateAa(twr);
     if (twr->delayValid) twr->syncDirty = true;
     twr->invalidated = twr->invalidated || wasActive || twr->delayValid || twr->estimateId!=0;
     twr->delayValid = false;
@@ -195,8 +204,8 @@ bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t ori
 static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
 {
   mulNetwork_t pairNetwork;
-  // Only after RESULT: no next TWR TX to schedule, >200 ms before broadcast prep.
-  // Keep this and OK/SYNC below the 512-byte USB queue for one completion.
+  // Only after RESULT: this exchange has no pending TX. Generated plans may
+  // reserve another exchange soon; CDC queue writes remain nonblocking.
   printf("MUL TWR D: id=%" PRIu32 " ant=%u/%u cal=LPS P=",
     twr->id, (unsigned int)dwSpiRead16(dev, TX_ANTD, NO_SUB),
     (unsigned int)dwSpiRead16(dev, LDE_IF, LDE_RXANTD_SUB));
@@ -372,6 +381,12 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
       twr->tof=twr->candidateTof; twr->powerCorrected=twr->candidatePowerCorrected;
       twr->invalidated=false;
       twr->delayValid = true;
+      if(twr->planned&&aaOperation(twr)) {
+        const mulNetwork_t *pair=twrNetwork;
+        twr->aa=(mulTwrAa_t){.epoch=twr->epoch,.measuredMs=twr->measuredMs,.sequence=twr->estimateId,
+          .tof=twr->tof,.reference=pair->addresses[0][0],.follower=pair->addresses[1][0],
+          .valid=true,.powerCorrected=twr->powerCorrected};
+      }
       twr->syncDirty = true;
       twr->active = false;
       mulRxRearm(dev);
@@ -392,11 +407,30 @@ uint32_t mulTwrWait(const mulTwr_t *twr, dwDevice_t *dev, uint64_t origin, uint3
   return wait < fallback ? wait : fallback;
 }
 
+static const mulNetwork_t *delayNetwork(const mulTwr_t *twr,mulNetwork_t *network) {
+ if(!twr->planned)return networkFor(twr,network);
+ uint8_t ref=twr->aa.reference,fol=twr->aa.follower;
+ if(twr->aa.reference==twr->aa.follower) {
+  ref=plannedSession.plan->broadcast.ids[0];
+  fol=plannedSession.op.kind==MUL_PLAN_AA?plannedSession.op.responder:plannedSession.op.initiator;
+ }
+ if(!mulNetworkInit(network,ref,fol))memset(network,0,sizeof(*network));
+ network->slotMs=plannedSession.plan->broadcast.slotMs;return network;
+}
 bool mulTwrDelay(const mulTwr_t *twr, const mulClock_t *clock, mulClockDelay_t *delay)
 {
   mulNetwork_t pairNetwork;
-  if (twr == NULL || clock == NULL || delay == NULL || !twr->delayValid) return false;
-  if(twr->planned){mulRangingOperation_t op;if(!mulRangingPlanOperation(plannedSession.plan,twr->id,twr->operation,&op)||op.kind!=MUL_PLAN_AA)return false;}
+  if (twr == NULL || clock == NULL || delay == NULL) return false;
+  if(twr->planned) {
+    if(!twr->aa.valid)return false;
+    *delay=(mulClockDelay_t){.epoch=twr->aa.epoch,.oneWayDtu=twr->aa.tof,.units=mulClockDelayReferenceDtu,
+      .measuredMs=twr->aa.measuredMs,.referenceSequence=twr->aa.sequence,.maxAgeMs=MUL_PROP_MAX_AGE_MS,
+      .valid=true,.measurementBoundDtu=MUL_CLOCK_BOUND_UNKNOWN,.motionBoundDtuPerMs=MUL_CLOCK_BOUND_UNKNOWN};
+    const mulNetwork_t *pair=delayNetwork(twr,&pairNetwork);
+    memcpy(delay->reference,pair->addresses[0],8);memcpy(delay->follower,pair->addresses[1],8);
+    return delay->epoch==clock->epoch;
+  }
+  if(!twr->delayValid)return false;
   *delay = (mulClockDelay_t){.epoch=twr->epoch, .oneWayDtu=twr->tof, .units=mulClockDelayReferenceDtu,
     .measuredMs=twr->measuredMs, .referenceSequence=twr->estimateId, .maxAgeMs=MUL_PROP_MAX_AGE_MS,
     .valid=true, .measurementBoundDtu=MUL_CLOCK_BOUND_UNKNOWN, .motionBoundDtuPerMs=MUL_CLOCK_BOUND_UNKNOWN};
@@ -406,6 +440,12 @@ bool mulTwrDelay(const mulTwr_t *twr, const mulClock_t *clock, mulClockDelay_t *
 
 mulPropagationState_t mulTwrPropagationState(const mulTwr_t *twr,const mulClock_t *clock,uint32_t nowMs)
 {
+  if(twr->planned) {
+    if(twr->aa.invalidated||(twr->aa.valid&&twr->aa.epoch!=clock->epoch))return mulPropagationInvalidated;
+    if(!twr->aa.valid)return mulPropagationNone;
+    if((uint32_t)(nowMs-twr->aa.measuredMs)>MUL_PROP_MAX_AGE_MS)return mulPropagationExpired;
+    return (uint32_t)(clock->sequence-twr->aa.sequence)<=1?mulPropagationFresh:mulPropagationReused;
+  }
   if (twr->invalidated || (twr->delayValid && twr->epoch!=clock->epoch)) return mulPropagationInvalidated;
   if (!twr->delayValid) return mulPropagationNone;
   if ((uint32_t)(nowMs-twr->measuredMs)>MUL_PROP_MAX_AGE_MS) return mulPropagationExpired;
@@ -415,17 +455,18 @@ mulPropagationState_t mulTwrPropagationState(const mulTwr_t *twr,const mulClock_
 void mulTwrSync(mulTwr_t *twr, const mulClock_t *clock, uint32_t nowMs, bool force)
 {
   mulNetwork_t pairNetwork;
+  const mulNetwork_t *pair=delayNetwork(twr,&pairNetwork);
   mulClockDelay_t delay;
   bool supplied = mulTwrDelay(twr, clock, &delay);
-  mulClockDelayStatus_t status = mulClockDelayStatusNetwork(twrNetwork,clock, supplied ? &delay : NULL, nowMs);
+  mulClockDelayStatus_t status = mulClockDelayStatusNetwork(pair,clock, supplied ? &delay : NULL, nowMs);
   mulClockCorrectedMapping_t mapped;
-  bool available = mulClockMapRefToFollowerSimultaneousNetwork(twrNetwork,clock, clock->referenceTx,
+  bool available = mulClockMapRefToFollowerSimultaneousNetwork(pair,clock, clock->referenceTx,
     supplied ? &delay : NULL, nowMs, &mapped);
   mulClockMapStatus_t mapStatus = mulClockMapStatus(clock, nowMs);
   if (force || twr->syncDirty || available != twr->syncAvailable) {
     printf("MUL ALR: SYNC src=0x%02X map=%s delay=%s correction=%s delay_age_ms=%" PRIu32
            " physical_bound=UNKNOWN\r\n",
-      twrNetwork->addresses[0][0],mapStatus == mulClockMapValid ? "VALID" : mapStatus == mulClockMapWarmup ? "WARMUP" :
+      pair->addresses[0][0],mapStatus == mulClockMapValid ? "VALID" : mapStatus == mulClockMapWarmup ? "WARMUP" :
       mapStatus == mulClockMapStale ? "STALE" : "INVALID",
       status == mulClockDelayValid ? "VALID" : status == mulClockDelayStale ? "STALE" : "INVALID",
       available ? "AVAILABLE" : "UNAVAILABLE", supplied ? nowMs-delay.measuredMs : 0);
@@ -436,8 +477,8 @@ void mulTwrSync(mulTwr_t *twr, const mulClock_t *clock, uint32_t nowMs, bool for
 
 uint32_t mulTwrDelayWait(const mulTwr_t *twr, uint32_t nowMs, uint32_t fallback)
 {
-  uint32_t age = nowMs - twr->measuredMs;
-  if (twr->delayValid && age <= MUL_PROP_MAX_AGE_MS) {
+  uint32_t age = nowMs - (twr->planned?twr->aa.measuredMs:twr->measuredMs);
+  if ((twr->planned?twr->aa.valid:twr->delayValid) && age <= MUL_PROP_MAX_AGE_MS) {
     uint32_t remaining = MUL_PROP_MAX_AGE_MS + 1 - age;
     if (remaining < fallback) return remaining;
   }

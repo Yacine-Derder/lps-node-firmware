@@ -1171,3 +1171,21 @@ configuration or access. Host tests may generate seeded synthetic observations
 and retain pristine truth separately for evaluation; this does not implement the
 experimental Pi bridge. Known frame, supplied uncertainty and stale/missing-data
 handling remain required. D/E/F/G order and final-only hardware campaign remain.
+
+
+### Committed AA propagation versus exchange state
+
+Generated plans retain a small committed AA record independently of the active
+TWR operation: ordered reference/follower IDs, clock epoch, acquisition uptime,
+reference sequence, ToF, power-correction status and validity/invalidation state.
+Only a successfully verified AA RESULT publishes this record. Configuring or
+completing an AR operation cannot re-label/re-date it or replace its ToF. AR faults
+do not invalidate the AA record; reference loss, schedule mismatch or clock epoch
+reset explicitly invalidate it. Expiry continues to use acquisition time.
+
+Delay export, propagation state, expiry wakeups, relation power flags and SYNC
+status use the committed AA identity while another operation is selected. Legacy
+unplanned behavior retains its existing fields. The bounded MUL role reservation
+is now at most160 bytes (linked144 versus prior128); no stack/USB queues were cut.
+This is a prerequisite for active AR ownership, which remains disabled pending
+LPS scheduling and DW3000 responder integration. It does not authorize radio TX.

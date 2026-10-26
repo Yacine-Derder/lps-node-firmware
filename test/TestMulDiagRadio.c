@@ -46,7 +46,7 @@ void test_mulDiagRealDriverProfileUsesCommonSfdPhrFcsAndSharedScratch(void) {
   TEST_ASSERT_FALSE(getBit(dev.chanctrl,LEN_CHAN_CTRL,DWSFD_BIT));
   TEST_ASSERT_FALSE(getBit(dev.chanctrl,LEN_CHAN_CTRL,TNSSFD_BIT)); TEST_ASSERT_FALSE(getBit(dev.chanctrl,LEN_CHAN_CTRL,RNSSFD_BIT));
   TEST_ASSERT_EQUAL_UINT8_ARRAY(dev.chanctrl,regs[CHAN_CTRL],LEN_CHAN_CTRL);
-  TEST_ASSERT_TRUE(sizeof(mulDiagDwState_t)<=128); TEST_ASSERT_EQUAL_UINT(128,sizeof(mulRoleScratch));
+  TEST_ASSERT_TRUE(sizeof(mulDiagDwState_t)<=128); TEST_ASSERT_TRUE(sizeof(mulRoleScratch)<=160);
 }
 void test_mulDiagRealDriverRoleWatchdogBoundedReadsAndRecovery(void) {
 #if MUL_DIAG_ROLE==1

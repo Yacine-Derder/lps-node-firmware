@@ -956,3 +956,51 @@ fault tests. Continue F abstract USB poses/downstream geometry/measured-step
 portable optional ESP EKF, then G consolidated experiment campaign. Goal ACTIVE;
 all of D/E/F/G must be completed, not just RF4 receive. Unrelated docs/mul_core.md
 in LPS remains16 additions/17 deletions and must not be staged.
+
+
+## Stage E AA/AR coexistence prerequisite
+
+LPS mulTwr_t now appends a24-byte committed mulTwrAa_t record. It captures the
+ordered AA identities, epoch, acquisition uptime, reference sequence, ToF and power
+status only at successfully verified AA RESULT reception. Planned delay getters,
+propagation state, expiry wakeup, relation power flag and SYNC network use this
+record rather than the current exchange pair. Configuring/completing AR cannot
+change it; AR math/packet faults do not invalidate AA. External reference loss,
+schedule mismatch and clock epoch reset call mulTwrInvalidateAa explicitly. A
+failed AA invalidation and age/epoch rules retain fail-closed behavior. Legacy
+unplanned code paths remain on their existing fields; no new diagnostic dirty
+flag is introduced there.
+
+TestMulTwr adds a full actual encoded five-message AA exchange followed by AR
+with the former follower acting as initiator, using independent physical clocks.
+Fixture protocolRole is now separate from radio index, proving data role versus
+per-operation role. AA identity/value/acquisition time/sequence/power status remain
+unchanged before/after AR and an AR fault; expiry and epoch invalidation are checked.
+Fixture callbacks take2ms, so its declared processing budget is2000us (lead500,
+air400, reply5ms). An earlier test draft declared500us processing and correctly
+hit the existing deadline; production timeout guards were not weakened.
+
+Native production10ms230 tests plus230 ASan/UBSan pass at
+/tmp/mul-aa-cache-final-tests.log. Native50/500ms230 each also pass at
+/tmp/mul-aa-cache-final-matrix.log. Clean CH5/6s image/resource check:
+flash116612/free14460, RAM13564/free2820 including linker stack. roleScratch actual
+144 bytes (prior128), compile bound160; main1600/UWB1600/idle800/linker2048/USB512
+unchanged. Source test bound updated to160, while diagnostic state remains<=128.
+ARM stack report /tmp/mul-aa-cache-twr.su: OnEvent312, sendPacket288, SYNC256 bytes
+individual frames; full runtime watermark acceptance remains final campaign work.
+The owned .su file was removed from source after copying; no generated files staged.
+Build logs:/tmp/mul-aa-cache-final-build.log,/tmp/mul-aa-cache-relink.log,
+/tmp/mul-aa-cache-final-resources.json. STM/ESP unchanged/clean; shared core pin
+stillf5bbbec, no portable/vendor source change in this unit. No hardware or Pi access.
+
+This supersedes the earlier instruction to implement a separate AA cache: it now
+exists. AR RF enable gates are STILL present in LPS/STM. Next implement generated
+ALR AR initiation and the scheduled DW3000 responder, respecting local hardware
+clock identity for every target. Follower ALR initiators need explicit mapped
+reference reservation poll/end targets, not addition of unscaled reference offsets
+to a foreign clock. Preserve the new cache on those operations. Validate exact
+5-message/cycle/op/pair/hash, after-SPI late guards, TX-stamp checks, loss/CRC/events,
+broadcast preemption, multiple RLRs and raw/quality telemetry before removing gates.
+Then remaining D priorities/freshness, F abstract USB noisy poses/geometry and
+measured-wheel optional ESP EKF, and G. Goal active and full scope unfinished.
+Preserve unrelated LPS docs/mul_core.md edits16/17. No flash/operate permission.
