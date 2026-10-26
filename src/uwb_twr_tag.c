@@ -87,7 +87,7 @@ static packet_t rxPacket;
 static packet_t txPacket;
 static volatile uint8_t curr_seq = 0;
 static int curr_anchor = 0;
-uwbConfig_t config;
+static struct {uint8_t address[8],anchors[MAX_ANCHORS],anchorListSize;} config;
 
 // #define printf(...)
 #define debug(...) // printf(__VA_ARGS__)
@@ -265,7 +265,9 @@ static void twrTagInit(uwbConfig_t * newconfig, dwDevice_t *dev)
   // Set the LED for anchor mode
   ledOn(ledMode);
 
-  config = *newconfig;
+  memcpy(config.address,newconfig->address,sizeof(config.address));
+  memcpy(config.anchors,newconfig->anchors,sizeof(config.anchors));
+  config.anchorListSize=newconfig->anchorListSize;
 
   // Initialize the packet in the TX buffer
   MAC80215_PACKET_INIT(txPacket, MAC802154_TYPE_DATA);

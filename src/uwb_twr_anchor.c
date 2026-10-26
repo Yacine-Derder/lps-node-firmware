@@ -42,7 +42,7 @@
 uint8_t base_address[] = {0,0,0,0,0,0,0xcf,0xbc};
 
 // System configuration
-static struct uwbConfig_s config;
+static struct {uint8_t address[8];} config; // Snapshot only the fields this engine uses.
 
 // The four packets for ranging
 #define POLL 0x01   // Poll is initiated by the tag
@@ -260,7 +260,7 @@ static void twrAnchorInit(uwbConfig_t * newconfig, dwDevice_t *dev)
   // Set the LED for anchor mode
   ledOn(ledMode);
 
-  config = *newconfig;
+  memcpy(config.address,newconfig->address,sizeof(config.address));
 
   // Initialize the packet in the TX buffer
   MAC80215_PACKET_INIT(txPacket, MAC802154_TYPE_DATA);

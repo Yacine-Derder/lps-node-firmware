@@ -151,6 +151,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
       (void)mulSchedulePair(schedule,index?index:1,&config->mulNetwork);
       if(mulNetworkRole(alrNetwork,source)!=alrRole)alrRole=mulAlrUnsupported;}
   }
+  if(!multiMode&&!mulScheduleTag(mulNetworkSlotMs(alrNetwork)))alrRole=mulAlrUnsupported;
   referenceAcquired = false;
   mulClockReset(&followerClock);
   mulClockWorkspace_t *workspace=mulClockWorkspace();mulClockFitReset(&workspace->fit);

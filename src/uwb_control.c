@@ -30,6 +30,7 @@ bool uwbControlCanEnable(void) {
 #if PHY_INTEROP_ROLE || MUL_DIAG_ROLE || MUL_TWR_ROLE
  if(schedule.profile==MUL_PROFILE_MULTI)return false;
 #endif
+ if(schedule.profile==MUL_PROFILE_EXPERIMENTAL)return false; // New adapter integration checkpoint pending.
  if(c->mode<MODE_MUL_ALR)return allowed;
  uint8_t storedBytes;
  if(schedule.profile==MUL_PROFILE_LEGACY&&!cfgFieldSize(cfgMulSchedule,&storedBytes))return allowed;

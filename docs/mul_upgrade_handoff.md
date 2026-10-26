@@ -227,3 +227,47 @@ experimental schedule metadata and full numerical spacing in its extended record
 old128-byte packed slot fields must remain compatibility-only. Extend vector/raw
 telemetry with an explicit experimental marker rather than reinterpreting old fields.
 After StageC tests/builds/pin refresh proceed throughD–G without physical requests.
+
+## Stage C portable timing checkpoint (firmware activation still blocked)
+
+Implemented shared schema2/profile3 in the existing32-byte schedule payload:
+20..21 TX lead_us,22..23 RX/processing budget_us,24..25 airtime_us,26 guard/100us,
+27 AA-ranging flag. Profiles1/2 retain schema1 bytes and discrete compatibility
+settings. Version3 multi radio envelopes bind the experimental schedule; version2
+receivers reject them. Numeric math contexts accept1..65535ms, but legacy scheduled
+packet encoding still rejects unrepresentable tags. Legacy raw EEPROM spacing is
+still discrete. Profile3 has100..2000ms cycles at10ms resolution and feasibility
+checks using explicit budgets;3ms with default5ms lead fails as intended. AA-off
+allocates no maintenance owner; unsupported ALR–RLR flags are rejected.
+
+Clock period uses former padding (clock remains80 bytes); period/10ms in relation
+padding keeps it48 bytes and LPS scratch128 bytes. Propagation sequence-age guards
+now use actual period; legacy decode/guards retain their previous policy. Explicit
+period-aware relation decoding is required for experimental frames. The production
+receiver core computes signed synthetic geometry at numerical spacings including
+2/3/5/7/17/50/200/251ms and variable periods, including offsets above600ms. This is
+synthetic relation-provider input, not active ranging/geometry firmware integration.
+Shared sanitizer suite and230 native10ms tests passed. Added two stock snapshot
+ownership tests. Stock TWR anchor/tag now copy only used address/list fields rather
+than whole MUL config snapshots, preserving ownership and recovering SRAM.
+
+Clean intermediate LPS build passes: text129576/data1136/bss15076. Map RAM1128+
+13028+2048=16204/16384 (180 bytes margin). Flash image has only about360 bytes spare,
+so further integration needs size work, not smaller queues/stacks. Experimental RF
+is deliberately rejected in `uwbControlCanEnable` until the new radio adapters and
+commands are connected; do not describe Stage C as a completed firmware feature.
+
+Next concrete actions:
+1. Wire profile3 classification into ALR/TWR/reference-period/follower-lead code;
+   retain before/after-SPI guards using configured experimental lead only, default
+   compatibility minimum unchanged. Override estimator period from schedule.
+2. Add RF-OFF scalar setters/profile selection/preview and numerical spacing to
+   LPS. Guard unsupported legacy tags. Preserve known100-byte EEPROM region.
+3. Add STM32 schema8 extended experimental schedule decoding (restore full spacing
+   from the verified extension, not old packed slot bits), matching setters and
+   receiver configuration. Distinguish explicit clock defaults in serialized state.
+4. Extend type8/type9 validation/collector with explicit experimental marker;
+   old records remain restricted to their old constraints. Include actual clock
+   sample period for replay. Pin only a committed shared revision into consumers.
+5. Test actual adapters at3/5/2ms with simulated setup lag, missing packets, failed
+   delayed-TX, period changes and power cuts; rebuild all targets. Then proceedD–G.

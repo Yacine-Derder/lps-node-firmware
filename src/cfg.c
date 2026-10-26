@@ -379,7 +379,7 @@ bool cfgMulSlotRead(uint16_t *slotMs) {
  }
  if(!slotMs||!cfgStorageReady())return false;
  if(cfgFieldSize(cfgMulSlotMs,&size)&&(size!=4||!cfgReadU32(cfgMulSlotMs,&value)))return false;
- if(!mulSlotValid(value))return false;
+ if(!mulScheduleTag(value))return false;
  *slotMs=(uint16_t)value;return true;
 }
 bool cfgMulSlotWrite(uint16_t slotMs) {
@@ -390,6 +390,7 @@ bool cfgMulSlotWrite(uint16_t slotMs) {
   if(!cfgReadU8(cfgAddress,&node)||!cfgMulScheduleRead(node,&schedule))return false;
   schedule.slotMs=slotMs;return cfgMulScheduleWrite(node,&schedule);
  }
+ if(!mulScheduleTag(slotMs))return false;
  return cfgWriteU32(cfgMulSlotMs,slotMs);
 }
 
