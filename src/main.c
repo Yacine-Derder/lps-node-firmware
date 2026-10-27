@@ -221,8 +221,10 @@ static void main_task(void *pvParameters) {
 #endif
       handleSerialInput(ch);
     }
-#if MUL_TWR_TRACE
+#if MUL_RX_DIAG
     mulRxDiagPoll(usbcommTryWrite);
+#endif
+#if MUL_TWR_TRACE
     mulTwrTracePoll(usbcommTryWrite); // One bounded record; never blocks the radio owner.
 #endif
   }

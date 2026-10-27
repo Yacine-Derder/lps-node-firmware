@@ -521,7 +521,11 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   }
   // Turn directly from the completed RX into delayed TX. Enabling RX briefly
   // before dwNewTransmit() could leave a new RX IRQ racing the pending slot.
-  if (!armed) {
+  // A software wakeup did not consume a hardware frame. TRXOFF + RX status
+  // clear here can destroy a frame completing after the semaphore timed out,
+  // and periodically interrupts preamble search. RX/TX/error callbacks and
+  // active TWR cancellation already own their required rearming.
+  if (!armed && (event != eventTimeout || lostNow || !activePlan)) {
     mulRxRearm(dev);
   }
   if (lostNow) {

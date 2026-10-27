@@ -28,6 +28,7 @@
 
 #include "uwb.h"
 #include "uwb_control.h"
+#include "uwb_irq.h"
 #include "mul_alr.h"
 #include <string.h>
 #include "mul_rlr.h"
@@ -278,7 +279,7 @@ char * uwbAlgorithmName(unsigned int id)
   }
 }
 
-static int checkIrq()
+static bool checkIrq(void)
 {
   return HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
 }
@@ -293,9 +294,8 @@ static void uwbTask(void* parameters)
     bool irq=xSemaphoreTake(irqSemaphore, timeout/portTICK_PERIOD_MS);
     if(uwbControlApply(dwm,algorithm))timeout=1;
     if(!uwbControlRunning()){timeout=MAX_TIMEOUT;continue;}
-    if(irq) {
-      do {dwHandleInterrupt(dwm);} while(checkIrq()!=0&&uwbControlRequested());
-    } else if(uwbControlEvent(eventTimeout))timeout=algorithm->onEvent(dwm,eventTimeout);
+    if(!uwbServiceIrq(dwm,irq,checkIrq,uwbControlRequested)&&uwbControlEvent(eventTimeout))
+      timeout=algorithm->onEvent(dwm,eventTimeout);
   }
 }
 

@@ -10,6 +10,7 @@
 #include "mul_timing.h"
 #include "mul_alr.h"
 #include "mul_rx.h"
+#include "uwb_irq.h"
 #include "task.h"
 #include "mul_common.h"
 #include "mul_twr.h"
@@ -40,6 +41,7 @@ TickType_t xTaskGetTickCount(void) { return fakeTicks; }
 static bool started;
 static unsigned int completionCount;
 static unsigned int receiveCount;
+static unsigned rxOffWrites;
 static mulTwr_t *directTwr;
 static uint64_t directOrigin;
 static uint64_t directReferenceOrigin;
@@ -75,6 +77,7 @@ static void radioWrite(dwDevice_t *device, const void *header, size_t headerLeng
       registers[reg][offset + i] &= ~((const uint8_t *)data)[i];
     return;
   }
+  if(reg==SYS_CTRL&&(((const uint8_t *)data)[0]&(1u<<TRXOFF_BIT)))rxOffWrites++;
   memcpy(registers[reg] + offset, data, length);
   if (reg == SYS_CTRL && (registers[reg][0] & (1 << TXSTRT_BIT))) {
     TEST_ASSERT_BITS_HIGH(1 << TXDLYS_BIT, registers[reg][0]);
@@ -111,7 +114,7 @@ void setUp(void) {
   systemTime = 0; fakeTicks=0;
   started = false;
   completionCount = 0;
-  receiveCount = 0;
+  receiveCount = 0;rxOffWrites=0;
   directTwr = NULL;
   directRole = mulAlrReference; directEpoch = 0; directReferenceOrigin = 0;
   dwInit(&radio, &radioOps);
@@ -449,4 +452,109 @@ void test_rxDiagnosticsUseDriverPreclearStatusAfterExistingReset(void) {
  observedFailureCallbacks=0;dwAttachReceiveFailedHandler(&radio,checkPreclearFailure);
  registers[SYS_STATUS][1]=1u<<(RXFCE_BIT-8);dwHandleInterrupt(&radio);
  TEST_ASSERT_EQUAL(1,observedFailureCallbacks);
+}
+
+static void generatedFollowerReady(mulRangingPlan_t *p,uint32_t cycle) {
+ memset(p,0,sizeof(*p));p->replyMs=20;p->maxUtilization=70;p->enabled=3;
+ p->aaMilliHz=1000;p->arMilliHz=50;p->rlrCount=1;p->rlrs[0]=141;
+ mulScheduleLegacy(&p->broadcast,132,133,10);mulScheduleExperimental(&p->broadcast);
+ p->broadcast.rangingFlags=0;p->broadcast.txLeadUs=1000;p->broadcast.rxBudgetUs=5000;
+ TEST_ASSERT_EQUAL_HEX32(0x826414cc,mulRangingPlanFingerprint(p));
+ nodeConfig.address[0]=133;nodeConfig.mulConfigured=true;nodeConfig.mulRole=mulAlrFollower;
+ nodeConfig.mulSchedule=p->broadcast;nodeConfig.mulPlan=p;
+ TEST_ASSERT_TRUE(mulNetworkInit(&nodeConfig.mulNetwork,132,133));
+ mulAntennaConfigure(&radio);mulAlrAlgorithm.init(&nodeConfig,&radio);
+ unsigned n=mulPlanBroadcastEncode(registers[RX_BUFFER],sizeof(registers[RX_BUFFER]),p,0,cycle,0,NULL);
+ TEST_ASSERT_EQUAL(40,n);registers[RX_FINFO][0]=n+2;
+ mulEncodeTimestamp(registers[RX_TIME],0);systemTime=63897600;
+ registers[SYS_STATUS][1]=1<<(RXFCG_BIT-8);dwHandleInterrupt(&radio);
+ TEST_ASSERT_EQUAL(1,receiveCount);TEST_ASSERT_TRUE(started);
+ systemTime=mulTimestampMask(mulDecodeTimestamp(registers[TX_TIME])+63897600);
+ registers[SYS_STATUS][0]=1<<TXFRS_BIT;dwHandleInterrupt(&radio);
+ TEST_ASSERT_EQUAL(1,completionCount);started=false;
+}
+void test_generatedFollowerSoftwareWakePreservesPendingPollAtEitherOperation(void) {
+ for(unsigned index=0;index<2;index++) {
+  setUp();mulRangingPlan_t p;generatedFollowerReady(&p,9);
+  mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,9,index,&op));TEST_ASSERT_EQUAL(MUL_PLAN_AA,op.kind);
+  uint64_t pollAt=(uint64_t)op.pollUs*638976/10;
+  unsigned stops=rxOffWrites;
+  systemTime=pollAt-63897600;registers[SYS_STATUS][1]=1u<<(RXPRD_BIT-8);
+  mulAlrAlgorithm.onEvent(&radio,eventTimeout);
+  TEST_ASSERT_EQUAL(stops,rxOffWrites); // Do not reset a receiver finding a preamble.
+  TEST_ASSERT_BITS_HIGH(1u<<(RXPRD_BIT-8),registers[SYS_STATUS][1]);
+  mulTwrPacket_t packet={.type=mulTwrPoll,.id=9,.txTimestamp=pollAt};packet.stamps[0]=pollAt;
+  TEST_ASSERT_TRUE(mulPlanTwrEncode(registers[RX_BUFFER],&p,index,&packet));
+  registers[RX_FINFO][0]=MUL_MULTI_TWR_BYTES+2;mulEncodeTimestamp(registers[RX_TIME],pollAt);
+  systemTime=pollAt+63897600; // Frame completes after semaphore wait returned false.
+  registers[SYS_STATUS][1]=(1<<(RXDFR_BIT-8))|(1<<(RXFCG_BIT-8));
+  mulAlrAlgorithm.onEvent(&radio,eventTimeout);
+  TEST_ASSERT_BITS_HIGH(1<<(RXFCG_BIT-8),registers[SYS_STATUS][1]);
+  TEST_ASSERT_EQUAL(1,receiveCount); // Still pending, not fabricated delivery.
+  dwHandleInterrupt(&radio);
+  TEST_ASSERT_EQUAL(2,receiveCount);TEST_ASSERT_TRUE(started); // Real POLL produced RESPONSE.
+ }
+}
+
+static bool testRfRequested,extraRxEvent,stopOnReceive;
+static bool irqAsserted(void) {return (registers[SYS_STATUS][1]&(1u<<(RXFCG_BIT-8)))||
+                                    (registers[SYS_STATUS][0]&(1u<<TXFRS_BIT));}
+static bool rfRequested(void){return testRfRequested;}
+static void queuedReceive(dwDevice_t *device) {
+ (void)device;receiveCount++;
+ if(extraRxEvent){extraRxEvent=false;registers[SYS_STATUS][1]|=1u<<(RXFCG_BIT-8);}
+ if(stopOnReceive)testRfRequested=false;
+}
+void test_irqLevelIsDrainedWithoutSemaphoreTokenAndCoalescedEventsAreNotCounted(void) {
+ dwAttachReceivedHandler(&radio,queuedReceive);testRfRequested=true;stopOnReceive=false;extraRxEvent=true;
+ registers[SYS_STATUS][1]=1u<<(RXFCG_BIT-8);
+ // No token: IRQ was asserted while the owner was handling another event.
+ TEST_ASSERT_TRUE(uwbServiceIrq(&radio,false,irqAsserted,rfRequested));
+ TEST_ASSERT_EQUAL(2,receiveCount);TEST_ASSERT_FALSE(irqAsserted());
+ // A stale/coalesced notification with no pending event must not invent RX.
+ TEST_ASSERT_TRUE(uwbServiceIrq(&radio,true,irqAsserted,rfRequested));TEST_ASSERT_EQUAL(2,receiveCount);
+ TEST_ASSERT_FALSE(uwbServiceIrq(&radio,false,irqAsserted,rfRequested));
+}
+void test_irqDrainHonorsRfOffBeforeAndBetweenCallbacks(void) {
+ dwAttachReceivedHandler(&radio,queuedReceive);testRfRequested=false;stopOnReceive=true;extraRxEvent=true;
+ registers[SYS_STATUS][1]=1u<<(RXFCG_BIT-8);
+ TEST_ASSERT_FALSE(uwbServiceIrq(&radio,true,irqAsserted,rfRequested));TEST_ASSERT_EQUAL(0,receiveCount);
+ testRfRequested=true;TEST_ASSERT_TRUE(uwbServiceIrq(&radio,true,irqAsserted,rfRequested));
+ TEST_ASSERT_EQUAL(1,receiveCount);TEST_ASSERT_TRUE(irqAsserted());TEST_ASSERT_FALSE(testRfRequested);
+}
+
+static void generatedRx(const mulRangingPlan_t *p,unsigned index,const mulTwrPacket_t *packet,uint64_t arrival) {
+ TEST_ASSERT_TRUE(mulPlanTwrEncode(registers[RX_BUFFER],p,index,packet));
+ registers[RX_FINFO][0]=MUL_MULTI_TWR_BYTES+2;mulEncodeTimestamp(registers[RX_TIME],arrival);
+ systemTime=mulTimestampMask(arrival+63897600);registers[SYS_STATUS][1]=1<<(RXFCG_BIT-8);
+ dwHandleInterrupt(&radio);
+}
+static mulTwrPacket_t generatedTxComplete(const mulRangingPlan_t *p,unsigned index,unsigned type) {
+ mulTwrPacket_t packet;
+ TEST_ASSERT_TRUE(mulPlanTwrDecode(p,9,index,registers[TX_BUFFER],MUL_MULTI_TWR_BYTES,&packet));
+ TEST_ASSERT_EQUAL(type,packet.type);TEST_ASSERT_EQUAL_UINT64(packet.txTimestamp,mulDecodeTimestamp(registers[TX_TIME]));
+ systemTime=mulTimestampMask(packet.txTimestamp+63897600);registers[SYS_STATUS][0]=1<<TXFRS_BIT;
+ dwHandleInterrupt(&radio);return packet;
+}
+void test_generatedFollowerCompletesBothCycleNineOperationsWithoutRemoteContextMutation(void) {
+ mulRangingPlan_t p;generatedFollowerReady(&p,9);
+ const uint64_t ms=63897600,tof=2131;
+ for(unsigned index=0;index<2;index++) {
+  mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,9,index,&op));TEST_ASSERT_EQUAL(MUL_PLAN_AA,op.kind);
+  systemTime=(uint64_t)op.startUs*638976/10;mulAlrAlgorithm.onEvent(&radio,eventTimeout);
+  mulTwrPacket_t packet={.type=mulTwrPoll,.id=9};packet.stamps[0]=(uint64_t)op.pollUs*638976/10;
+  packet.txTimestamp=packet.stamps[0];generatedRx(&p,index,&packet,packet.txTimestamp+tof);
+  packet=generatedTxComplete(&p,index,mulTwrResponse);
+  uint64_t p2=packet.stamps[1],p3=packet.stamps[2];
+  packet.type=mulTwrFinal;
+  packet.stamps[3]=mulTimestampMask(packet.stamps[0]+mulTimestampDifference(p3,p2)+2*tof);
+  packet.stamps[4]=mulTimestampMask(packet.stamps[3]+20*ms);packet.txTimestamp=packet.stamps[4];
+  generatedRx(&p,index,&packet,mulTimestampMask(p3+20*ms+2*tof));
+  packet=generatedTxComplete(&p,index,mulTwrReport);uint32_t measured;
+  TEST_ASSERT_TRUE(mulTwrCalculate(packet.stamps,&measured));TEST_ASSERT_EQUAL(tof,measured);
+  packet.type=mulTwrResult;packet.tof=tof;packet.txTimestamp=mulTimestampMask(packet.stamps[4]+40*ms);
+  generatedRx(&p,index,&packet,mulTimestampMask(packet.stamps[5]+40*ms));
+  TEST_ASSERT_EQUAL(RX_MODE,radio.deviceMode);
+ }
+ TEST_ASSERT_EQUAL(7,receiveCount);TEST_ASSERT_EQUAL(5,completionCount);
 }

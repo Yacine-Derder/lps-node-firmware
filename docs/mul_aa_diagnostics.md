@@ -499,7 +499,7 @@ planner and follower selector support both indices; operation1 has a different
 phase relative to millisecond software wakeups. Reference diagnostics report
 loss6, so absence of individual reference records is not conclusive.
 
-Two source-level hazards need deterministic coverage: `followerOnEvent()` falls
+Two source-level hazards are now reproduced by real-driver tests: `followerOnEvent()` falls
 through to `mulRxRearm()` on an idle software timeout, and `uwbTask()` checks the
 IRQ pin only in the semaphore-success branch. `dwNewReceive()` forces TRXOFF
 and clears good-RX status. A good frame completing after semaphore timeout but
@@ -509,6 +509,28 @@ The UWB task is the highest-priority application task; USB output uses zero-wait
 queue writes. A higher-priority application worker is not present in this build.
 Binary semaphore coalescing by itself is safe only if pending hardware events
 are drained; it cannot count frames or preserve an overwritten receive buffer.
+The pending-POLL regression failed on the original code because a software
+wake cleared RXFCG before delivery; it now passes at both operation indices.
+The correction leaves a listening generated follower untouched on software
+wakeups (including a frame arriving between IRQ-pin check and timeout callback).
+RX/TX/error callbacks, active TWR cancellation, reference-loss recovery and
+mandatory broadcasts retain their existing recovery/preemption. Fixed/legacy
+follower behavior is left unchanged. `uwbServiceIrq()` tests the actual pin as
+well as the token, drains coalesced events, and stops when RF is no longer
+requested. It adds a GPIO read, not a status-SPI poll. A stale token with no
+hardware event produces no fabricated RX callback. The normal callback path
+still uses the driver's packet/error checks; no deadline or validation relaxed.
+
 These hazards explain a possible IDLE/good-RX signature, not the identity of the
-pending frame nor every hardware failure. Deterministic reproductions and a
-new hardware run are needed to establish their contributions.
+pending frame nor every hardware failure. IDLE is normal after a completed
+single-buffer RX; the defect is allowing pending evidence/frame delivery to be
+lost during a software-only rearm. Persistent good-RX with no token is now
+serviced on the existing timeout path. A status snapshot preceding POLL cannot
+identify that pending frame as POLL. Operation1 is exposed to the same1ms wake
+loop at another deterministic phase; no index-specific acceptance failure has
+been reproduced. It would be unjustified to claim that all six observed failures
+have one cause or that these fixes improve measured RF reliability without a
+new capture. Preamble-only and later-leg errors remain separate hypotheses.
+
+A separate output integration defect is also corrected: RX-only diagnostics now
+poll independently of `MUL_TWR_TRACE`, matching their independent build flag.
