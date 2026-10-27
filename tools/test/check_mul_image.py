@@ -18,6 +18,7 @@ def inspect(path):
                'vApplicationGetTimerTaskMemory')
     assert not set(removed) & symbols.keys(), 'removed mode/factory state linked'
     assert not any(name.startswith(('lps25h', 'lppHandle')) for name in symbols), 'unused peripheral/LPP linked'
+    assert not any(name.startswith('mulEkf') for name in symbols), 'optional EKF must stay outside LPS radio image'
     for name in ('mulAlrAlgorithm', 'mulRlrAlgorithm', 'mulTwrOnEvent', 'mulClockObserveFitted'):
         assert name in symbols, f'missing MUL function: {name}'
     assert symbols.get('workspace') == 344, 'missing explicit bounded MUL clock workspace'

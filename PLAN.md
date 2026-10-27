@@ -57,7 +57,15 @@ Existing profiles retain their prior wire format. Stage F now has a ROS-agnostic
 persisted TWR/external/none source selection, cached covariance-aware geometry
 and propagation correction, source-aware radio/telemetry, and seeded host input/
 replay tests. Actual LPS external/none/stale frames pass through STM32 and ESP
-logging. Optional odometry EKF and consolidated campaign G remain unfinished.
+logging. Optional StageF EKF software and StageG experiment preparation now use
+canonical506913d: a default-OFF portable/ESP measured-input filter with joint
+TDoA/TWR+ALR covariance, Joseph updates/gating and bounded delayed replay, plus
+host trajectory/loss/bias/NLOS comparisons. StageG has production-planner-preflighted
+configuration/capture artifacts and exact-key offline evaluation. The
+[coordinated operator campaign](docs/mul_experiment_campaign.md) is prepared,
+without hardware execution. A genuine measured-counter/acquisition-time backend
+remains an explicit integration dependency, as allowed by the task; physical
+calibration/interoperability/accuracy are unvalidated.
 The existing DATA step counters are documented as commanded/phase counts; their
 transport does not establish measured wheel motion and must not be relabeled.
 No physical-validation stop is requested between software stages.

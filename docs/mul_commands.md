@@ -645,3 +645,9 @@ python3 tools/verify_multi_replay.py --geometry /tmp/pose.uart
 This passes native LPS delayed-TX frames through the real STM32 runtime/radio
 adapter and ESP bridge/collector. Synthetic independent clocks, external geometry,
 source none and stale inputs are checked; it is not a physical accuracy test.
+
+The optional measured-input filter executes on ESP/host and remains disabled by
+default; it adds no ROS, MCS, noise generator or EKF math to LPS. See the sibling
+[EKF interface and replay](../../epuck-esp32/docs/uwb_ekf.md) and
+[consolidated experiment preparation](mul_experiment_campaign.md). The existing
+DATA2 commanded/phase counters are not a measured-wheel backend.

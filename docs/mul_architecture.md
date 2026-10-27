@@ -16,8 +16,9 @@ Clock-fit state is an explicit MUL-owned344-byte object; stock TDoA3 has its own
 original context and is not linked into production. Shared radio/console/kernel
 tasks remain; no stack or USB queue reductions were used to obtain the savings.
 
-StageF consumes timestamped MCS/ROS poses in a known common frame, with supplied
-covariance and deterministic synthetic noise. Downstream geometry/filter interfaces
+StageF consumes externally supplied timestamped noisy poses in a known common
+frame, with supplied covariance/validity. LPS remains entirely ROS-agnostic;
+synthetic generation and replay are host-only. MCS/ROS/Pi integration is excluded. Downstream geometry/filter interfaces
 receive noisy observations only; pristine truth is reserved for evaluation. No
 SLAM implementation, alignment or uncertainty inference is part of this campaign.
 
@@ -1316,3 +1317,44 @@ noise parameters/covariance and submillimetre quantization bounds. Native C repl
 uses the same production codec/bank/geometry. Simulated reception time is declared
 in replay records; it is not an implementation of an MCS/ROS/Pi bridge. Physical
 transport ages cannot be inferred by playing a saved command file quickly.
+
+
+## Optional measured-input localization filter
+
+The canonical planar `[x,y,theta]` EKF executes on ESP32/host, never in LPS or
+STM32 radio callbacks. It defaults disabled, requires explicit experimental
+geometry/noise parameters and initialization, and preserves the independent raw
+UWB/odometry streams. Existing DATA2 commanded/phase counts are not proof of
+measured wheels. The defined backend requires genuine measured16/32-bit counters,
+source clock/epoch, aligned64-bit acquisition time, sequence and time uncertainty;
+commanded/unknown provenance is rejected. A real measured-counter/time-alignment
+integration remains external. No receipt-clock or source-width guess is made.
+
+Prediction uses exact differential-drive arcs and analytic Jacobians. Joint
+TDoA/TWR updates propagate full radio covariance and shared uncertain ALR poses,
+including common-reference cross terms, with Joseph covariance and joint NIS
+gating. Statistical inputs are explicit and uncalibrated. The initial model
+requires independent ALR errors across robots and accepted source times; separate
+attestations distinguish these. Reusing the same accepted ALR pose in another
+independent update is rejected. Correlated-across-time/unknown pose models are
+not silently approximated as independent; host generation can still exercise
+those inputs and explicit rejection. The filter has no slip/bias/alignment state
+and no general observability guarantee. NO_RATE remains invalid.
+
+Eight measured intervals and four joint batches bound fixed-lag replay. A delayed
+batch within the retained checkpoint is inserted by acquisition time and replayed
+with immutable noisy poses, not applied at receipt time. Interpolated motion and
+proportionally split white interval variance are explicit experimental assumptions.
+Out-of-history/over-capacity inputs are reported; numeric failure requires reinit.
+Output revisions distinguish revised estimates. Raw acquisition and independent
+truth remain separately archived for evaluation.
+
+ESP computation has a dedicated lower-priority worker, bounded nonblocking queues,
+periodic yields and session generations. No EKF command is forwarded to STM32 or
+motor control; reset/disconnect clears volatile configuration/state and discards
+stale-session results. The filter cannot become a dependency of basic radio
+operation. Details and bounded resource/model contracts are in the sibling
+[ESP interface](../../epuck-esp32/docs/uwb_ekf.md) and canonical
+[EKF model](../portable/mul_core/EKF.md). The
+[final experiment campaign](mul_experiment_campaign.md) separates software
+preflight from future operator-authorized physical acceptance.

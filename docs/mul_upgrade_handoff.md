@@ -1334,3 +1334,121 @@ Finish G integration/moving/loss/outlier/covariance replay matrix and consolidat
 final physical experiment preparation after F. LPS remains wholly ROS-agnostic;
 all ROS/MCS/Pi software and access are excluded. Preserve user docs/mul_core.md
 16add/17delete edit and never stage it. Goal remains ACTIVE, F/G unfinished.
+
+## Stage F/G software delivery — current checkpoint
+
+This section supersedes the earlier pending optional-EKF/G work items. The
+software campaign is implemented and verified using the explicitly permitted
+defined measured-input abstraction. Physical campaign execution and calibration
+remain unperformed. No Raspberry Pi software/hardware or ROS/MCS bridge was
+implemented, configured or accessed; no flashing, ARM/motion or intermediate
+physical experiment occurred. The user's unrelated docs/mul_core.md edit remains
+unstaged and unchanged by this campaign.
+
+Compatible source set:
+
+- Canonical published core506913dc676d0a3c0d43c48977ef11be2085aa34.
+- STM320b3de57 exports that exact core, no EKF sources linked into STM32.
+- ESPe0e967a implements actual worker/command execution, host replay and offline
+  reporting;0a97896 only corrects its final static stack-frame documentation.
+- LPS radio adapter remains ad89de8 behavior, plus canonical core506913d and this
+  final campaign/documentation change. The optional EKF is not linked into LPS;
+  the image checker now enforces that invariant. No on-air/persistence change
+  accompanies the filter. Both consumer UPSTREAM.json files verify the same pin.
+
+The portable/ESP filter is implemented, not an interface-only placeholder:
+exact constant-curvature differential-drive prediction with finite-difference-
+checked Jacobians; measured16/32-bit modular counter semantics; source clock,
+epoch/time/sequence guards; joint TDoA/TWR observations with full radio covariance
+and shared uncertain ALR Jacobians; Joseph covariance, Cholesky NIS gating,
+angle wrapping, invalid/missing input handling, duplicate/correlated-pose rejection
+and bounded chronological delayed replay. It requires explicit experimental
+wheel/noise configuration, initialization and ON. No calibrated defaults or
+physical uncertainty bounds are claimed.
+
+Eight measured intervals/four batches bound replay; historical poses are immutable
+per batch. Constant-curvature interpolation and proportionally split white
+interval noise are documented assumptions. Independent errors across ALR robots
+and accepted source times are separate attestations; unknown/temporally correlated
+models reject rather than double-count. Same accepted ALR pose cannot be reused
+in a separate independent update. A joint batch carries shared TDoA/TWR noise.
+The filter has no bias/slip/alignment state and does not certify full observability.
+
+ESP runs the optional worker below bridge/control priority with bounded SPSC
+queues, a four-command yield budget and session generations. Disconnect clears
+volatile configuration/state and stale results cannot cross sessions. Default has
+no filter allocation or worker task until explicit use. INIT allocates14240 bytes;
+OFF frees it. Scratch3264 bytes lives inside that stream, not on the stack.
+Worker stack8192 bytes; reviewed Xtensa command1968, worker-step704,
+stream-init1264 and core-init1264 frames give a deepest application chain about
+5.4KiB before library/kernel overhead. Static queues/assembly cost about6.7KiB.
+`EKF WORKER` exposes real minimum free stack bytes, heap free/largest block and
+worker drops for future physical load tests; host explicitly reports UNKNOWN.
+No dynamic stack/deadline/heap safety is claimed solely from host tests/builds.
+
+A genuine measured-counter producer and justified common acquisition-time mapping
+remain an external integration dependency, explicitly allowed by the original
+request. DATA/DATA2 commanded/phase counters are never adopted as measured wheels;
+signed parser width does not prove producer width. Existing raw DATA/UWB forwarding
+is unchanged, EKF commands never reach UART/motor control, and NO_RATE remains
+invalid. Compact logs preserve EKF output with source=esp32_ekf and worker-drop
+changes; raw logs preserve full diagnostic lines. External producers must archive
+all raw commands/observations and separate truth. See
+[ESP input/execution/replay contract](../../epuck-esp32/docs/uwb_ekf.md).
+
+Final software verification:
+
+- Canonical full portable suite passes ASan/UBSan, including EKF finite differences,
+  wrap/provenance, joint covariance, gated state preservation and ordered/late
+  replay equivalence. Verified unchanged exports in both consumers.
+- 237 production LPS tests each at10/50/500ms;237 ASan/UBSan at10;6 actual USB console
+  tests;5 seeded pose-input/production-C replay tests. No firmware feature was
+  added to the constrained image. CH5 clean make/image check passes:
+  flash126108/free4964 bytes; RAM14400/free1984 including linker stack;
+  main1600/UWB1600/idle800/linker2048/USB512 and workspace344 retained.
+- Full STM32 runtime/configuration/power-cut/radio/safety suite passes. Actual LPS
+  external/none/stale frames pass persisted DW3000 receiver and output queues;
+  actual ESP UART/priority/TCP reconnect/collector delivers35 records with raw
+  frames and propagation provenance preserved. Ordinary RLR zero-TX tests pass.
+- STM Universal clean build FLASH161244/RAM39616 and reserved-sector checker pass;
+  Hybrid50/10 builds and reserved-sector checks pass, no EKF radio work added.
+- 103 ESP Python host tests plus native protocol/actual bridge sanitizer tests pass.
+  The new service tests cover straight/turn/spin motion, stationary/moving ALRs,
+  other seeds/noise levels, missing observations, biased ranges and NLOS outliers,
+  covariance PSD, measured provenance, invalid/NO_RATE/correlation, session and
+  queue/control isolation. Archive replay of729 commands gives byte-identical
+  responses. Six-scenario sanitizer campaign compares unfiltered TDoA/TDoA+TWR,
+  wheel-only, TDoA+wheel EKF and TDoA+TWR+wheel EKF, with truth/inputs/outputs
+  separate. Delayed delivery reproduces final mean/full covariance. NLOS gates
+  and recovery are exposed; biased TWR can degrade results, not fitted away.
+- ESP IDF build passes with853760-byte .bin and194816 bytes free in the1MiB app
+  partition. This includes its normal application metadata; no device was flashed.
+- Offline campaign preparation exercises the production C planner for55 cases;
+  54 pass and optional2ms spacing is rejected with no activation commands. Report
+  tests cover exact-key truth, invalid availability, session/reset separation,
+  counter/freshness wrap and same-node TWR spans. Documentation links/whitespace
+  pass. Configuration/metadata files contain no RF ON or ARM/motor commands.
+
+Reviewed artifacts are /tmp/mul-final-campaign-v2 (55-case configuration/preview/
+future-capture preparation), /tmp/mul-ekf-campaign (six-scenario truth/raw commands/
+result+innovation+covariance/report), /tmp/mul-final-exact-replay.jsonl and
+/tmp/mul-final-decoded-report.json (actual production-decoded pose fixture audit).
+The latter has no independently aligned truth, so error bias/RMSE correctly stays
+unknown. Tools can recreate these without serial/network/hardware access.
+
+Built artifact SHA256:
+
+- LPS bin/lps-node-firmware.elf:
+ 599476130fb174eb8a013794b80bbc0e95eca3576c65b9f0d7e9ce4e3ec767ee
+- STM build/Universal/EPuck_STM32.elf:
+ fdd279890f31380645c0406367a21f8888946689b24c547fd8edf264db5624e2
+- ESP build/UwbReview/comm_with_stm32.bin (codee0e967a):
+ 4a9a9f2da7fd2702e3568749035c5c8ed6cd4860ae45cc560d28ba91c11b204e
+
+The [consolidated operator campaign](mul_experiment_campaign.md) contains exact
+configuration/capture/analysis commands, expected states, proposed acceptance
+thresholds and dependencies. It does not authorize running them. Hardware timing,
+clock-rate observability in motion, antenna/range calibration, measured-input
+backend and physical localization accuracy remain explicitly unvalidated. No
+software test closes these physical gates; do not implement Pi/ROS/MCS work as a
+follow-up without a new scoped request.
