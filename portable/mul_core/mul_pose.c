@@ -62,6 +62,18 @@ mulPoseStatus_t mulPoseStreamCommit(mulPoseStream_t *s,const mulPose_t *p) {
  s->poses[at]=*p;return mulPoseAvailable;
 }
 mulPoseStatus_t mulPoseStreamPut(mulPoseStream_t *s,const mulPose_t *p){return mulPoseValid(p)?mulPoseStreamCommit(s,p):mulPoseInvalid;}
+unsigned mulPoseStreamExpire(mulPoseStream_t *s,uint32_t nowMs) {
+ if(!s||!s->active)return 0;
+ unsigned expired=0;
+ for(unsigned i=0;i<s->count;i++) {
+  mulPose_t *p=&s->poses[i];uint32_t elapsed=nowMs-p->receivedMs;
+  if(p->ttlMs&&(p->flags&MUL_POSE_VALID)&&(elapsed>p->ttlMs||
+     (p->ageUpperMs!=MUL_POSE_AGE_UNKNOWN&&elapsed+p->ageUpperMs>p->ttlMs))) {
+   p->ttlMs=0;expired++;
+  }
+ }
+ return expired;
+}
 const mulPose_t *mulPoseStreamGet(const mulPoseStream_t *s,uint8_t node) {
  if(!s||!s->active)return NULL;
  for(unsigned i=0;i<s->count;i++)if(s->poses[i].node==node)return &s->poses[i];
@@ -69,6 +81,7 @@ const mulPose_t *mulPoseStreamGet(const mulPoseStream_t *s,uint8_t node) {
 }
 mulPoseStatus_t mulPoseGeometry(const mulPose_t *a,const mulPose_t *b,uint32_t nowMs,uint16_t maxSkewMs,mulPoseGeometry_t *out) {
  if(!a||!b)return mulPoseMissing;
+ if(!a->ttlMs||!b->ttlMs)return mulPoseStale;
  if(!out||!mulPoseValid(a)||!mulPoseValid(b)||a->node==b->node||!(a->flags&MUL_POSE_VALID)||!(b->flags&MUL_POSE_VALID)||maxSkewMs>1000)return mulPoseInvalid;
  if(a->clock!=b->clock||a->epoch!=b->epoch)return mulPoseDomain;
  if(a->frame!=b->frame)return mulPoseFrame;

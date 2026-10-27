@@ -15,7 +15,7 @@ typedef struct {
  uint32_t clock,epoch,frame,sequence;
  int32_t positionMm[3],covarianceMm2[6]; // xx,xy,xz,yy,yz,zz
  uint32_t receivedMs; // Local monotonic reception domain; not serialized.
- uint16_t ageUpperMs,ttlMs,timeUncertaintyMs;
+ uint16_t ageUpperMs,ttlMs,timeUncertaintyMs; // ttlMs0: local expired tombstone only.
  uint8_t node,flags;
 } mulPose_t;
 typedef struct {
@@ -48,6 +48,9 @@ bool mulPoseStreamBegin(mulPoseStream_t *s,uint32_t clock,uint32_t epoch,uint32_
 // Commit requires prior mulPoseValid validation; only bounded integer/copy work.
 mulPoseStatus_t mulPoseStreamCommit(mulPoseStream_t *s,const mulPose_t *p);
 mulPoseStatus_t mulPoseStreamPut(mulPoseStream_t *s,const mulPose_t *p);
+// Periodic caller service latches expiry before local uint32 uptime can alias.
+// Expired entries keep identity/sequence/source time; only newer input revives them.
+unsigned mulPoseStreamExpire(mulPoseStream_t *s,uint32_t nowMs);
 const mulPose_t *mulPoseStreamGet(const mulPoseStream_t *s,uint8_t node);
 // Input source timestamps must share clock/epoch/frame. AgeUpperMs is an explicit
 // upper bound on observation age at LOCAL acceptance, including transit; UNKNOWN

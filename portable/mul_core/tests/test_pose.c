@@ -59,5 +59,13 @@ int main(void) {
  assert(mulPoseStreamBegin(&s,1,3,3,0)&&!mulPoseStreamGet(&s,132));assert(mulPoseStreamPut(&s,&a)==mulPoseAvailable);
  for(unsigned i=0;i<7;i++){a.node=i;assert(mulPoseStreamPut(&s,&a)==mulPoseAvailable);}
  a.node=200;assert(mulPoseStreamPut(&s,&a)==mulPoseFull);
+ a=pose(132,0);b=pose(133,0);b.positionMm[0]=10000;
+ assert(mulPoseStreamBegin(&s,1,2,3,0));assert(mulPoseStreamPut(&s,&a)==mulPoseAvailable&&mulPoseStreamPut(&s,&b)==mulPoseAvailable);
+ assert(mulPoseStreamExpire(&s,1001)==2);
+ assert(mulPoseGeometry(mulPoseStreamGet(&s,132),mulPoseStreamGet(&s,133),0,0,&g)==mulPoseStale);
+ assert(!mulPoseEncode(bytes,mulPoseStreamGet(&s,132)));
+ a.sequence=b.sequence=0;a.sourceUs++;b.sourceUs++;
+ assert(mulPoseStreamPut(&s,&a)==mulPoseAvailable&&mulPoseStreamPut(&s,&b)==mulPoseAvailable);
+ assert(mulPoseGeometry(mulPoseStreamGet(&s,132),mulPoseStreamGet(&s,133),0,0,&g)==mulPoseAvailable);
  puts("Pose interface: strict80-byte CRC/PSD covariance, separate source/local time, age/TTL/skew/domain/frame/validity, sequence+uptime wrap, epoch reset, bounded bank, geometry covariance and UNKNOWN physical bounds passed");
 }

@@ -436,3 +436,12 @@ subversion1 uses115=1,116source external1/none2,117zero; old TWR zero bytes rema
 unchanged. These explicit markers make older strict decoders reject new semantics
 instead of labeling geometry as TWR. Raw radio copies preserve source/version too.
 The UWB3 envelope stays152 bytes; all physical uncertainty remains UNKNOWN.
+
+
+Pose banks provide periodic expiry latching: expired entries retain identity,
+sequence and source timestamp but replace local TTL with a zero tombstone. Zero
+is forbidden on wire. They cannot revive at a full local uptime wrap or after
+pair retargeting; only a newer valid source observation can replace them. Call
+`mulPoseStreamExpire` regularly, before a full uint32 local-time wrap. Runtime
+cache queries also latch expired status. Pure snapshot geometry cannot infer
+multiple wraps from a32-bit timestamp alone; periodic bank service is required.
