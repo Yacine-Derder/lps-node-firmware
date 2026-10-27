@@ -23,6 +23,7 @@ int main(int argc,char **argv) {
   r.tdoa.delaySource=source;assert(mulTelemetryEncode(line,sizeof(line),&r)&&mulTelemetryDecode(line,&d));
   assert(d.tdoa.delaySource==source);if(argc>1)puts(line);
  }
+ r.tdoa.powerFlags=4;assert(!mulTelemetryEncode(line,sizeof(line),&r));r.tdoa.powerFlags=0;
  r.tdoa.clockValid=1;assert(!mulTelemetryEncode(line,sizeof(line),&r));r.tdoa.clockValid=0;
  r.tdoa.delaySource=3;assert(!mulTelemetryEncode(line,sizeof(line),&r));
  if(argc==1)puts("Pose provenance telemetry: strict vector subversion1 source bits and TDoA subversion1 external/none,152-byte envelope, legacy zero preservation passed");
