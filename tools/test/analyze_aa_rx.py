@@ -27,6 +27,12 @@ def read(path):
         try:
             key = int(fields['c']), int(fields['o'])
             int(fields['l'], 16)
+            if match[1] == 'AA1':
+                int(fields['e']); int(fields['s'], 16); int(fields['lost'])
+            else:
+                int(fields['k']); int(fields['n'], 16); int(fields['z'])
+                if match[1] == 'RX1':
+                    int(fields['h'], 16); int(fields['a'], 16)
         except (KeyError, ValueError):
             continue
         records.setdefault(key, []).append((match[1], fields))

@@ -303,3 +303,189 @@ PHY failure counters. AA-only plans with AR disabled do not currently expose thi
 90-byte trace through the AR capture path. No STM32 radio code or wire format was
 changed for this diagnostic task. Existing RF-off/control and passive behavior
 remain in effect.
+
+## Optional DW1000 RX-state experiment (`MUL_RX_DIAG=1`)
+
+Build both ALRs with the same image (commands below are operator instructions;
+no programming, serial access or RF operation was performed for this change):
+
+```sh
+cd ~/Documents/lps-node-firmware
+make clean
+make -j6 REV=B BOOTLOAD=0 EXTRA_CFLAGS='-DMUL_HYBRID_CH5=1 -DMUL_PROP_MAX_AGE_MS=6000 -DMUL_TWR_TRACE=1 -DMUL_RX_DIAG=1'
+python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
+```
+
+The checked image uses130292 flash bytes (780 free) and15528 RAM bytes including
+the linker stack (856 free). Both flags default off independently; AA1-only
+builds retain their existing behavior. No RF protocol, settings, delays, wakeups,
+recovery writes or state-machine transitions are changed. No vendor driver edit
+is needed. New code only reads hardware and appends bounded diagnostic records.
+
+RX snapshots occur on **existing software-timeout callbacks**, before their
+recovery/TX setup, once at the first opportunity at/after POLL minus2ms (`k=1`)
+and once at/after window end (`k=2`). There is no timer guaranteeing either
+instant. On a successful exchange, the next wakeup can be much later than window
+end; use `n-p` to see this. If the software never services a window, its evidence
+is missing, not RX-inactive. Snapshot reads are sequential, not atomic: `n` is
+SYS_TIME read before SYS_STATE and SYS_STATUS. A hardware transition may occur
+between reads. No extra hardware-state/status SPI reads run in IRQ callbacks.
+There is one added SYS_TIME read immediately **after each normal RX rearm** and
+one RX_FINFO length read on RX callbacks; these measure requests/delivery and
+still introduce observer overhead. Compare diagnostic-on/off runs if needed.
+
+Each snapshot produces two deferred USB lines, correlated by `c/o/l/k/n`:
+
+|Field|Meaning|
+|---|---|
+|`c/o/l`|Plan cycle, operation index, local address in hex; combine with AA1 `p` peers.|
+|`k`|1 near POLL;2 first available timeout at/after end.|
+|`n/p`|Snapshot and expected POLL, raw40-bit **local** DW1000 timestamps.|
+|`h`|Raw32-bit SYS_STATE register0x19, read only.|
+|`s`|Live40-bit SYS_STATUS at snapshot.|
+|`i`|OR of driver's pre-clear cached IRQ SYS_STATUS since preceding snapshot; not simultaneous with `h/s`.|
+|`a`|Activity bits since this operation was selected:1 RX callback delivered a90-byte frame;2 planned-AA TWR handler received an RX event;4 accepted POLL;8 AA1 REJECT. These may concern different packets; inspect AA1 stage/why.|
+|`r/b` (RX2)|Most recent rearm request's post-command SYS_TIME and beacon TX's verified hardware timestamp. Zero means none recorded since RX initialization. `r` is not proof RX became active.|
+|`t/f/g` (RX2)|Boot-cumulative RX timeout, RX failure and RX callback counts, modulo65536. Compare differences; these are not AA-only.|
+|`m` (RX2)|Driver's requested mode:0 IDLE,1 RX,2 TX. It can disagree with hardware.|
+|`z`|Dropped snapshot count modulo65536; four-record ring plus one pending USB record.|
+
+RX1 and RX2 are each below the existing128-byte nonblocking admission limit.
+They retry intact on backpressure, without another queue or blocking prints.
+A capture ending between the lines can leave a partial pair. AA1 has its own
+loss count. Driver W1C/reset helpers leave `dev->sysstatus` intact; copying that
+cache at callback entry preserves errors already cleared in hardware. The real
+libdw1000 regression test verifies this assumption. A software timeout never
+reuses stale cached status as a new IRQ event. Live status still reveals pending
+bits when a hardware event has not produced a callback.
+
+Interpret `h` using [Decawave APS022 sections4.3–4.6](https://forum.qorvo.com/uploads/short-url/e3uoGFpxCLpnXC6dQYyfPW4LsBl.pdf):
+PMSC state is bits23:16 (1 IDLE,2 TX wait,3 RX wait,4 TX,5 RX), receiver state is
+bits15:8 (5 searching for preamble), transmitter state is bits3:0. For example,
+`00050500` indicates RX/preamble search and `00010000` indicates IDLE. Preserve
+unknown state values for inspection. SYS_STATUS events alone do not establish
+RX enable state. Use the repository's DW1000 bit definitions: TXFRS7,
+RXDFR13/RXFCG14, RXPHE12/RXFCE15/RXRFSL16/LDEERR18/RXOVRR20/RXSFDTO26/AFFREJ29,
+and RXRFTO17/RXPTO21. Status history lacks individual event timestamps.
+
+### Source audit and current evidence
+
+The most suspicious boundaries, intentionally preserved, are:
+
+- `followerOnEvent()` in `src/mul_alr.c`: an armed beacon suppresses ranging
+  delivery/rearming until TX completion or its100ms watchdog. A lost completion
+  could span the73.1ms POLL. However every failed cycle in the supplied capture
+  has a follower beacon TX completion, so that scenario is not demonstrated.
+- `plannedFollowerOperation()` selects using **handler-time** phase against the
+  reservation, before TWR checks hardware packet timestamps. A delayed callback
+  outside the window follows the unselected90-byte discard/rearm path with no
+  AA1 REJECT. RX activity1 without handler activity2 helps expose this boundary.
+- Successful RX/TX callbacks and error recovery all depend on normal
+  `mulRxRearm()` (`dwNewReceive` → `dwIdle`/clear → defaults → RXENAB write).
+  Driver RX mode expresses intent, not confirmed hardware reception. An
+  ineffective command or subsequent RX stop needs the hardware `h` evidence.
+- `dwHandleInterrupt()` in `vendor/libdw1000/src/libdw1000.c` clears status and
+  soft-resets RX before failure/timeout callbacks; errors take precedence over
+  receive-done. `src/uwb.c` services a binary IRQ semaphore and drains while the
+  IRQ pin remains asserted. Callback counters and live pending status help
+  separate hardware errors from missing dispatch, but do not prove an IRQ edge
+  was lost. No driver or recovery fix has been made.
+
+The supplied `alr132_delay50ms.log`/`alr133_delay50ms.log` show63 verified AA POLL
+TX attempts:29 DONE on both roles and34 initiator RESPONSE-stage timeouts. None
+of the34 has a follower POLL RX trace. Longest failure runs are four observed
+attempts (cycles35–38 and55–58); all failed cycles have follower beacon completion
+and no follower recovery text. There are5 successes/5 failures with fit `apply=1`
+and24 successes/29 failures with `apply=0`; this does not establish a fit cause.
+These are observed log associations, not hardware-state measurements. The fair
+plan sometimes has two AA operations in one cycle or an AR-only cycle: always
+correlate **cycle AND operation**, not one outcome per cycle. Existing traces
+cannot establish whether RX was enabled during missing POLLs.
+
+### Operator-only programming, configuration and60-second collection
+
+First use the existing console on each node to issue `:off`, then `:status`;
+require `RF requested=0 running=0 restart=0` before programming. Disconnect other
+programmers/boards. Connect only132 to ST-LINK and run the programming commands
+in the earlier “Exact build” section; repeat for133 using the **same** ELF.
+Those commands verify and leave the CPU halted, preserve external EEPROM and
+never mass-erase it. Resume each only after its saved RF-off state was confirmed:
+
+```sh
+openocd -f interface/stlink.cfg -f target/stm32f0x.cfg \
+  -c 'init' -c 'reset run' -c 'shutdown'
+```
+
+Alternatively follow the earlier operator-only DFU instructions after saving RF
+off. Never mix image files from different builds. On **each** USB console:
+
+```text
+:off
+:status
+:plan set aa_start_delay_us 50000
+:plan use on
+:plan show
+```
+
+Require RF OFF acknowledged, correct identity (132 reference/133 follower),
+selected1, codec4, hashE5B7BC80 and cycle1 `66100..159200us`/POLL73100us. Stop on
+any error or restart requirement; do not reset configuration or alter the roster.
+Close interactive serial programs before collection. Resolve the stable device
+paths (`ls -l /dev/serial/by-id/`) to the verified identities, then replace the
+placeholders below. The following command **will enable RF** when an operator
+runs it; it is not a read-only log command. It starts133 before132, captures60s,
+then requests OFF on both and records status:
+
+```sh
+export ALR132=/dev/serial/by-id/REPLACE_WITH_VERIFIED_132
+export ALR133=/dev/serial/by-id/REPLACE_WITH_VERIFIED_133
+python3 - <<'PY'
+import os, select, serial, time
+ports, files = [], []
+def collect(seconds):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        ready, _, _ = select.select(ports, [], [], min(.05, max(0, end-time.monotonic())))
+        for port in ready:
+            data = port.read(max(1, port.in_waiting))
+            files[ports.index(port)].write(data)
+try:
+    for node in (132, 133):
+        ports.append(serial.Serial(os.environ[f'ALR{node}'], 115200, timeout=0, exclusive=True))
+        files.append(open(f'alr{node}_rxdiag.log', 'wb'))
+    ports[1].write(b':on\n'); ports[0].write(b':on\n')
+    collect(60)
+finally:
+    for port in ports: port.write(b':off\n')
+    if len(files) == len(ports):
+        collect(.3)
+        for port in ports: port.write(b':status\n')
+        collect(1)
+    for file in files: file.close()
+    for port in ports: port.close()
+PY
+python3 tools/test/analyze_aa_rx.py alr132_rxdiag.log alr133_rxdiag.log
+```
+
+Confirm both final status lines show requested0/running0. Keep the full logs,
+image hashes and pre-run plan/status with the report. If collection fails or
+OFF is unconfirmed, use the consoles to stop both before further work.
+
+|Observed pattern|Inference and limit|
+|---|---|
+|Near-POLL `h` IDLE/TX, old `r`, no accepted POLL|Supports inactive/interrupted RX at that sample; compare `b`, driver mode and AA1 TX events.|
+|Near-POLL `h` RX search, recent `r`, no POLL RX|Weakens persistent inactive-RX theory; cannot exclude a stop after the sample, PHY loss or interference.|
+|RX errors/timeouts in `i/s`, rising `f/t`|Hardware/recovery evidence; inspect exact masks. A timeout counter is not a TWR RESPONSE deadline.|
+|Live RXFCG/RXDFR pending, no rising `g` or delivered activity|Supports dispatch delay/loss; a later callback may still account for it.|
+|Activity1 but not2|90-byte delivery bypassed planned-AA TWR handler; inspect selection phase and armed-beacon path. Not proof that it was a valid POLL.|
+|Activity8 or AA1 REJECT|Software rejected a delivered packet; AA1 why22 indicates window/due/replay gating, why18 stale RX timestamp.|
+|Activity4 and AA1 POLL RX followed by failure|POLL delivery worked; investigate RESPONSE scheduling/TX and later legs.|
+|Large/missing `n-p`, loss counts rising, incomplete pairs|Insufficient evidence at the expected time; do not infer RF failure or receiver inactivity.|
+
+Subtract40-bit timestamps modulo2^40 within a node; divide DTU differences by
+63897.6 for microseconds. Never compare raw timestamps across the two radios.
+The existing origin/clock prediction is unchanged; deviations in expected `p`
+versus decoded POLL arrival and AA1 rejection evidence can expose a timing
+mismatch. Sparse state snapshots cannot conclusively eliminate transient RX
+stops, RF/PHY loss or every form of event loss. No reception fix or physical
+reliability claim is made by this experiment.

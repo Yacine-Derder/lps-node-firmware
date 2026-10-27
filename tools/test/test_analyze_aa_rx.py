@@ -16,7 +16,7 @@ class AnalyzeAaRx(unittest.TestCase):
             return f'AA1 c={c} o={o} p=84>85 l=84 e={e} s={s} lost=0\\r\\n'
         with tempfile.TemporaryDirectory() as directory:
             ref, fol = Path(directory)/'ref', Path(directory)/'fol'
-            ref.write_text(aa(9,0,3,'10')+aa(9,0,7,'11')+aa(9,1,3,'10')+aa(9,1,6,'14')+
+            ref.write_text('AA1 c=8 o=0 l=84 e=\n'+aa(9,0,3,'10')+aa(9,0,7,'11')+aa(9,1,3,'10')+aa(9,1,6,'14')+
                            aa(11,0,3,'10'))
             fol.write_text('MUL ALR: REF_RX src=0x84 seq=9\nMUL FIT: ppb=20 apply=1\n'
                            'MUL ALR: TX role=FOLLOWER src=0x85 seq=9\n'+aa(9,1,4,'10')+
