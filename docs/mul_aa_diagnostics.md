@@ -8,15 +8,38 @@ checks change. Legacy fixed-scheduler/AR exchanges retain their existing logs;
 AA1 records are restricted to generated AA operations. No hardware was flashed or
 RF started while implementing/testing this feature.
 
+## USB admission fix (58f72a3)
+
+Commit afb1d35 contained event creation, the16-record ring and main-task polling,
+but its USB integration was broken: `mulTwrTracePoll` formatted a complete AA1
+line longer than48 bytes, while `CDC_TryWrite` rejected any length above48 before
+checking the512-byte queue. The consumer retained that first record and retried
+forever. An empty USB queue, working normal printf logs and an AA1 string in the
+ELF/DFU could therefore coexist with no AA1 output. Normal logs use CDC_Write,
+which does not have that48-byte admission guard.
+
+The fix gives CDC atomic writes and the AA1 formatting buffer one shared
+`CDC_TRY_WRITE_MAX=128` contract. The largest current AA1 line is113 bytes,
+including CRLF. Admission still requires the entire record **plus64 spare bytes**;
+it never waits or partially enqueues. The queue remains512 bytes, endpoint packets
+remain64 bytes, and console pages remain short. Ring overflow and temporary USB
+backpressure retain their existing behavior. No RF/protocol/timing/configuration
+change is involved. USB enqueue work is bounded to128 bytes per call; software
+tests do not establish physical callback latency under diagnostic load.
+
+The regression executes event creation → ring → formatter → real usbcommTryWrite
+→ real CDC_TryWrite → bounded simulated RTOS FIFO → real USB packetization →
+simulated controller output. It fails with the old48-byte guard and passes after
+the fix, including full-queue retry, startup/disconnection gates and USB reinit.
+The earlier writer-only stub did not exercise the CDC length restriction.
+
 ## Build and test without hardware
 
 From lps-node-firmware:
 
 ```sh
 python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000 --slot 10 --twr-trace
-make clean
-make -j6 REV=B BOOTLOAD=0 EXTRA_CFLAGS='-DMUL_HYBRID_CH5=1 -DMUL_PROP_MAX_AGE_MS=6000 -DMUL_TWR_TRACE=1'
-python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
+./tools/build/test
 ```
 
 The fixture uses the supplied plan826414CC: ALRs132/133, RLR141, AA1000mHz,
@@ -30,11 +53,79 @@ has no trace buffer or trace service in its image.
 
 The enabled CH5 image has approximately736 additional static RAM bytes and about
 1.6KiB additional flash compared with the same CH5 build without tracing. The
-reviewed image uses127692 flash bytes (3380 free) and15136 RAM bytes including the
-linker stack (1248 free). Existing main/UWB/idle stacks and USB queue are unchanged.
-Reviewed ARM static frames are80 bytes for the trace producer,240 for the USB
-consumer, and40 for main; the consumer is never nested in radio processing.
+reviewed fixed image uses127700 flash bytes (3372 free) and15136 RAM bytes
+including the linker stack (1248 free). Existing main/UWB/idle stacks and USB queue are unchanged.
+The USB consumer formats outside the UWB task; it is never nested in radio
+processing. The fix does not allocate another queue or increase any task stack.
 Static image/frame checks do not prove physical deadlines or stack watermarks.
+
+## Exact build, image checks and operator-only programming
+
+Always clean when changing EXTRA_CFLAGS; make does not track every flag change
+as an object dependency. Merely finding AA1 in an ELF does not validate USB output.
+These commands build/check files only and do not contact a device:
+
+```sh
+cd ~/Documents/lps-node-firmware
+git log -1 --oneline
+git status --short
+make clean
+make -j6 REV=B BOOTLOAD=0 EXTRA_CFLAGS='-DMUL_HYBRID_CH5=1 -DMUL_PROP_MAX_AGE_MS=6000 -DMUL_TWR_TRACE=1'
+python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
+arm-none-eabi-nm bin/lps-node-firmware.elf | grep -E 'mulTwrTracePoll|aaTrace'
+arm-none-eabi-strings bin/lps-node-firmware.elf | grep 'AA1 c='
+strings bin/lps-node-firmware.dfu | grep 'AA1 c='
+sha256sum bin/lps-node-firmware.elf bin/lps-node-firmware.dfu
+```
+
+Keep those hashes with the capture. Existing unrelated local edits need not be
+removed; do not discard them to obtain a clean Git label. Both ALRs use this
+same image; their external EEPROM settings determine address/role/plan.
+
+The following are **operator-only commands, not run during this task**. Connect
+only the intended node, repeat for132 and133, and retain the external EEPROM.
+The ST-LINK sequence programs/verifies internal flash and requests a halted CPU,
+with no reset-run command:
+
+```sh
+openocd -f interface/stlink.cfg -f target/stm32f0x.cfg \
+  -c 'init' -c 'reset halt' \
+  -c 'flash write_image erase bin/lps-node-firmware.elf' \
+  -c 'verify_image bin/lps-node-firmware.elf' \
+  -c 'halt' -c 'shutdown'
+```
+
+If using the board's existing DFU workflow instead, manually place only the
+intended board in DFU mode, then use the address-bearing DfuSe file from the
+BOOTLOAD=0 build above:
+
+```sh
+dfu-util -d 0483:df11 -a 0 -D bin/lps-node-firmware.dfu
+```
+
+Do not mix ELF/DFU from different builds. Do not mass-erase or reset configuration.
+DFU manifestation, a later reset or power cycle may resume the saved RF-enable
+state; only perform programming/resumption when that device operation is
+separately authorized. This task neither flashed a board nor issued RF ON.
+
+Hardware verification, when authorized:
+
+1. Resume the intended nodes using the operator's normal authorized procedure.
+   Record complete USB output, boot identity and read-only `:status`/`:plan show`.
+   Confirm132/133 roles and the unchanged826414CC plan; do not edit its timings.
+2. If RF is kept OFF, no AA events and therefore no AA1 records are expected.
+   For a positive check use a separately authorized existing AA workload; this
+   procedure does not prescribe an RF-enable command or a configuration change.
+3. Confirm complete AA1 records on **both** USB streams. Match cycle/operation
+   and84>85 peers. A WINDOW/TARGET/ARM should no longer remain invisible even
+   when the exchange later times out. Normal UWB logs must remain present.
+4. Check `lost`, stage/reason/callback fields, and compare verified TX/RX pairs as
+   described below. Temporarily stopping host reads can cause bounded backpressure
+   and overflow; once reading resumes, whole records should appear again. Do not
+   interpret a trace gap with increasing lost as evidence of a missed RF stage.
+5. Archive image hashes, status/plan output and both transcripts before drawing
+   conclusions about the original AA timeout problem. USB visibility is a
+   separate check from physical exchange reliability or ranging accuracy.
 
 ## Collection and record fields
 
