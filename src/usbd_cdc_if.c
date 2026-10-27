@@ -100,6 +100,9 @@ USBD_HandleTypeDef  *hUsbDevice_0;
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
 #define TX_Q_SIZE 512
+#if CDC_TRY_WRITE_MAX > TX_Q_SIZE - 64
+#error Atomic USB records must fit with the control reserve
+#endif
 #define Q_ITEM_SIZE (sizeof(uint8_t))
 
 /* One hardware OUT packet stays in the existing64-byte application buffer.
@@ -352,7 +355,7 @@ static void CDC_SOF_FS(void) {
 bool CDC_TryWrite(const char *buffer,unsigned len)
 {
   bool ok=false;
-  if(!buffer||len>48)return false;
+  if(!buffer||len>CDC_TRY_WRITE_MAX)return false;
   taskENTER_CRITICAL();
   if(usbInit&&uxQueueSpacesAvailable(txq)>=len+64) {
     ok=true;

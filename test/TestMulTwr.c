@@ -1227,6 +1227,40 @@ void test_actualFollowerUsesExternalGeometryAndNeverFallsBackToTwr(void) {
 }
 
 #if MUL_TWR_TRACE
+/* Real production USB writer and CDC admission/packetization. Only the RTOS
+ * FIFO and USB controller are simulated; no duplicate TryWrite implementation. */
+#include "../src/usbd_cdc_if.c"
+#include "../src/usbcomm.c"
+USBD_HandleTypeDef hUsbDeviceFS;
+static USBD_CDC_HandleTypeDef aaCdc;
+static unsigned aaUsbHead,aaUsbTail,aaUsbCount,aaHostLength;
+static char aaUsbFifo[512],aaHost[2048];
+static bool aaConnected;
+QueueHandle_t xQueueGenericCreateStatic(UBaseType_t n,UBaseType_t width,uint8_t *storage,StaticQueue_t *q,uint8_t type) {
+ (void)storage;(void)q;(void)type;
+ if(n==512&&width==1){aaUsbHead=aaUsbTail=aaUsbCount=0;return (QueueHandle_t)(uintptr_t)1;}
+ TEST_ASSERT_TRUE(n==1&&width==0);return (QueueHandle_t)(uintptr_t)2;
+}
+BaseType_t xQueueGenericSend(QueueHandle_t q,const void *item,TickType_t ticks,BaseType_t position) {
+ (void)position;TEST_ASSERT_EQUAL(0,ticks);
+ if((uintptr_t)q==2)return pdTRUE;
+ TEST_ASSERT_EQUAL(1,(uintptr_t)q);if(aaUsbCount==512)return pdFALSE;
+ aaUsbFifo[aaUsbHead]=*(const char *)item;aaUsbHead=(aaUsbHead+1)%512;aaUsbCount++;return pdTRUE;
+}
+UBaseType_t uxQueueSpacesAvailable(const QueueHandle_t q){TEST_ASSERT_EQUAL(1,(uintptr_t)q);return 512-aaUsbCount;}
+BaseType_t xQueueReceiveFromISR(QueueHandle_t q,void *item,BaseType_t *woken) {
+ (void)woken;TEST_ASSERT_EQUAL(1,(uintptr_t)q);if(!aaUsbCount)return pdFALSE;
+ *(char *)item=aaUsbFifo[aaUsbTail];aaUsbTail=(aaUsbTail+1)%512;aaUsbCount--;return pdTRUE;
+}
+uint8_t USBD_CDC_SetTxBuffer(USBD_HandleTypeDef *d,uint8_t *p,uint16_t n){(void)d;aaCdc.TxBuffer=p;aaCdc.TxLength=n;return USBD_OK;}
+uint8_t USBD_CDC_SetRxBuffer(USBD_HandleTypeDef *d,uint8_t *p){(void)d;(void)p;return USBD_OK;}
+uint8_t USBD_CDC_TransmitPacket(USBD_HandleTypeDef *d) {
+ (void)d;TEST_ASSERT_TRUE(aaCdc.TxLength<=64);TEST_ASSERT_TRUE(aaHostLength+aaCdc.TxLength<sizeof(aaHost));
+ memcpy(aaHost+aaHostLength,aaCdc.TxBuffer,aaCdc.TxLength);aaHostLength+=aaCdc.TxLength;aaHost[aaHostLength]=0;return USBD_OK;
+}
+uint8_t USBD_CDC_ReceivePacket(USBD_HandleTypeDef *d){(void)d;return USBD_OK;}
+bool USBD_IsSerialConnected(void){return aaConnected;}
+static void drainAaUsb(void){while(aaUsbCount)CDC_SOF_FS();}
 static mulAaTrace_t aaRecords[96];static unsigned aaRecordsCount,aaWrites;
 static uint32_t aaLost;
 static bool aaAccept;
@@ -1328,5 +1362,33 @@ void test_generatedAaTraceOverflowAndUsbBackpressureNeverChangeRadioState(void) 
  }
  TEST_ASSERT_TRUE(ctx(0)->active);TEST_ASSERT_TRUE(radios[0].armed);drainAa();TEST_ASSERT_TRUE(aaLost>before);
  TEST_ASSERT_TRUE(aaRecordsCount<=16);TEST_ASSERT_TRUE(strstr(aaLine,"AA1 c=5 o=0 p=84>85 l=84"));
+#endif
+}
+
+void test_generatedAaTraceReachesActualUsbQueueAndRetriesAfterBackpressure(void) {
+#if MUL_TWR_TRACE
+ mulRangingPlan_t p;prepareAa(&p);
+ memset(&hUsbDeviceFS,0,sizeof(hUsbDeviceFS));memset(&aaCdc,0,sizeof(aaCdc));hUsbDeviceFS.pClassData=&aaCdc;
+ TEST_ASSERT_EQUAL(USBD_OK,CDC_Init_FS());aaHostLength=0;aaHost[0]=0;
+ aaConnected=false;usbcommSetSystemStarted(false);
+ TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));uint64_t target=ctx(0)->expectedTx;
+ mulTwrTracePoll(usbcommTryWrite);TEST_ASSERT_EQUAL(0,aaUsbCount);
+ usbcommSetSystemStarted(true);mulTwrTracePoll(usbcommTryWrite);TEST_ASSERT_EQUAL(0,aaUsbCount);
+ aaConnected=true;
+ char fill[512];memset(fill,'X',sizeof(fill));CDC_Write(fill,sizeof(fill));TEST_ASSERT_EQUAL(512,aaUsbCount);
+ mulTwrTracePoll(usbcommTryWrite);TEST_ASSERT_EQUAL(512,aaUsbCount); // Atomic refusal, no partial output.
+ drainAaUsb();TEST_ASSERT_EQUAL(512,aaHostLength);aaHostLength=0;aaHost[0]=0;
+ mulTwrTracePoll(usbcommTryWrite);
+ TEST_ASSERT_TRUE_MESSAGE(aaUsbCount>48,"AA1 must cross the real CDC admission path, not a permissive writer stub");
+ drainAaUsb();TEST_ASSERT_NOT_NULL(strstr(aaHost,"AA1 c=5 o=0 p=84>85 l=84 e=1"));
+ for(unsigned i=0;i<2;i++){mulTwrTracePoll(usbcommTryWrite);drainAaUsb();}
+ TEST_ASSERT_NOT_NULL(strstr(aaHost,"l=84 e=9"));TEST_ASSERT_NOT_NULL(strstr(aaHost,"l=84 e=2"));
+ unsigned lines=0;for(unsigned i=0;i<aaHostLength;i++)lines+=aaHost[i]=='\n';TEST_ASSERT_EQUAL(3,lines);
+ unsigned length=aaHostLength;mulTwrTracePoll(usbcommTryWrite);drainAaUsb();TEST_ASSERT_EQUAL(length,aaHostLength);
+ TEST_ASSERT_TRUE(ctx(0)->active);TEST_ASSERT_TRUE(radios[0].armed);TEST_ASSERT_EQUAL_UINT64(target,ctx(0)->expectedTx);
+ CDC_DeInit_FS();mulTwrCancel(ctx(0),&radios[0].device,"timeout",false);
+ mulTwrTracePoll(usbcommTryWrite);TEST_ASSERT_EQUAL(0,aaUsbCount);
+ TEST_ASSERT_EQUAL(USBD_OK,CDC_Init_FS());mulTwrTracePoll(usbcommTryWrite);drainAaUsb();
+ TEST_ASSERT_NOT_NULL(strstr(aaHost,"l=84 e=7"));CDC_DeInit_FS();usbcommSetSystemStarted(false);aaConnected=false;
 #endif
 }

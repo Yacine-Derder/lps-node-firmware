@@ -7,6 +7,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "task.h"
+#if MUL_TWR_TRACE
+#include "usbd_cdc_if.h"
+#endif
 
 #include "../portable/mul_core/mul_legacy_twr.c"
 
@@ -63,7 +66,7 @@ void mulTwrTracePoll(bool (*write)(const char *,unsigned)) {
  static mulAaTrace_t pending;static uint32_t lost;static bool ready;
  if(!ready)ready=mulTwrTraceTake(&pending,&lost);
  if(!ready||!write)return;
- char line[144];
+ char line[CDC_TRY_WRITE_MAX+1];
  int n=snprintf(line,sizeof(line),"AA1 c=%" PRIu32 " o=%u p=%02X>%02X l=%02X e=%u s=%02X f=%02X why=%u n=%02X%08" PRIX32 " t=%02X%08" PRIX32 " d=%02X%08" PRIX32 " lost=%" PRIu32 "\r\n",
   pending.cycle,pending.operation,pending.initiator,pending.responder,pending.local,pending.event,pending.stage,pending.flags,pending.why,
   (unsigned)(pending.now>>32),(uint32_t)pending.now,(unsigned)(pending.stamp>>32),(uint32_t)pending.stamp,

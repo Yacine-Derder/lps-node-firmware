@@ -43,6 +43,8 @@
 
 /* Exported types ------------------------------------------------------------*/
 /* Exported constants --------------------------------------------------------*/
+// Atomic USB records (AA1 included); CDC retains 64 bytes of queue reserve.
+#define CDC_TRY_WRITE_MAX 128u
 /* Exported cariables --------------------------------------------------------*/
 extern USBD_CDC_ItfTypeDef  USBD_Interface_fops_FS;
 

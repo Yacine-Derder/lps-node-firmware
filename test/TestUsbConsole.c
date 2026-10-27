@@ -90,7 +90,13 @@ void test_boundedAtomicTxReservesErrorSpaceAndNeverPartiallyEnqueues(void) {
  unsigned before=txBytes;txSpaces=70;
  TEST_ASSERT_FALSE(CDC_TryWrite("reply text",10));TEST_ASSERT_EQUAL(before,txBytes);
  txSpaces=74;TEST_ASSERT_TRUE(CDC_TryWrite("reply text",10));TEST_ASSERT_EQUAL(before+10,txBytes);
- TEST_ASSERT_FALSE(CDC_TryWrite("",49));TEST_ASSERT_FALSE(CDC_TryWrite(NULL,1));
+ char record[CDC_TRY_WRITE_MAX+1];memset(record,'X',sizeof(record));
+ before=txBytes;txSpaces=CDC_TRY_WRITE_MAX+63;
+ TEST_ASSERT_FALSE(CDC_TryWrite(record,CDC_TRY_WRITE_MAX));TEST_ASSERT_EQUAL(before,txBytes);
+ txSpaces=CDC_TRY_WRITE_MAX+64;
+ TEST_ASSERT_TRUE(CDC_TryWrite(record,CDC_TRY_WRITE_MAX));TEST_ASSERT_EQUAL(before+CDC_TRY_WRITE_MAX,txBytes);
+ before=txBytes;TEST_ASSERT_FALSE(CDC_TryWrite(record,sizeof(record)));TEST_ASSERT_EQUAL(before,txBytes);
+ TEST_ASSERT_FALSE(CDC_TryWrite(NULL,1));
  CDC_DeInit_FS();TEST_ASSERT_FALSE(CDC_TryWrite("x",1));TEST_ASSERT_EQUAL(0,critical);
 }
 void test_unifiedLineSessionSurvivesPacketBoundariesAndDisconnectClearsIt(void) {
