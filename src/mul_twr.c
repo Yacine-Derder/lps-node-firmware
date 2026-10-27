@@ -17,6 +17,11 @@
  * The portable codec/receiver keeps explicit context ownership. */
 static const void *twrContext=&mulDefaultNetwork;
 static struct {const mulRangingPlan_t *plan;mulRangingOperation_t op;uint32_t cycle;} plannedSession;
+#if MUL_RX_DIAG
+#define RX_DIAG(t,e,s) do { if((t)->planned&&plannedSession.op.kind==MUL_PLAN_AA)mulRxDiagDecision(e,s); } while(0)
+#else
+#define RX_DIAG(t,e,s) ((void)0)
+#endif
 #if MUL_TWR_TRACE
 #define AA_TRACE_CAPACITY 16u
 typedef char aaTraceRecordMustFit40[(sizeof(mulAaTrace_t)<=40)?1:-1];
@@ -46,9 +51,9 @@ static unsigned traceReason(const char *reason) {
  for(unsigned i=0;i<sizeof(names)/sizeof(*names);i++)if(!strcmp(reason,names[i]))return i+1;
  return 21;
 }
-#define TRACE(t,e,s,w,v) trace(t,e,s,w,v)
+#define TRACE(t,e,s,w,v) do { RX_DIAG(t,e,s);trace(t,e,s,w,v); } while(0)
 #else
-#define TRACE(t,e,s,w,v) ((void)0)
+#define TRACE(t,e,s,w,v) RX_DIAG(t,e,s)
 #endif
 bool mulTwrTraceTake(mulAaTrace_t *out,uint32_t *dropped) {
 #if MUL_TWR_TRACE
@@ -408,6 +413,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     return true;
   }
   uint8_t frame[MUL_MULTI_TWR_BYTES];
+  RX_DIAG(twr,0,0);
   mulTwrPacket_t packet;unsigned length=twr->multiProfile?MUL_MULTI_TWR_BYTES:MUL_TWR_FRAME_LENGTH;
   bool valid=dwGetDataLength(dev)==length;
   if (valid) {

@@ -23,6 +23,7 @@
  * along with Foobar.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <stm32f0xx_hal.h>
+#include "mul_rx.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -221,6 +222,7 @@ static void main_task(void *pvParameters) {
       handleSerialInput(ch);
     }
 #if MUL_TWR_TRACE
+    mulRxDiagPoll(usbcommTryWrite);
     mulTwrTracePoll(usbcommTryWrite); // One bounded record; never blocks the radio owner.
 #endif
   }

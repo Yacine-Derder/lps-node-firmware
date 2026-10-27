@@ -444,6 +444,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       actual.full = mulTimestampMask(actual.full);
       flags.tx = false;
       mulRxRearm(dev);
+      mulRxDiagBeacon(actual.full);
       logCompletedTx(actual.full);
     } else {
       // RX cannot legitimately deliver another frame while this delayed TX waits
@@ -635,6 +636,10 @@ static uint32_t referenceWait(dwDevice_t *dev)
 
 static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
 {
+  mulRxDiagEvent(dev,event);
+  if(event==eventTimeout&&activePlan&&(alrRole==mulAlrReference||referenceAcquired))
+    mulRxDiagService(dev,activePlan,alrRole==mulAlrReference?pendingSequence:refSequence(),source[0],
+                     alrRole==mulAlrReference?pendingTimestamp:refRx());
   if (alrRole == mulAlrFollower) {
     return followerOnEvent(dev, event);
   }
@@ -702,6 +707,7 @@ static uint32_t mulAlrOnEvent(dwDevice_t *dev, uwbEvent_t event)
         actual.full = mulTimestampMask(actual.full);
         flags.tx = false;
         mulRxRearm(dev);
+        mulRxDiagBeacon(actual.full);
         logCompletedTx(actual.full);
       }
       break;
