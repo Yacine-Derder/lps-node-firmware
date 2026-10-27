@@ -451,3 +451,23 @@ void test_expiredGeometryCannotReviveAfterFullUptimeWrapOrPairRetarget(void) {
  TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&a));TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&b));mulGeometryPoll(0);
  TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometrySnapshot(0,NULL,NULL));
 }
+
+void test_planAaDelayConsolePersistsAndRejectsUnsafeEditsWithoutWrites(void) {
+ send(":off\n");apply();
+ mulRangingPlan_t p={.replyMs=20,.maxUtilization=70,.enabled=3,.aaMilliHz=1000,.arMilliHz=50,.rlrCount=1,.rlrs={141}};
+ mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);
+ p.broadcast.rangingFlags=0;p.broadcast.txLeadUs=1000;p.broadcast.rxBudgetUs=5000;
+ TEST_ASSERT_EQUAL_HEX32(0x826414cc,mulRangingPlanFingerprint(&p));
+ uint32_t generation;TEST_ASSERT_TRUE(cfgMulPlanSave(&p,true,&generation));
+ send(":plan set aa_start_delay_us 50000\n");
+ const mulStoredPlan_t *cached=NULL;cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));
+ TEST_ASSERT_TRUE(cached->selected);TEST_ASSERT_EQUAL(50000,cached->plan.aaStartDelayUs);
+ output[0]=0;send(":plan show\n");
+ TEST_ASSERT_NOT_NULL(strstr(output,"aa_start_delay_us=50000"));
+ TEST_ASSERT_NOT_NULL(strstr(output,"66100..159200us"));TEST_ASSERT_NOT_NULL(strstr(output,"POLL op=0 at=73100 us"));
+ unsigned before=writes;send(":plan set aa_start_delay_us 388851\n:plan set aa_start_delay_us 4294967295\n:plan set aa_start_delay_us -1\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":plan set aa_start_delay_us 100000\n"); // Must not truncate to uint16.
+ TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));TEST_ASSERT_EQUAL(100000,cached->plan.aaStartDelayUs);
+ send(":plan set aa_start_delay_us 0\n");TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));
+ TEST_ASSERT_EQUAL_HEX32(0x826414cc,mulRangingPlanFingerprint(&cached->plan));
+}

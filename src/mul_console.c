@@ -89,6 +89,7 @@ static void planCommand(char **w,unsigned count) {
    }else {
     uint32_t n=0;if(strcmp(w[3],"0")&&!revision(w[3],&n)){reply("ERR unsigned decimal number");return;}
     if(!strcmp(w[2],"revision"))p.broadcast.revision=n;
+    else if(!strcmp(w[2],"aa_start_delay_us"))p.aaStartDelayUs=n;
     else {
      if(n>UINT16_MAX){reply("ERR timing/rate exceeds uint16");return;}
      if(!strcmp(w[2],"aa_millihz"))p.aaMilliHz=n;
@@ -377,6 +378,7 @@ bool mulConsolePoll(void) {
   "plan alrs id0 id1...; plan rlrs id0...",
   "plan set aa/ar on/off; aa_millihz/ar_millihz",
   "plan set reply_ms/util_percent",
+  "plan set aa_start_delay_us <microseconds>",
   "plan set policy fair/freshness",
   "plan set aa_priority/ar_priority 0..255",
   "plan set slot_ms/cycle_ms/revision",
@@ -401,14 +403,15 @@ bool mulConsolePoll(void) {
    const mulRangingPlan_t *p=&stored->plan;mulRangingBudget_t b;const char *error=mulRangingPlanValidate(p,&b);
    if(error)snprintf(line,sizeof(line),"ERR %s",error);
    else {
-    unsigned base=5+p->broadcast.count+p->rlrCount,n=mulRangingPlanCount(p,1),total=base+2+2*n;last=pageIndex+1>=total;
+    unsigned base=6+p->broadcast.count+p->rlrCount,n=mulRangingPlanCount(p,1),total=base+2+2*n;last=pageIndex+1>=total;
     if(pageIndex==0)snprintf(line,sizeof(line),"PLAN selected=%u gen=%lu codec=%u p=%u",stored->selected,(unsigned long)stored->generation,mulRangingPlanVersion(p),p->policy);
     else if(pageIndex==1)snprintf(line,sizeof(line),"PLAN hash=%08lX ALR=%u RLR=%u",(unsigned long)mulRangingPlanFingerprint(p),p->broadcast.count,p->rlrCount);
     else if(pageIndex==2)snprintf(line,sizeof(line),"PLAN slot=%u cycle=%u reply=%u",p->broadcast.slotMs,p->broadcast.periodMs,p->replyMs);
     else if(pageIndex==3)snprintf(line,sizeof(line),"PLAN AA=%u AR=%u util=%u",!!(p->enabled&MUL_PLAN_AA),!!(p->enabled&MUL_PLAN_AR),p->maxUtilization);
     else if(pageIndex==4)snprintf(line,sizeof(line),"RATE AA=%u/%u AR=%u/%u",p->aaMilliHz,p->aaPriority,p->arMilliHz,p->arPriority);
-    else if(pageIndex<5+p->broadcast.count){unsigned i=pageIndex-5;snprintf(line,sizeof(line),"ALR %u id=%u offset=%u ms",i,p->broadcast.ids[i],i*p->broadcast.slotMs);}
-    else if(pageIndex<base){unsigned i=pageIndex-5-p->broadcast.count;snprintf(line,sizeof(line),"RLR %u id=%u",i,p->rlrs[i]);}
+    else if(pageIndex==5)snprintf(line,sizeof(line),"PLAN aa_start_delay_us=%lu",(unsigned long)p->aaStartDelayUs);
+    else if(pageIndex<6+p->broadcast.count){unsigned i=pageIndex-6;snprintf(line,sizeof(line),"ALR %u id=%u offset=%u ms",i,p->broadcast.ids[i],i*p->broadcast.slotMs);}
+    else if(pageIndex<base){unsigned i=pageIndex-6-p->broadcast.count;snprintf(line,sizeof(line),"RLR %u id=%u",i,p->rlrs[i]);}
     else if(pageIndex==base)snprintf(line,sizeof(line),"AIR reserve=%lu capacity=%u peak=%u",(unsigned long)b.reservationUs,b.capacity,b.peakOperations);
     else if(pageIndex==base+1)snprintf(line,sizeof(line),"PREVIEW cycle=1 units=reference_us");
     else {unsigned i=(pageIndex-base-2)/2;mulRangingOperation_t op;(void)mulRangingPlanOperation(p,1,i,&op);

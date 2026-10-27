@@ -55,3 +55,23 @@ class SchedulePreview(unittest.TestCase):
         self.assertEqual(sum(len(x['operations']) for x in r['cycles']),8)
         for bad in (dict(scheduling_policy='adaptive'),dict(aa_priority=256),dict(scheduling_policy='fair')):
             with self.assertRaises(ValueError):planner.preview(c|bad)
+
+    def test_aa_delay_preserves_baseline_and_shifts_only_aa(self):
+        c=dict(alrs=[132,133],rlrs=[141],slot_ms=10,rx_budget_us=5000,
+               alr_alr=True,alr_rlr=True,aa_target_millihz=1000,ar_target_millihz=50)
+        baseline=planner.preview(c,first=1,cycles=20)
+        delayed=planner.preview(c|dict(aa_start_delay_us=50000),first=1,cycles=20)
+        self.assertEqual(baseline['fingerprint'],'826414CC')
+        self.assertEqual(delayed['planner_version'],4)
+        self.assertEqual(delayed['aa_start_delay_us'],50000)
+        self.assertNotEqual(baseline['fingerprint'],delayed['fingerprint'])
+        self.assertEqual(delayed['cycles'][0]['operations'][0]['poll_us'],73100)
+        for a,b in zip(baseline['cycles'],delayed['cycles']):
+            self.assertEqual(len(a['operations']),len(b['operations']))
+            for x,y in zip(a['operations'],b['operations']):
+                delta=50000 if x['kind']=='alr_alr' else 0
+                for key in ('start_us','poll_us','end_us'):
+                    self.assertEqual(y[key],x[key]+delta)
+        for delay in (-1,388851,2**32-1,2**32):
+            with self.assertRaises(ValueError):
+                planner.preview(c|dict(aa_start_delay_us=delay))

@@ -1276,18 +1276,20 @@ static bool writeAa(const char *line,unsigned n) {
  TEST_ASSERT_TRUE(n<sizeof(aaLine));TEST_ASSERT_EQUAL('\n',line[n-1]);
  memcpy(aaLine,line,n);aaLine[n]=0;aaWrites++;return aaAccept;
 }
-static void prepareAa(mulRangingPlan_t *p) {
+static void prepareAaDelay(mulRangingPlan_t *p,uint32_t delay) {
  setUp();scenario(-150000,2131);clearAa();
  memset(p,0,sizeof(*p));p->replyMs=20;p->maxUtilization=70;p->enabled=MUL_PLAN_AA|MUL_PLAN_AR;
  p->aaMilliHz=1000;p->arMilliHz=50;p->rlrCount=1;p->rlrs[0]=141;
  mulScheduleLegacy(&p->broadcast,132,133,10);mulScheduleExperimental(&p->broadcast);p->broadcast.rangingFlags=0;
  p->broadcast.txLeadUs=1000;p->broadcast.rxBudgetUs=5000;p->broadcast.airtimeUs=1000;p->broadcast.guard100us=1;
  TEST_ASSERT_EQUAL_HEX32(0x826414CC,mulRangingPlanFingerprint(p));
+ p->aaStartDelayUs=delay;
  mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(p,5,0,&op));TEST_ASSERT_EQUAL(MUL_PLAN_AA,op.kind);
- TEST_ASSERT_EQUAL(23100,op.pollUs);simulationPlan=p;
+ TEST_ASSERT_EQUAL(23100+delay,op.pollUs);simulationPlan=p;
  advance((int64_t)op.startUs*MS/1000);
  TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),p,5,0));TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(1),p,5,0));
 }
+static void prepareAa(mulRangingPlan_t *p){prepareAaDelay(p,0);}
 static bool sawAa(unsigned local,unsigned event,unsigned stage) {
  for(unsigned i=0;i<aaRecordsCount;i++)if(aaRecords[i].local==local&&aaRecords[i].event==event&&aaRecords[i].stage==stage)return true;
  return false;
@@ -1390,5 +1392,19 @@ void test_generatedAaTraceReachesActualUsbQueueAndRetriesAfterBackpressure(void)
  mulTwrTracePoll(usbcommTryWrite);TEST_ASSERT_EQUAL(0,aaUsbCount);
  TEST_ASSERT_EQUAL(USBD_OK,CDC_Init_FS());mulTwrTracePoll(usbcommTryWrite);drainAaUsb();
  TEST_ASSERT_NOT_NULL(strstr(aaHost,"l=84 e=7"));CDC_DeInit_FS();usbcommSetSystemStarted(false);aaConnected=false;
+#endif
+}
+
+void test_generatedAaDelayDrivesActualPollAndResponderAcceptance(void) {
+#if MUL_TWR_TRACE
+ mulRangingPlan_t p;prepareAaDelay(&p,50000);
+ dispatch(1,eventTimeout);drainAa();
+ TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));drainAa();
+ // Delayed-TX quantization is512 DTU; marker includes TX antenna delay.
+ TEST_ASSERT_INT64_WITHIN(512,73100*(int64_t)MS/1000,
+                         mulTimestampDifference(ctx(0)->expectedTx,origins[0]));
+ for(unsigned i=0;i<5;i++){transfer(i%2);drainAa();}
+ TEST_ASSERT_TRUE(sawAa(133,mulAaRx,mulTwrPoll));
+ TEST_ASSERT_TRUE(sawAa(132,mulAaDone,mulTwrResult));TEST_ASSERT_TRUE(sawAa(133,mulAaDone,mulTwrResult));
 #endif
 }
