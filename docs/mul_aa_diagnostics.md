@@ -614,3 +614,99 @@ The old vendor harness was run without repository edits using:
 
 This process-local compatibility shim loads only the checked-in test config;
 it does not install gems or alter vendored code.
+
+
+## Latent defects and evidence limits
+
+The following read-only findings refer to LPS585378b and nearby STM32b97c790
+(core pin506913d). No firmware, tests, settings or logs were changed. These
+findings do not establish the cause of the observed late-run deterioration.
+
+- **Confirmed full-plan fingerprint defect:** `mulRangingPlanEncode()` embeds
+  the32-byte CRC-protected schedule at4..35, then CRCs0..59; fingerprint returns
+  that outer CRC. A complete inner message+CRC has a fixed residue, cancelling
+  the inner schedule's influence on the outer checksum. A temporary program
+  linked to production core created valid revision1/slot10 and revision23/slot20
+  plans with equal outer hash826414CC, distinct schedule hashesCDD12282/B46F05A1,
+  and POLLs23100/33100us. A reference frame from the first plan decoded under
+  the second. This affects timing/roster/revision consistency admission on both
+  platforms, not merely a theoretical random CRC collision. Existing tests
+  mutate outer RLR/rate fields but miss this class. Future tests should mutate
+  each embedded schedule field with its checksum recomputed, require different
+  identity, and reject cross-plan broadcast/TWR. A remedy requires a coordinated,
+  explicitly versioned fingerprint migration; do not silently change one node.
+- **Confirmed driver stack over-read:** `dwClearAllStatus()` at
+  `vendor/libdw1000/src/libdw1000.c:802` gives a4-byte `uint32_t` to a5-byte SPI
+  write. A temporary ASan executable linking the real driver reproduced READ of
+  size5 beyond stack object `reg`. UWB startup and RF control transitions call
+  it. The fifth status byte is indeterminate; no stack overwrite was shown.
+  Tests should exercise this production helper with a size-checking SPI sink.
+  It is not an explanation for cycle112 without evidence of a new reset/control
+  transition. A future fix should provide a correctly sized explicit W1C buffer.
+- **Confirmed conditional IRQ non-progress:** defaults enable RXPTO alongside
+  RXRFTO, but `dwIsReceiveTimeout()` tests only RXRFTO. A temporary real-driver/
+  production-drain fixture latched masked RXPTO and observed4 repeated status
+  reads, zero callbacks and IRQ still high; a test-only request cutoff bounded
+  the loop. An actual latched event can starve the lower-priority console in the
+  unbounded UWB drain. Normal MUL does not deliberately configure nonzero
+  preamble-detect timeout, and no RXPTO appeared in this capture's snapshots;
+  field activation is unproven. Zero disables this timer according to the
+  [Decawave driver guide](https://forum.qorvo.com/uploads/short-url/9wTyf4vAaBkReECig7wIppI9Ek9.pdf).
+  Future coverage should assert every enabled event is handled/acknowledged,
+  plus bounded recovery on a non-progressing IRQ. Existing coalescing tests
+  cover good-RX/TX, not this masked bit.
+- **Strong broadcast-preemption race:** the generated follower cancels active
+  TWR before copying an incoming broadcast (`src/mul_alr.c:464`);
+  `mulTwrCancel()` rearms RX (`src/mul_twr.c:199..204`). The TWR broadcast path
+  does likewise before returning the buffer to its caller. A temporary fixture
+  using the existing fake radio injected an overwrite at that early re-enable:
+  reference sequence6 remained5. This demonstrates the ownership/order hazard;
+  the injection is not a measured RF timing reproduction for the two-node plan.
+  It needs an old active exchange and another reception during the copy gap.
+  A future regression should model airtime/SPI latency and buffer replacement;
+  preserve bytes/stamp before cancellation can re-enable RX. STM32's broadcast
+  path already copies its frozen frame before rearming.
+
+The current static-geometry capture was independently matched to the latest ALR
+session by109/109 exact reference TX timestamps, not host reception times.
+Discard startup/interleaved pre-reinitialization lines before counting: AA is
+110/113 before cycle115 and2/10 afterward, excluding AR and startup attempts.
+RLR vectors are102/116 valid; cycles112/113 first lack reference observations.
+Reference TX logs continue through128; late ALR histories include RXRFSL/SFD
+errors, and the follower logs reference loss. No deterministic112-cycle limit
+was identified. Raw40 wraps recur much earlier and existing wrap tests pass.
+
+For valid vectors at cycles>=20, n=91, mean=-103.66mm and sample SD=70.84mm.
+Across all102 valid vectors, mean=-85.44mm and SD=109.07mm; the settling cutoff
+must accompany accuracy claims. Mean AR132/133 ranges are977.6/875.83mm; their
+-101.77mm difference is not independent truth. AA corrected/raw means are
+2076.77/2009.11mm for112 successful AA initiator records. Power-table application
+is not per-device calibration. No calibration adjustment is justified here.
+
+RLR clock records show102/109 valid mappings,9 applied regression fits and93
+changing-rate fallbacks; propagation-compensated is0/109. Replaying measured
+raw TX/RX through production clock code reproduces all79 rate/fit/apply decisions
+at cycles33..111 exactly. The fallback compares a long-window slope with a recent
+median, retaining the latter when they disagree; mapping-valid is not a physical
+error bound. `mulMultiReceiverReceive()` passes NULL delay to fitted observation,
+so the generated RLR path cannot activate propagation compensation even with
+that setting enabled or successful AR results. This is an implementation limit;
+constant propagation does not itself bias a stationary rate estimate. Future
+motion-aware compensation needs correct identity/age/domain binding.
+
+AA1/RX dropped counters are boot-cumulative and constant within the selected
+latest session:132 AA11082/RX751;133 AA9516/RX1474. Large totals do not mean
+ongoing trace loss in that segment. Normal printf uses zero-wait per-byte queue
+writes and can lose text independently without updating those ring counters.
+AA1 can also attribute an unrelated90-byte rejected packet to its retained old
+AA context. Likewise AR rejected counters include overheard AA traffic. Treat
+such records as diagnostics, not additional failed assigned exchanges.
+
+Local audit checks passed250 LPS MUL tests under ASan/UBSan (runners/binaries only
+in `/tmp`), the portable sanitizer suite, and STM32 runtime/config/AR sanitizer
+suite. `tools/test/mul_core.py` fails current canonical/vendor byte agreement:
+only `mul_ranging_plan.[ch]` and its test differ after the LPS-only delay option;
+the STM32 pin verifies independently. That tooling failure is not evidence of
+incompatibility for the current codec2 plan. Codec4 remains unsupported there.
+The existing combined-diagnostics ELF passes image checks with716 flash bytes
+and856 RAM bytes free; this audit did not rebuild or measure stack watermarks.

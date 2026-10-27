@@ -1127,9 +1127,17 @@ times and therefore rejects the earlier host-only codec1. The reference's hardwa
 clock defines cycle-relative reservation start/poll/end times. No host timestamp
 or cross-radio timestamp subtraction determines a delayed-TX target.
 
-Selected plans use RF envelope4. The broadcast40/80-byte envelope binds the full
-plan fingerprint, including RLR settings that the broadcast-only fingerprint
-cannot cover. Five-message90-byte TWR binds the same fingerprint, reference cycle32,
+Selected plans use RF envelope4. The broadcast40/80-byte envelope carries the
+full-plan fingerprint, including RLR settings outside the broadcast-only codec.
+**Audit caveat at585378b:** the fingerprint is the outer CRC of an encoding that
+includes the embedded schedule and its own CRC. That nested checksum cancels
+the embedded schedule's contribution: different valid broadcast timings/rosters/
+revisions can have the same full-plan fingerprint and pass RF4 hash admission.
+Matching hashes therefore do not prove matching full plans. This is an unresolved
+implementation defect, not an intended compatibility rule; compare complete
+configuration fields before experiments. See the
+[reproductions and limitations](mul_aa_diagnostics.md#latent-defects-and-evidence-limits).
+Five-message90-byte TWR carries that fingerprint and checks reference cycle32,
 operation index0..31 and assigned MAC pair. Replay or wrong-cycle/index/pair frames
 are rejected. Each operation's setup and final airtime guards retain the actual
 hardware before/after-SPI delayed-TX checks. LPS AA ownership is connected; fixed
