@@ -37,7 +37,7 @@ mulRelation_t mulRelationPublishNetwork(const mulNetwork_t *network,const mulClo
   uint64_t followerTx,uint64_t hardwareNow,uint32_t nowMs,bool powerCorrectedTwr);
 void mulRelationEncode(uint8_t frame[MUL_RELATION_FRAME_LENGTH],
   const mulTestPacket_t *packet,const mulRelation_t *relation);
-// Strict type-1/34 OR type-2/74/version-1/2; outputs unchanged on failure.
+// Strict type-1/34 OR type-2/74/version-1/2/3; outputs unchanged on failure.
 // A valid old packet represents unavailable metadata, never a stale cache hit.
 bool mulBroadcastDecode(const uint8_t *frame,size_t length,
   mulTestPacket_t *packet,mulRelation_t *relation);

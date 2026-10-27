@@ -10,6 +10,7 @@ int main(int argc,char **argv) {
  assert(mulTelemetryEncode(line,sizeof(line),&r)&&mulTelemetryDecode(line,&d));
  assert(d.vector.sourceVersion==1&&d.vector.values[0].source==1&&d.vector.values[1].source==2&&d.vector.values[2].source==3);
  if(argc>1)puts(line);
+ r.vector.values[2].clockValid=1;assert(!mulTelemetryEncode(line,sizeof(line),&r));r.vector.values[2].clockValid=0;
  r.vector.sourceVersion=0;assert(!mulTelemetryEncode(line,sizeof(line),&r));
  r=(mulTelemetry_t){.type=mulTlmTdoa,.node=141,.radio=2,.role=2,.mode=4,.epoch=9,.legacySlotMs=10,
   .tdoa={.reference=132,.follower=133,.tdoaDtu=INT32_MIN,.rangeDifferenceMm=INT32_MIN,.ratePpb=INT32_MIN,.unknownComponents=63}};
@@ -17,6 +18,7 @@ int main(int argc,char **argv) {
   r.tdoa.delaySource=source;assert(mulTelemetryEncode(line,sizeof(line),&r)&&mulTelemetryDecode(line,&d));
   assert(d.tdoa.delaySource==source);if(argc>1)puts(line);
  }
+ r.tdoa.clockValid=1;assert(!mulTelemetryEncode(line,sizeof(line),&r));r.tdoa.clockValid=0;
  r.tdoa.delaySource=3;assert(!mulTelemetryEncode(line,sizeof(line),&r));
  if(argc==1)puts("Pose provenance telemetry: strict vector subversion1 source bits and TDoA subversion1 external/none,152-byte envelope, legacy zero preservation passed");
 }

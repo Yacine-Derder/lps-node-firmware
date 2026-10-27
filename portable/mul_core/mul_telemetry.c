@@ -44,7 +44,7 @@ static bool valid(const mulTelemetry_t *r){
   if(r->radio!=2||r->role!=2||(r->mode!=4&&r->mode!=5)||r->ratePolicy!=(r->mode==5)||
     t->reference==t->follower||t->reference==255||t->follower==255||r->node==t->reference||r->node==t->follower||
     t->rx>UINT64_C(0xffffffffff)||t->status>4||t->clockValid>1||t->rateState>2||t->delayState>4||
-    t->delaySource>mulDelayNone||t->powerFlags>7||t->unknownComponents>63||
+    (t->delaySource==mulDelayNone&&(available||t->clockValid||t->delayState))||t->delaySource>mulDelayNone||t->powerFlags>7||t->unknownComponents>63||
     (r->legacySlotMs!=500&&r->legacySlotMs!=50&&r->legacySlotMs!=10)||
     ((t->rateState==1)!=(t->ratePpb!=INT32_MIN))||
     (t->rateState&&(!r->ratePolicy||r->mode!=5))||
@@ -78,7 +78,7 @@ static bool valid(const mulTelemetry_t *r){
    for(unsigned j=0;j<i;j++)if(v->ids[i]==v->ids[j])return false;
    if(!i)continue;
    const mulMultiValue_t *x=&v->values[i-1];bool available=x->status==4;
-   if((!v->sourceVersion&&x->source)||(v->sourceVersion&&((v->seenMask&(1u<<i))?!x->source:x->source))||x->status>4||x->reason>9||x->clockValid>1||x->rateState>2||
+   if((x->source==3&&(available||x->clockValid))||(!v->sourceVersion&&x->source)||(v->sourceVersion&&((v->seenMask&(1u<<i))?!x->source:x->source))||x->status>4||x->reason>9||x->clockValid>1||x->rateState>2||
      (!r->ratePolicy&&x->rateState)||available!=((v->validMask&(1u<<i))!=0)||
      (available&&(!x->clockValid||x->rateState!=1||x->reason||!(v->seenMask&1)))||
      (available?(x->rangeDifferenceMm==INT32_MIN||x->tdoaDtu==INT32_MIN):
