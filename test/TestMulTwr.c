@@ -87,6 +87,10 @@ void dwSetTxRxTime(dwDevice_t *dev, const dwTime_t time) {
   radio(dev)->now=mulTimestampMask(radio(dev)->now+radio(dev)->setupLag);
 }
 void dwSpiRead(dwDevice_t *dev, uint8_t reg, uint32_t sub, void *data, size_t size) {
+#if MUL_RX_DIAG
+  if(reg==0x19){TEST_ASSERT_EQUAL(4,size);uint32_t state=radio(dev)->receiving?0x050500:0x010000;memcpy(data,&state,4);return;}
+  if(reg==SYS_STATUS){TEST_ASSERT_EQUAL(5,size);memcpy(data,dev->sysstatus,5);return;}
+#endif
   TEST_ASSERT_EQUAL_UINT8(DX_TIME,reg); TEST_ASSERT_EQUAL_UINT32(NO_SUB,sub); TEST_ASSERT_EQUAL_UINT(5,size);
   mulEncodeTimestamp(data, radio(dev)->raw+radio(dev)->dxError);
 }
@@ -1406,5 +1410,56 @@ void test_generatedAaDelayDrivesActualPollAndResponderAcceptance(void) {
  for(unsigned i=0;i<5;i++){transfer(i%2);drainAa();}
  TEST_ASSERT_TRUE(sawAa(133,mulAaRx,mulTwrPoll));
  TEST_ASSERT_TRUE(sawAa(132,mulAaDone,mulTwrResult));TEST_ASSERT_TRUE(sawAa(133,mulAaDone,mulTwrResult));
+#endif
+}
+
+#if MUL_RX_DIAG
+static char rxLines[4096],rxRetry[129];static bool rxAccept;
+static unsigned rxCalls;
+static bool rxWrite(const char *line,unsigned n) {
+ TEST_ASSERT_TRUE(n<=128);TEST_ASSERT_TRUE(n<sizeof(rxRetry));TEST_ASSERT_EQUAL('\n',line[n-1]);
+ rxCalls++;memcpy(rxRetry,line,n);rxRetry[n]=0;
+ if(!rxAccept)return false;
+ TEST_ASSERT_TRUE(strlen(rxLines)+n<sizeof(rxLines));strncat(rxLines,line,n);return true;
+}
+static void rxDrain(void){rxAccept=true;for(unsigned i=0;i<12;i++)mulRxDiagPoll(rxWrite);}
+#endif
+void test_rxDiagnosticsBoundsBackpressureWindowCorrelationAndPreclearStatus(void) {
+#if MUL_RX_DIAG
+ rxLines[0]=0;rxDrain();rxLines[0]=0;
+ mulRangingPlan_t p;memset(&p,0,sizeof(p));p.replyMs=20;p.maxUtilization=70;p.enabled=1;p.aaMilliHz=1000;p.aaStartDelayUs=50000;
+ mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;p.broadcast.txLeadUs=1000;p.broadcast.rxBudgetUs=5000;
+ mulRxInit(&radios[1].device);mulRxDiagBeacon(0x123456789a);
+ unsigned sends=radios[1].sends,rearms=radios[1].rearms;
+ uint64_t origin=mulTimestampMask(MUL_TIMESTAMP_MASK-70*MS);
+ radios[1].now=mulTimestampMask(origin+67*MS);mulRxDiagService(&radios[1].device,&p,UINT32_MAX,133,origin);
+ radios[1].device.sysstatus[1]=0x80; // RXFCE captured by driver before its reset.
+ mulRxDiagEvent(&radios[1].device,eventReceiveFailed);
+ memset(radios[1].device.sysstatus,0,5); // Simulate subsequent status/cache overwrite.
+ radios[1].device.deviceMode=RX_MODE;radios[1].receiving=false; // Driver request is not hardware truth.
+ radios[1].now=mulTimestampMask(origin+72*MS);mulRxDiagService(&radios[1].device,&p,UINT32_MAX,133,origin);
+ rxAccept=false;rxCalls=0;mulRxDiagPoll(rxWrite);TEST_ASSERT_EQUAL(1,rxCalls);
+ char retry[129];strcpy(retry,rxRetry);mulRxDiagPoll(rxWrite);TEST_ASSERT_EQUAL_STRING(retry,rxRetry);
+ TEST_ASSERT_NOT_NULL(strstr(retry,"RX1 c=4294967295 o=0 l=85 k=1"));
+ TEST_ASSERT_NOT_NULL(strstr(retry,"h=00010000 s=0000000000 i=0000008000"));
+ rxAccept=true;mulRxDiagPoll(rxWrite);mulRxDiagPoll(rxWrite);
+ TEST_ASSERT_NOT_NULL(strstr(rxLines,"RX2 c=4294967295 o=0 l=85 k=1"));
+ TEST_ASSERT_NOT_NULL(strstr(rxLines,"b=123456789A"));
+ mulRxDiagDecision(0,0);mulRxDiagDecision(4,0x10);mulRxDiagDecision(8,0x10);
+ radios[1].now=mulTimestampMask(origin+160*MS);mulRxDiagService(&radios[1].device,&p,UINT32_MAX,133,origin);rxDrain();
+ TEST_ASSERT_NOT_NULL(strstr(rxLines,"k=2"));TEST_ASSERT_NOT_NULL(strstr(rxLines,"a=0E"));
+ TEST_ASSERT_EQUAL(sends,radios[1].sends);TEST_ASSERT_EQUAL(rearms,radios[1].rearms);TEST_ASSERT_FALSE(radios[1].receiving);
+ // Ten snapshots without USB service exceed the bounded four-record ring.
+ rxLines[0]=0;
+ for(unsigned c=0;c<5;c++) {
+  uint64_t base=(uint64_t)c*SEC;
+  radios[1].now=mulTimestampMask(base+72*MS);mulRxDiagService(&radios[1].device,&p,c,133,base);
+  radios[1].now=mulTimestampMask(base+160*MS);mulRxDiagService(&radios[1].device,&p,c,133,base);
+ }
+ rxDrain();TEST_ASSERT_NOT_NULL(strstr(rxLines,"z=6"));
+#else
+ TEST_ASSERT_EQUAL(0,MUL_RX_DIAG);
+ unsigned sideEffects=0;mulRxDiagEvent(sideEffects++,sideEffects++);mulRxDiagPoll(sideEffects++);
+ TEST_ASSERT_EQUAL(0,sideEffects);
 #endif
 }

@@ -128,6 +128,9 @@ void mulRxRearm(dwDevice_t *dev)
 
 void mulRxInit(dwDevice_t *dev)
 {
+#if MUL_RX_DIAG
+  diagValid=false;diagActivity=0;diagRearm=diagBeacon=0;
+#endif
   // Preserve uwbInit()'s PHY. Disable automatic RX re-enable so timestamps and
   // buffers remain stable until the event callback has captured the observation.
   dwNewConfiguration(dev);

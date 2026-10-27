@@ -25,6 +25,7 @@ def run(command, log, env):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--rx-diag', action='store_true', help='enable optional DW1000 RX snapshots')
     parser.add_argument('--twr-trace', action='store_true', help='enable bounded generated AA stage trace')
     parser.add_argument('--sanitize', action='store_true')
     parser.add_argument('--mul-only', action='store_true', help='test production profile and only MUL fixtures')
@@ -43,9 +44,9 @@ def main():
         config = work / f'{slot}.yml'
         ruby = '''require 'yaml'
 c=YAML.safe_load(File.read('tools/test/gcc.yml'), permitted_classes: [Symbol], aliases:true)
-c['compiler']['defines']['items'] += ["MUL_FOLLOWER_SLOT_MS=#{ARGV[1]}", "MUL_EXPERIMENTAL_STATIONARY_RLR_RATE=#{ARGV[2]}", "MUL_PROP_MAX_AGE_MS=#{ARGV[3]}", "MUL_RELATIVE_SPEED_MM_S=#{ARGV[4]}", "MUL_ONLY=#{ARGV[5]}", "MUL_TWR_TRACE=#{ARGV[6]}"]
+c['compiler']['defines']['items'] += ["MUL_FOLLOWER_SLOT_MS=#{ARGV[1]}", "MUL_EXPERIMENTAL_STATIONARY_RLR_RATE=#{ARGV[2]}", "MUL_PROP_MAX_AGE_MS=#{ARGV[3]}", "MUL_RELATIVE_SPEED_MM_S=#{ARGV[4]}", "MUL_ONLY=#{ARGV[5]}", "MUL_TWR_TRACE=#{ARGV[6]}", "MUL_RX_DIAG=#{ARGV[7]}"]
 File.write(ARGV[0],YAML.dump(c))'''
-        subprocess.run(['ruby', '-e', ruby, str(config), str(slot), '0' if args.default_rate else '1', str(args.prop_age), str(args.speed), '1' if args.mul_only else '0', '1' if args.twr_trace else '0'], cwd=ROOT, check=True)
+        subprocess.run(['ruby', '-e', ruby, str(config), str(slot), '0' if args.default_rate else '1', str(args.prop_age), str(args.speed), '1' if args.mul_only else '0', '1' if args.twr_trace else '0', '1' if args.rx_diag else '0'], cwd=ROOT, check=True)
         output = run(['rake', f'config[{config}]', 'clean', 'unit_mul' if args.mul_only else 'unit', 'summary'], work / f'host-{slot}.log', env)
         summary = re.search(r'\d+ TOTAL TESTS \d+ TOTAL FAILURES \d+ IGNORED', output)
         if not summary or '0 TOTAL FAILURES' not in summary[0]:
@@ -80,7 +81,7 @@ File.write(ARGV[0],YAML.dump(c))'''
                            '-Wno-unused-parameter', '-Wno-sign-compare', '-DUNITY_SUPPORT_64',
                            '-DSTM32F072xB', '-DHSI48_VALUE=((uint32_t)48000000)',
                            f'-DMUL_FOLLOWER_SLOT_MS={slot}', f'-DMUL_EXPERIMENTAL_STATIONARY_RLR_RATE={0 if args.default_rate else 1}',
-                           f'-DMUL_PROP_MAX_AGE_MS={args.prop_age}', f'-DMUL_RELATIVE_SPEED_MM_S={args.speed}', f'-DMUL_ONLY={1 if args.mul_only else 0}', f'-DMUL_TWR_TRACE={1 if args.twr_trace else 0}',
+                           f'-DMUL_PROP_MAX_AGE_MS={args.prop_age}', f'-DMUL_RELATIVE_SPEED_MM_S={args.speed}', f'-DMUL_ONLY={1 if args.mul_only else 0}', f'-DMUL_TWR_TRACE={1 if args.twr_trace else 0}', f'-DMUL_RX_DIAG={1 if args.rx_diag else 0}',
                            '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie']
                 command += ['-I' + i for i in includes]
                 command += [str(test), f'generated-test/build/{test.stem}_Runner.c',

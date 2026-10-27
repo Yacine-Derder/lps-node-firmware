@@ -355,6 +355,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     mulRxRearm(dev);
     return true;
   }
+  if(event==eventPacketReceived)RX_DIAG(twr,0,0);
   int64_t phase = mulTimestampDifference(hardwareNow(dev), origin);
 #if MUL_TWR_TRACE
   // Record the assigned responder window once even when no poll ever arrives.
@@ -413,7 +414,6 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     return true;
   }
   uint8_t frame[MUL_MULTI_TWR_BYTES];
-  RX_DIAG(twr,0,0);
   mulTwrPacket_t packet;unsigned length=twr->multiProfile?MUL_MULTI_TWR_BYTES:MUL_TWR_FRAME_LENGTH;
   bool valid=dwGetDataLength(dev)==length;
   if (valid) {

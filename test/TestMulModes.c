@@ -70,6 +70,10 @@ void dwSetTxRxTime(dwDevice_t *device, const dwTime_t time) {
 void dwSpiRead(dwDevice_t *device, uint8_t reg, uint32_t offset,
                void *data, size_t length) {
   (void)device;
+#if MUL_RX_DIAG
+  if(reg==0x19){TEST_ASSERT_EQUAL(4,length);const uint8_t state[]={0,5,5,0};memcpy(data,state,4);return;}
+  if(reg==SYS_STATUS){TEST_ASSERT_EQUAL(5,length);memcpy(data,device->sysstatus,5);return;}
+#endif
   TEST_ASSERT_EQUAL_UINT8(DX_TIME, reg);
   TEST_ASSERT_EQUAL_UINT32(NO_SUB, offset);
   TEST_ASSERT_EQUAL_UINT(MUL_TIMESTAMP_BYTES, length);

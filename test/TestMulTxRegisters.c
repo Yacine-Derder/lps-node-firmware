@@ -437,3 +437,16 @@ void test_mulRuntimeSlotsControlActualDelayedTxAndMismatchSkips(void) {
 
 void vPortEnterCritical(void){}
 void vPortExitCritical(void){}
+
+static unsigned observedFailureCallbacks;
+static void checkPreclearFailure(dwDevice_t *device) {
+ observedFailureCallbacks++;
+ TEST_ASSERT_TRUE(device->sysstatus[1]&(1u<<(RXFCE_BIT-8)));
+ TEST_ASSERT_EQUAL(0,registers[SYS_STATUS][1]&(1u<<(RXFCE_BIT-8)));
+ mulRxDiagEvent(device,eventReceiveFailed); // Retained driver snapshot, no SPI read.
+}
+void test_rxDiagnosticsUseDriverPreclearStatusAfterExistingReset(void) {
+ observedFailureCallbacks=0;dwAttachReceiveFailedHandler(&radio,checkPreclearFailure);
+ registers[SYS_STATUS][1]=1u<<(RXFCE_BIT-8);dwHandleInterrupt(&radio);
+ TEST_ASSERT_EQUAL(1,observedFailureCallbacks);
+}
