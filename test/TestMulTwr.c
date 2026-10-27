@@ -1150,8 +1150,12 @@ void test_actualFollowerArInitiatorUsesMappedLocalTargetsWithoutAaDependency(voi
  unsigned ar=99;mulRangingOperation_t op;
  for(unsigned i=0;i<mulRangingPlanCount(&p,5);i++){TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,i,&op));if(op.initiator==135)ar=i;}
  TEST_ASSERT_NOT_EQUAL(99,ar);TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,ar,&op));
- advance((int64_t)op.startUs*MS/1000+MS);dispatch(1,eventTimeout);TEST_ASSERT_TRUE(ranging.active);TEST_ASSERT_EQUAL(ar,ranging.operation);
- uint64_t expected=clockAt(1,(int64_t)op.pollUs*MS/1000+(compensated?0:flight));
+ advance((int64_t)op.startUs*MS/1000+MS);
+ // Previous-cycle AA has expired under the default 1s policy, but not at 6s.
+ bool delayFresh=compensated&&(uint32_t)(ticks-ranging.aa.measuredMs)<=MUL_PROP_MAX_AGE_MS;
+ if(compensated)TEST_ASSERT_EQUAL(delayFresh?mulPropagationFresh:mulPropagationExpired,mulTwrPropagationState(&ranging,&followerClock,ticks));
+ dispatch(1,eventTimeout);TEST_ASSERT_TRUE(ranging.active);TEST_ASSERT_EQUAL(ar,ranging.operation);
+ uint64_t expected=clockAt(1,(int64_t)op.pollUs*MS/1000+(delayFresh?0:flight));
  TEST_ASSERT_INT_WITHIN(1024,0,mulTimestampDifference(ranging.expectedTx,expected));
  TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,5,ar));transfer(1);transfer(0);transfer(1);transfer(0);transfer(1);
  TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_UINT32_WITHIN(1,flight,ranging.candidateTof);TEST_ASSERT_EQUAL(compensated,ranging.aa.valid);

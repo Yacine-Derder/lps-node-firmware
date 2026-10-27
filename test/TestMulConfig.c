@@ -376,15 +376,32 @@ void test_planConsoleEditsPersistsPreviewsSelectsAndRejectsUnsupportedRadio(void
  send(":plan use off\n");apply();TEST_ASSERT_NULL(boot.mulPlan);uint16_t slot;TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(500,slot);
 }
 
-void test_resetInterruptedAtEveryWriteKeepsBootRadioStopped(void) {
+void test_resetInterruptedAtEveryWriteRespectsProfileWithoutRestoringMulOwner(void) {
  for(int cut=0;cut<=3;cut++) {
   setUp();send(":off\n");apply();
   mulRangingPlan_t p={.replyMs=20,.maxUtilization=70};mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);p.broadcast.rangingFlags=0;
   uint32_t generation=0;TEST_ASSERT_TRUE(cfgMulPlanSave(&p,true,&generation));
   budget=cut;TEST_ASSERT_EQUAL(cut==3,cfgReset());budget=-1;
+  // Every interrupted/unconfirmed reset blocks activation until reboot/recovery.
+  TEST_ASSERT_FALSE(uwbControlRequested());TEST_ASSERT_FALSE(uwbControlRunning());TEST_ASSERT_FALSE(uwbControlCanEnable());
   cfgInit();TEST_ASSERT_TRUE(cfgReadU8(cfgMode,&boot.mode));TEST_ASSERT_TRUE(cfgReadU8(cfgAddress,&boot.address[0]));
-  uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlRequested());TEST_ASSERT_FALSE(uwbControlRunning());
-  if(cut){TEST_ASSERT_FALSE(uwbControlCanEnable());}
+  uwbControlInit(&boot);TEST_ASSERT_FALSE(uwbControlRunning());
+  const mulStoredPlan_t *stored=NULL;
+  TEST_ASSERT_EQUAL(cut<2?mulPlanStored:mulPlanAbsent,cfgMulPlanCached(&stored));
+  if(cut<2){TEST_ASSERT_NOT_NULL(stored);TEST_ASSERT_TRUE(stored->selected);}
+  else {TEST_ASSERT_NULL(stored);}
+  if(!cut){TEST_ASSERT_EQUAL(MODE_MUL_ALR,boot.mode);TEST_ASSERT_EQUAL(132,boot.address[0]);}
+  else {TEST_ASSERT_EQUAL(0,boot.address[0]);}
+#if MUL_ONLY
+  // Production factory defaults are idle, even if an old plan commit survives.
+  TEST_ASSERT_FALSE(uwbControlRequested());
+  if(cut){TEST_ASSERT_EQUAL(255,boot.mode);TEST_ASSERT_FALSE(uwbControlCanEnable());}
+#else
+  // Legacy factory defaults allow the stock anchor only after the plan clears.
+  if(cut){TEST_ASSERT_EQUAL(MODE_ANCHOR,boot.mode);}
+  TEST_ASSERT_EQUAL(cut>=2,uwbControlRequested());
+  TEST_ASSERT_EQUAL(cut!=1,uwbControlCanEnable());
+#endif
  }
 }
 

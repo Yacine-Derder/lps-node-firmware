@@ -43,7 +43,8 @@ void test_phyRealDriverProfileUsesCommonSfdPhrFcsAndSharedScratch(void) {
   TEST_ASSERT_FALSE(getBit(dev.chanctrl,LEN_CHAN_CTRL,DWSFD_BIT));
   TEST_ASSERT_FALSE(getBit(dev.chanctrl,LEN_CHAN_CTRL,TNSSFD_BIT)); TEST_ASSERT_FALSE(getBit(dev.chanctrl,LEN_CHAN_CTRL,RNSSFD_BIT));
   TEST_ASSERT_EQUAL_UINT8_ARRAY(dev.chanctrl,regs[CHAN_CTRL],LEN_CHAN_CTRL);
-  TEST_ASSERT_TRUE(sizeof(phyDiagState_t)<=128); TEST_ASSERT_EQUAL_UINT(128,sizeof(mulRoleScratch));
+  // Planned TWR also owns this union; retain the production 160-byte ceiling.
+  TEST_ASSERT_TRUE(sizeof(phyDiagState_t)<=128); TEST_ASSERT_TRUE(sizeof(mulRoleScratch)<=160);
 }
 void test_phyRealDriverRoleWatchdogBoundedReadsAndRecovery(void) {
 #if PHY_INTEROP_ROLE==1

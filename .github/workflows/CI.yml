@@ -39,7 +39,10 @@ jobs:
     - name: Mark workspace as safe for git
       run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-    - name: Unit tests
+    - name: Production MUL-only sanitizer matrix
+      run: python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000
+
+    - name: Legacy and USB regression tests
       run: ./tools/build/test
 
   build:
