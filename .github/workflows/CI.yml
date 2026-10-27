@@ -42,6 +42,9 @@ jobs:
     - name: Production MUL-only sanitizer matrix
       run: python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000
 
+    - name: Generated AA stage diagnostics
+      run: python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000 --slot 10 --twr-trace
+
     - name: Legacy and USB regression tests
       run: ./tools/build/test
 

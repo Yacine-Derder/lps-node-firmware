@@ -9,6 +9,25 @@
 
 #include "../portable/mul_core/mul_legacy_twr.h"
 
+// Opt-in local diagnostics only; never changes the radio protocol or settings.
+#ifndef MUL_TWR_TRACE
+#define MUL_TWR_TRACE 0
+#endif
+#if MUL_TWR_TRACE != 0 && MUL_TWR_TRACE != 1
+#error MUL_TWR_TRACE must be 0 or 1
+#endif
+// Event: WINDOW, ARM, TX verified, RX decoded, RX enable requested, DONE,
+// FAIL, REJECT, TARGET, WAIT_EVENT. See the inspection document for why codes.
+enum {mulAaWindow=1,mulAaArm,mulAaTx,mulAaRx,mulAaListen,mulAaDone,mulAaFail,mulAaReject,mulAaTarget,mulAaWaitEvent};
+typedef struct {
+ uint64_t now,stamp,deadline;
+ uint32_t cycle;
+ uint8_t operation,initiator,responder,local,event,stage,flags,why;
+} mulAaTrace_t;
+// Single UWB producer/main consumer. No allocation or SPI in these functions.
+bool mulTwrTraceTake(mulAaTrace_t *out,uint32_t *dropped);
+void mulTwrTracePoll(bool (*write)(const char *,unsigned));
+
 // Committed AA propagation data survives AR exchanges using the same radio.
 // Small IDs expand to the existing fixed MAC prefix when exporting a delay.
 typedef struct {

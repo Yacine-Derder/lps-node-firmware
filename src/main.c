@@ -41,6 +41,7 @@
 #include "cfg.h"
 #include "mul_console.h"
 #include "mul_geometry.h"
+#include "mul_twr.h"
 #include "eeprom.h"
 
 #include "usb_device.h"
@@ -219,6 +220,9 @@ static void main_task(void *pvParameters) {
 #endif
       handleSerialInput(ch);
     }
+#if MUL_TWR_TRACE
+    mulTwrTracePoll(usbcommTryWrite); // One bounded record; never blocks the radio owner.
+#endif
   }
 }
 

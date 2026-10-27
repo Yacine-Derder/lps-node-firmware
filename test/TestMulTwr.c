@@ -1225,3 +1225,108 @@ void test_actualFollowerUsesExternalGeometryAndNeverFallsBackToTwr(void) {
  if(trace)fclose(trace);
  mulGeometrySelect(mulDelayTwr);
 }
+
+#if MUL_TWR_TRACE
+static mulAaTrace_t aaRecords[96];static unsigned aaRecordsCount,aaWrites;
+static uint32_t aaLost;
+static bool aaAccept;
+static char aaLine[144],aaPrevious[144];
+static void drainAa(void) {
+ mulAaTrace_t r;
+ while(mulTwrTraceTake(&r,&aaLost)) {
+  TEST_ASSERT_TRUE(aaRecordsCount<96);aaRecords[aaRecordsCount++]=r;
+ }
+}
+static void clearAa(void) {aaRecordsCount=0;drainAa();aaRecordsCount=aaWrites=0;}
+static bool writeAa(const char *line,unsigned n) {
+ TEST_ASSERT_TRUE(n<sizeof(aaLine));TEST_ASSERT_EQUAL('\n',line[n-1]);
+ memcpy(aaLine,line,n);aaLine[n]=0;aaWrites++;return aaAccept;
+}
+static void prepareAa(mulRangingPlan_t *p) {
+ setUp();scenario(-150000,2131);clearAa();
+ memset(p,0,sizeof(*p));p->replyMs=20;p->maxUtilization=70;p->enabled=MUL_PLAN_AA|MUL_PLAN_AR;
+ p->aaMilliHz=1000;p->arMilliHz=50;p->rlrCount=1;p->rlrs[0]=141;
+ mulScheduleLegacy(&p->broadcast,132,133,10);mulScheduleExperimental(&p->broadcast);p->broadcast.rangingFlags=0;
+ p->broadcast.txLeadUs=1000;p->broadcast.rxBudgetUs=5000;p->broadcast.airtimeUs=1000;p->broadcast.guard100us=1;
+ TEST_ASSERT_EQUAL_HEX32(0x826414CC,mulRangingPlanFingerprint(p));
+ mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(p,5,0,&op));TEST_ASSERT_EQUAL(MUL_PLAN_AA,op.kind);
+ TEST_ASSERT_EQUAL(23100,op.pollUs);simulationPlan=p;
+ advance((int64_t)op.startUs*MS/1000);
+ TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),p,5,0));TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(1),p,5,0));
+}
+static bool sawAa(unsigned local,unsigned event,unsigned stage) {
+ for(unsigned i=0;i<aaRecordsCount;i++)if(aaRecords[i].local==local&&aaRecords[i].event==event&&aaRecords[i].stage==stage)return true;
+ return false;
+}
+#endif
+void test_generatedAaTraceCapturesBothRolesVerifiedStagesAndLocalDeadlines(void) {
+#if MUL_TWR_TRACE
+ mulRangingPlan_t p;prepareAa(&p);uint32_t before=aaLost;
+ dispatch(1,eventTimeout);drainAa(); // Assigned responder window, even before a poll.
+ TEST_ASSERT_TRUE(sawAa(133,mulAaWindow,mulTwrPoll));
+ TEST_ASSERT_FALSE(sawAa(133,mulAaRx,mulTwrPoll));
+ dispatch(1,eventReceiveTimeout);drainAa();
+ TEST_ASSERT_EQUAL(mulAaWaitEvent,aaRecords[aaRecordsCount-1].event);
+ TEST_ASSERT_EQUAL(eventReceiveTimeout,(aaRecords[aaRecordsCount-1].flags>>2)&7);
+ dispatch(1,eventReceiveFailed);drainAa();
+ TEST_ASSERT_EQUAL(mulAaWaitEvent,aaRecords[aaRecordsCount-1].event);
+ TEST_ASSERT_EQUAL(eventReceiveFailed,(aaRecords[aaRecordsCount-1].flags>>2)&7);
+ TEST_ASSERT_FALSE(ctx(1)->active);TEST_ASSERT_EQUAL(0,radios[1].sends);
+ TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));drainAa();
+ for(unsigned i=0;i<5;i++){transfer(i%2);drainAa();TEST_ASSERT_EQUAL(0,aaWrites);}
+ TEST_ASSERT_TRUE(ctx(1)->aa.valid);TEST_ASSERT_EQUAL(before,aaLost);
+ for(unsigned i=0;i<aaRecordsCount;i++) {
+  const mulAaTrace_t *r=&aaRecords[i];TEST_ASSERT_EQUAL(5,r->cycle);TEST_ASSERT_EQUAL(0,r->operation);
+  TEST_ASSERT_EQUAL(132,r->initiator);TEST_ASSERT_EQUAL(133,r->responder);
+  if(r->event==mulAaArm)TEST_ASSERT_EQUAL_INT64(27*(int64_t)MS,mulTimestampDifference(r->deadline,r->stamp));
+  if(r->event==mulAaTx){TEST_ASSERT_TRUE(r->flags&1);} // Actual TXFRS, not the scheduled marker alone.
+ }
+ TEST_ASSERT_TRUE(sawAa(132,mulAaTx,mulTwrPoll));TEST_ASSERT_TRUE(sawAa(132,mulAaListen,mulTwrResponse));
+ TEST_ASSERT_TRUE(sawAa(132,mulAaRx,mulTwrResponse));TEST_ASSERT_TRUE(sawAa(132,mulAaTx,mulTwrFinal));
+ TEST_ASSERT_TRUE(sawAa(133,mulAaRx,mulTwrPoll));TEST_ASSERT_TRUE(sawAa(133,mulAaTx,mulTwrResponse));
+ TEST_ASSERT_TRUE(sawAa(133,mulAaListen,mulTwrFinal));TEST_ASSERT_TRUE(sawAa(133,mulAaRx,mulTwrFinal));
+ TEST_ASSERT_TRUE(sawAa(132,mulAaDone,mulTwrResult));TEST_ASSERT_TRUE(sawAa(133,mulAaDone,mulTwrResult));
+#endif
+}
+void test_generatedAaTraceSeparatesDeadlineRxTimeoutRadioFailureAndLateSetup(void) {
+#if MUL_TWR_TRACE
+ for(unsigned which=0;which<4;which++) {
+  mulRangingPlan_t p;prepareAa(&p);
+  if(which==3)radios[0].setupLag=20*MS;
+  bool started=mulTwrStart(ctx(0),&radios[0].device,5,origins[0]);TEST_ASSERT_EQUAL(which!=3,started);
+  if(started) {
+   int64_t sent=sendTime(0);advance(sent+MS);radios[0].armed=false;dispatch(0,eventPacketSent);
+   advance(sent+(which?2:28)*MS);
+   dispatch(0,which==0?eventTimeout:which==1?eventReceiveTimeout:eventReceiveFailed);
+  }
+  TEST_ASSERT_FALSE(ctx(0)->active);TEST_ASSERT_TRUE(radios[0].receiving);drainAa();
+  const mulAaTrace_t *last=&aaRecords[aaRecordsCount-1];TEST_ASSERT_EQUAL(mulAaFail,last->event);
+  TEST_ASSERT_EQUAL(which==3?mulTwrPoll:mulTwrResponse,last->stage);
+  TEST_ASSERT_EQUAL(which==0?1:which==3?4:2,last->why);
+  if(which==0){TEST_ASSERT_TRUE(mulTimestampDifference(last->now,last->deadline)>=0);}
+  if(which==1||which==2)TEST_ASSERT_EQUAL(which==1?eventReceiveTimeout:eventReceiveFailed,(last->flags>>2)&7);
+ }
+ mulRangingPlan_t p;prepareAa(&p);radios[1].setupLag=20*MS;
+ TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));transfer(0);drainAa();
+ const mulAaTrace_t *last=&aaRecords[aaRecordsCount-1];
+ TEST_ASSERT_EQUAL(mulAaFail,last->event);TEST_ASSERT_EQUAL(133,last->local);
+ TEST_ASSERT_EQUAL(mulTwrResponse,last->stage);TEST_ASSERT_EQUAL(4,last->why);
+ TEST_ASSERT_TRUE(ctx(0)->active);TEST_ASSERT_FALSE(ctx(1)->active);TEST_ASSERT_EQUAL(0,radios[1].sends);
+#endif
+}
+void test_generatedAaTraceOverflowAndUsbBackpressureNeverChangeRadioState(void) {
+#if MUL_TWR_TRACE
+ mulRangingPlan_t p;prepareAa(&p);uint32_t before=aaLost;
+ TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+ aaAccept=false;mulTwrTracePoll(writeAa);TEST_ASSERT_EQUAL(1,aaWrites);strcpy(aaPrevious,aaLine);
+ mulTwrTracePoll(writeAa);TEST_ASSERT_EQUAL_STRING(aaPrevious,aaLine);
+ aaAccept=true;mulTwrTracePoll(writeAa);TEST_ASSERT_EQUAL_STRING(aaPrevious,aaLine);
+ for(unsigned i=0;i<8;i++) {
+  ctx(0)->active=true;mulTwrCancel(ctx(0),&radios[0].device,"timeout",false);
+  ctx(0)->attempted=false;
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,5,origins[0]));
+ }
+ TEST_ASSERT_TRUE(ctx(0)->active);TEST_ASSERT_TRUE(radios[0].armed);drainAa();TEST_ASSERT_TRUE(aaLost>before);
+ TEST_ASSERT_TRUE(aaRecordsCount<=16);TEST_ASSERT_TRUE(strstr(aaLine,"AA1 c=5 o=0 p=84>85 l=84"));
+#endif
+}

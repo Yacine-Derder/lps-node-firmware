@@ -651,3 +651,8 @@ default; it adds no ROS, MCS, noise generator or EKF math to LPS. See the siblin
 [EKF interface and replay](../../epuck-esp32/docs/uwb_ekf.md) and
 [consolidated experiment preparation](mul_experiment_campaign.md). The existing
 DATA2 commanded/phase counters are not a measured-wheel backend.
+
+Generated AA failure investigation: the opt-in `MUL_TWR_TRACE=1` image records
+bounded stage events on both ALRs and drains them through main-task USB output.
+See [AA diagnostic build, fields and failure inspection](mul_aa_diagnostics.md).
+It changes no plan/RF timing or protocol and defaults disabled.

@@ -6,6 +6,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include "task.h"
 
 #include "../portable/mul_core/mul_legacy_twr.c"
 
@@ -13,6 +14,65 @@
  * The portable codec/receiver keeps explicit context ownership. */
 static const void *twrContext=&mulDefaultNetwork;
 static struct {const mulRangingPlan_t *plan;mulRangingOperation_t op;uint32_t cycle;} plannedSession;
+#if MUL_TWR_TRACE
+#define AA_TRACE_CAPACITY 16u
+typedef char aaTraceRecordMustFit40[(sizeof(mulAaTrace_t)<=40)?1:-1];
+static mulAaTrace_t aaTrace[AA_TRACE_CAPACITY];
+static uint32_t aaDropped;
+static uint8_t aaHead,aaTail,aaCount,aaLocal,aaInput,aaSending;
+static uint64_t aaNow,aaEnd;
+static bool aaNowValid,aaSelected;
+static uint32_t aaSelectedCycle;static uint8_t aaSelectedOp,aaSelectedLocal;
+static void trace(const mulTwr_t *twr,unsigned event,unsigned stage,unsigned why,uint64_t stamp) {
+ if(!twr->planned||plannedSession.op.kind!=MUL_PLAN_AA)return;
+ mulAaTrace_t r={.now=aaNow,.stamp=stamp,
+  .deadline=event==mulAaWindow?aaEnd:(event==mulAaTarget||event==mulAaWaitEvent||(event==mulAaRx&&stage==mulTwrPoll))?0:twr->deadline,
+  .cycle=twr->id,.operation=twr->operation,.initiator=plannedSession.op.initiator,
+  .responder=plannedSession.op.responder,.local=aaLocal,.event=event,.stage=stage,
+  .flags=(twr->txPending?1:0)|(aaNowValid?2:0)|((aaInput&7)<<2)|(twr->active?32:0),.why=why};
+ taskENTER_CRITICAL();
+ if(aaCount==AA_TRACE_CAPACITY)aaDropped++;
+ else {aaTrace[aaHead]=r;aaHead=(aaHead+1)%AA_TRACE_CAPACITY;aaCount++;}
+ taskEXIT_CRITICAL();
+}
+static unsigned traceReason(const char *reason) {
+ static const char *const names[]={"timeout","radio_event","late","late_setup","delayed_start",
+  "tx_stamp","dx_time","antenna_config","window_or_epoch","reservation_end","reservation_turnaround",
+  "packet","exchange","response_interval","intervals","range","result","rx_stamp","measurement_age"};
+ if(!reason)return 20; // Broadcast preemption, previously deferred.
+ for(unsigned i=0;i<sizeof(names)/sizeof(*names);i++)if(!strcmp(reason,names[i]))return i+1;
+ return 21;
+}
+#define TRACE(t,e,s,w,v) trace(t,e,s,w,v)
+#else
+#define TRACE(t,e,s,w,v) ((void)0)
+#endif
+bool mulTwrTraceTake(mulAaTrace_t *out,uint32_t *dropped) {
+#if MUL_TWR_TRACE
+ if(!out||!dropped)return false;
+ taskENTER_CRITICAL();bool ready=aaCount!=0;
+ if(ready){*out=aaTrace[aaTail];aaTail=(aaTail+1)%AA_TRACE_CAPACITY;aaCount--;}
+ *dropped=aaDropped;taskEXIT_CRITICAL();return ready;
+#else
+ (void)out;(void)dropped;return false;
+#endif
+}
+void mulTwrTracePoll(bool (*write)(const char *,unsigned)) {
+#if MUL_TWR_TRACE
+ // Only main calls this. Hold one popped record across USB backpressure.
+ static mulAaTrace_t pending;static uint32_t lost;static bool ready;
+ if(!ready)ready=mulTwrTraceTake(&pending,&lost);
+ if(!ready||!write)return;
+ char line[144];
+ int n=snprintf(line,sizeof(line),"AA1 c=%" PRIu32 " o=%u p=%02X>%02X l=%02X e=%u s=%02X f=%02X why=%u n=%02X%08" PRIX32 " t=%02X%08" PRIX32 " d=%02X%08" PRIX32 " lost=%" PRIu32 "\r\n",
+  pending.cycle,pending.operation,pending.initiator,pending.responder,pending.local,pending.event,pending.stage,pending.flags,pending.why,
+  (unsigned)(pending.now>>32),(uint32_t)pending.now,(unsigned)(pending.stamp>>32),(uint32_t)pending.stamp,
+  (unsigned)(pending.deadline>>32),(uint32_t)pending.deadline,lost);
+ if(n>0&&(unsigned)n<sizeof(line)&&write(line,(unsigned)n))ready=false;
+#else
+ (void)write;
+#endif
+}
 bool mulTwrConfigurePlan(mulTwr_t *twr,const mulRangingPlan_t *plan,uint32_t cycle,unsigned index) {
  mulRangingOperation_t op;
  if(!twr||!mulRangingPlanOperation(plan,cycle,index,&op))return false;
@@ -93,6 +153,9 @@ static uint64_t hardwareNow(dwDevice_t *dev)
 {
   dwTime_t now = {.full=0};
   dwGetSystemTimestamp(dev, &now);
+#if MUL_TWR_TRACE
+  aaNow=mulTimestampMask(now.full);aaNowValid=true;
+#endif
   return mulTimestampMask(now.full);
 }
 
@@ -102,13 +165,22 @@ static void clearErrors(dwDevice_t *dev)
   dwSpiWrite(dev, SYS_STATUS, 3, errors, sizeof(errors));
 }
 
-void mulTwrInit(mulTwr_t *twr) { memset(twr, 0, sizeof(*twr));mulTwrConfigureNetwork(NULL); }
+void mulTwrInit(mulTwr_t *twr) {
+ memset(twr, 0, sizeof(*twr));mulTwrConfigureNetwork(NULL);
+#if MUL_TWR_TRACE
+ aaSelected=false;aaNowValid=false;aaInput=7;aaSending=0;
+#endif
+}
 
 bool mulTwrDue(uint32_t sequence) { return sequence != 0 && sequence % 5 == 0; }
 
 void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool invalidateDelay)
 {
   bool wasActive = twr->active;
+  if(wasActive)TRACE(twr,mulAaFail,aaSending?aaSending:twr->stage,traceReason(reason),twr->expectedTx);
+#if MUL_TWR_TRACE
+  aaSending=0;
+#endif
   twr->active = twr->txPending = false;
   if (invalidateDelay) {
     if(twr->planned&&aaOperation(twr))mulTwrInvalidateAa(twr);
@@ -136,6 +208,10 @@ void mulTwrFlush(mulTwr_t *twr)
 static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64_t target)
 {
   mulNetwork_t pairNetwork;
+#if MUL_TWR_TRACE
+  aaSending=(uint8_t)type;
+#endif
+  TRACE(twr,mulAaTarget,type,0,target);
   if (!mulAntennaValid(dev)) {
     mulTwrCancel(twr, dev, "antenna_config", true);
     return false;
@@ -187,6 +263,10 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
     mulTwrCancel(twr, dev, "delayed_start", false);
     return false;
   }
+  TRACE(twr,mulAaArm,type,0,twr->expectedTx);
+#if MUL_TWR_TRACE
+  aaSending=0;
+#endif
   return true;
 }
 
@@ -199,6 +279,10 @@ bool mulTwrStartTargets(mulTwr_t *twr,dwDevice_t *dev,uint32_t cycle,uint64_t po
  if(span<(int64_t)(4*replyMs(twr)*MUL_TWR_DTU_PER_MS+tailDtu(twr))||
     span>(int64_t)(plannedSession.plan->broadcast.periodMs*MUL_TWR_DTU_PER_MS))return false;
  twr->id=cycle;twr->attempted=twr->active=true;twr->windowEnd=end;
+#if MUL_TWR_TRACE
+ aaLocal=plannedSession.op.initiator;aaInput=7;aaNowValid=false;aaEnd=twr->windowEnd;
+#endif
+ TRACE(twr,mulAaWindow,mulTwrPoll,0,poll);
  memset(twr->stamps,0,sizeof(twr->stamps));memset(twr->power,0,sizeof(twr->power));
  return sendPacket(twr,dev,mulTwrPoll,poll);
 }
@@ -209,6 +293,10 @@ bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t ori
   twr->id = sequence;
   twr->attempted = twr->active = true;
   twr->windowEnd = mulTimestampMask(origin+endOffset(twr));
+#if MUL_TWR_TRACE
+  aaLocal=plannedSession.op.initiator;aaInput=7;aaNowValid=false;aaEnd=twr->windowEnd;
+#endif
+  TRACE(twr,mulAaWindow,mulTwrPoll,0,mulTimestampMask(origin+pollOffset(twr)));
   memset(twr->stamps, 0, sizeof(twr->stamps));
   memset(twr->power, 0, sizeof(twr->power));
   return sendPacket(twr, dev, mulTwrPoll, mulTimestampMask(origin+pollOffset(twr)));
@@ -248,6 +336,10 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   uint32_t sequence, uint64_t origin, uint64_t referenceOrigin, uint64_t epoch, uint32_t nowMs)
 {
   mulNetwork_t pairNetwork;
+#if MUL_TWR_TRACE
+  aaLocal=role==mulAlrReference?plannedSession.op.initiator:plannedSession.op.responder;
+  aaInput=(uint8_t)event;aaNowValid=false;aaSending=0;
+#endif
   if ((twr->active || (event == eventPacketReceived && dwGetDataLength(dev) == (twr->multiProfile?MUL_MULTI_TWR_BYTES:MUL_TWR_FRAME_LENGTH))) &&
       !mulAntennaValid(dev)) {
     if (!twr->active) printf("MUL TWR: result=FAILED reason=antenna_config\r\n");
@@ -256,6 +348,20 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     return true;
   }
   int64_t phase = mulTimestampDifference(hardwareNow(dev), origin);
+#if MUL_TWR_TRACE
+  // Record the assigned responder window once even when no poll ever arrives.
+  if(twr->planned&&plannedSession.op.kind==MUL_PLAN_AA&&role==mulAlrFollower&&
+     (!aaSelected||aaSelectedCycle!=twr->id||aaSelectedOp!=twr->operation||aaSelectedLocal!=aaLocal)) {
+    aaSelected=true;aaSelectedCycle=twr->id;aaSelectedOp=twr->operation;aaSelectedLocal=aaLocal;
+    aaEnd=mulTimestampMask(origin+endOffset(twr));
+    TRACE(twr,mulAaWindow,mulTwrPoll,0,mulTimestampMask(origin+pollOffset(twr)));
+  }
+#endif
+#if MUL_TWR_TRACE
+  if(!twr->active&&!twr->attempted&&role==mulAlrFollower&&
+     (event==eventReceiveTimeout||event==eventReceiveFailed))
+    TRACE(twr,mulAaWaitEvent,mulTwrPoll,2,0);
+#endif
   bool expired=twr->planned?mulTimestampDifference(hardwareNow(dev),twr->windowEnd)>=0:
     phase<0||phase>=(int64_t)endOffset(twr);
   if (twr->active && (expired ||
@@ -280,14 +386,17 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
       mulTwrCancel(twr, dev, "tx_stamp", true);
       return true;
     }
+    TRACE(twr,mulAaTx,twr->stage,0,mulTimestampMask(actual.full));
     twr->txPending = false;
     if (twr->stage == mulTwrResult) {
       twr->active = false;
       mulRxRearm(dev);
+      TRACE(twr,mulAaDone,twr->stage,0,0);
       logSuccess(twr, role, dev);
     } else {
       twr->stage++;
       mulRxRearm(dev);
+      TRACE(twr,mulAaListen,twr->stage,0,0);
     }
     return true;
   }
@@ -307,6 +416,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     valid=valid&&sender(packet.type)!=role&&packet.id==sequence;
   }
   if (!valid) {
+    TRACE(twr,mulAaReject,twr->stage,12,0);
     if (twr->active) mulTwrCancel(twr, dev, "packet", true); else mulRxRearm(dev);
     return true;
   }
@@ -318,6 +428,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   if (packet.type <= mulTwrFinal) capture=mulPowerCapture(dev,rx.full);
   int64_t captureAge = mulTimestampDifference(hardwareNow(dev), rx.full);
   if (captureAge < 0 || captureAge > (int64_t)(15*MUL_TWR_DTU_PER_MS)) {
+    TRACE(twr,mulAaReject,packet.type,18,rx.full);
     if (twr->active) mulTwrCancel(twr, dev, "rx_stamp", false); else mulRxRearm(dev);
     return true;
   }
@@ -333,6 +444,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     }else phaseValid=arrivalPhase>=(int64_t)((pollMs(twr)-50)*MUL_TWR_DTU_PER_MS)&&arrivalPhase<=(int64_t)((pollMs(twr)+50)*MUL_TWR_DTU_PER_MS)&&
       remotePhase>=(int64_t)((pollMs(twr)-50)*MUL_TWR_DTU_PER_MS)&&remotePhase<=(int64_t)((pollMs(twr)+50)*MUL_TWR_DTU_PER_MS);
     if (!due(twr,sequence) || (twr->attempted && twr->id == sequence) || !phaseValid) {
+      TRACE(twr,mulAaReject,packet.type,22,rx.full);
       mulRxRearm(dev);
       return true;
     }
@@ -346,6 +458,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     // Backdate the coarse acquisition time by hardware RX-to-callback latency,
     // rounded upwards. Neither callback delay nor RESULT delivery can re-date it.
     // Commit acquisition time only after RESULT, backdated from stored P2.
+    TRACE(twr,mulAaRx,packet.type,0,rx.full);
     twr->stamps[0] = packet.stamps[0];
     twr->stamps[1] = capture.corrected; twr->power[0]=capture.power;
     sendPacket(twr, dev, mulTwrResponse, mulTimestampMask(rx.full+replyMs(twr)*MUL_TWR_DTU_PER_MS));
@@ -360,6 +473,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     if (twr->active) mulTwrCancel(twr, dev, "exchange", true); else mulRxRearm(dev);
     return true;
   }
+  TRACE(twr,mulAaRx,packet.type,0,rx.full);
   if (packet.type == mulTwrResponse) {
     if (!intervalReply(packet.stamps[2],packet.stamps[1],replyMs(twr))) {
       mulTwrCancel(twr, dev, "response_interval", true);
@@ -405,6 +519,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
       twr->syncDirty = true;
       twr->active = false;
       mulRxRearm(dev);
+      TRACE(twr,mulAaDone,twr->stage,0,0);
       logSuccess(twr, role, dev);
     }
   }

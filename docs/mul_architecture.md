@@ -1358,3 +1358,14 @@ operation. Details and bounded resource/model contracts are in the sibling
 [EKF model](../portable/mul_core/EKF.md). The
 [final experiment campaign](mul_experiment_campaign.md) separates software
 preflight from future operator-authorized physical acceptance.
+
+
+Generated AA stage diagnostics are an opt-in LPS build feature, disabled by
+default. The radio owner records fixed-size events in a16-entry bounded ring;
+main formats at most one USB record per iteration with nonblocking admission.
+Overflow is counted, backpressure never waits in UWB, and existing timestamp reads
+are reused instead of adding diagnostic SPI traffic. Poll/response/final/report/
+result records retain local clock identity, cycle/operation, peer IDs, stage,
+TX-pending state, callback type and existing absolute deadlines. Verified TX and
+requested targets remain distinct. No scheduler, persistence, RF safety or wire
+format changes accompany tracing. [Inspection contract](mul_aa_diagnostics.md).
