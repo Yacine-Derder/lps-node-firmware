@@ -127,6 +127,61 @@ Hardware verification, when authorized:
    conclusions about the original AA timeout problem. USB visibility is a
    separate check from physical exchange reliability or ranging accuracy.
 
+## Optional AA start-delay experiment
+
+`aa_start_delay_us` defaults to0. It shifts only generated AA reservation
+start/end and POLL; TDoA slots, AR placement/rates, reply and clock conversion
+are unchanged. Validation conservatively requires the delayed AA reservation
+to fit the minimum spacing at the plan's peak operation count, even if some
+actual class orderings would permit a larger delay. Idle delay is not RF airtime.
+
+Zero keeps codec2/3 bytes and fingerprints unchanged. Nonzero uses full-plan
+codec4, a uint32 at bytes53..56 covered by the existing CRC; the64-byte encoding
+and EEPROM journal layout are unchanged. Older decoders reject codec4. Use the
+updated image on **both** ALRs. Other plan consumers need the updated canonical
+codec before using this plan; their firmware is outside this targeted experiment.
+An absent RLR does not change the generated AR reservations.
+
+For the existing826414CC plan, send these USB console lines to **both132 and133**
+(each colon-prefixed line ends with newline). No roster, mode or identity changes
+are needed. First stop both nodes:
+
+```text
+:off
+:status
+```
+
+Wait for `RF requested=0 running=0 restart=0` on both. Inspect `:plan show` and
+confirm baseline hash826414CC before editing, then on each board:
+
+```text
+:plan set aa_start_delay_us 50000
+:plan use on
+:plan show
+:status
+```
+
+Require `SAVED`, selected1, codec4, `aa_start_delay_us=50000`, hashE5B7BC80 on
+**both**, unchanged ALR offsets0/10ms, and cycle1 preview:
+`OP0 A 132>133 66100..159200us`, `POLL op=0 at=73100 us`.
+Do not enable if either reports an error, different hash or restart requirement.
+Edits autosave and survive reboot; repeat read-only checks after any reboot.
+
+When the operator is ready to run the experiment, enable follower133 first:
+
+```text
+:on
+:status
+```
+
+Then enable reference132 with the same two lines. Require requested1/running1
+on each; capture both USB streams and match AA1 cycle/op/peers. Compare POLL TX,
+follower POLL RX and RESPONSE stages with the zero-delay baseline. This experiment
+has not been run on hardware and does not establish the cause of missing POLLs.
+Stop **both** using `:off`, wait for requested0/running0, then use
+`:plan set aa_start_delay_us 0` on both to restore hash826414CC. Leave RF OFF
+until the next operator-controlled run.
+
 ## Collection and record fields
 
 During a separately authorized operator session, retain complete USB transcripts

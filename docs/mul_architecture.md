@@ -1235,6 +1235,13 @@ Counter reset refuses a busy exchange and never revives retired reservations.
 
 ### Freshness scheduling and priority
 
+A nonzero `aa_start_delay_us` uses full-plan codec4 (uint32 microseconds at
+bytes53..56; existing64-byte size and CRC). Both participants shift only AA
+start/POLL/end from the shared operation; AR placement and TDoA slots remain
+unchanged. Validation bounds the delay by peak-count minimum reservation spacing
+and cycle end without counting idle delay as occupied airtime. Zero retains
+codec2/3 and existing hashes. Old decoders reject codec4 explicitly.
+
 Fair remains the default full-plan codec2 and preserves its encoded bytes and
 operation selection. Opt-in policy freshness uses codec3 in the same64-byte plan: byte
 50=1,51=AA priority,52=AR priority;53..59 remain zero. Both priorities are0..255.
