@@ -3,16 +3,19 @@
 #include "phy_interop_dw.h"
 #include "mul_diag_dw.h"
 #include "mul_ads_dw.h"
+#include "mul_geometry.h"
 static volatile bool requested,running;
 static bool allowed;
 static volatile uint16_t requestedSlot;
 static uint32_t events[5];
 void uwbControlInit(const uwbConfig_t *c) {
+ mulDelaySource_t geometry=mulDelayTwr;
+ bool geometryValid=cfgGeometrySourceRead(&geometry);mulGeometrySelect(geometry);
  uint8_t role=2,ref,fol;bool enabled=false;
  bool network=cfgMulRead(c->address[0],&role,&ref,&fol);
  uint8_t mode=255,node=0;
  bool identity=cfgReadU8(cfgMode,&mode)&&mode==c->mode&&cfgReadU8(cfgAddress,&node)&&node==c->address[0];
- allowed=cfgStorageReady()&&identity&&network&&c->mode<=MODE_MUL_RLR;
+ allowed=geometryValid&&cfgStorageReady()&&identity&&network&&c->mode<=MODE_MUL_RLR;
  if(c->mode>=MODE_MUL_ALR)allowed=allowed&&network&&
    (c->mode==MODE_MUL_ALR?role<2: c->address[0]!=ref&&c->address[0]!=fol);
  if(role==3&&c->mode!=MODE_MUL_RLR)allowed=false;
@@ -23,6 +26,7 @@ void uwbControlInit(const uwbConfig_t *c) {
  requested=uwbControlCanEnable()&&cfgRfEnabled(&enabled)&&enabled;running=false;
 }
 bool uwbControlCanEnable(void) {
+ mulDelaySource_t geometry;if(!cfgGeometrySourceRead(&geometry))return false;
  const mulStoredPlan_t *stored=NULL;mulPlanStoreResult_t planState=cfgMulPlanCached(&stored);
  if(planState==mulPlanIoError||planState==mulPlanCorrupt)return false;
  // The selected-plan branch is separate from legacy aliases/window ownership.
@@ -84,6 +88,7 @@ bool uwbControlApply(dwDevice_t *dev,uwbAlgorithm_t *algorithm) {
    (void)cfgMulScheduleRead(c->address[0],&c->mulSchedule);
    (void)cfgMulClockRead(&c->mulClockConfig);
    c->mulNetwork.slotMs=requestedSlot;
+   mulDelaySource_t geometry;if(cfgGeometrySourceRead(&geometry))mulGeometrySelect(geometry);else requested=false;
    if(c->mode>=MODE_MUL_ALR&&c->mode<=MODE_MUL_RLR) {
      int slot=mulScheduleIndex(&c->mulSchedule,c->address[0]);
      if(slot>=0) {mulSchedulePair(&c->mulSchedule,slot?slot:1,&c->mulNetwork);

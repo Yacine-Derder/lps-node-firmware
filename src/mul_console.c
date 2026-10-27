@@ -7,6 +7,8 @@
 #include "phy_interop_dw.h"
 #include "mul_diag_dw.h"
 #include "mul_ads_dw.h"
+#include "mul_geometry.h"
+#include "task.h"
 #include <usbcomm.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -15,8 +17,8 @@ static bool collecting,overflow,skipLf,session;
 static uint8_t used,page,pageIndex;
 static const char *message;
 /* Up to eight hexadecimal roster IDs; output remains bounded to48 bytes. */
-static char line[56];
-enum {none,answer,help,show,status,peers,diag,cal,clockPage,planPage};
+static char line[184]; // One80-byte pose record as160 hex digits plus command.
+enum {none,answer,help,show,status,peers,diag,cal,clockPage,planPage,posePage};
 static void reply(const char *text) {message=text;page=answer;pageIndex=0;}
 static bool id(const char *s,uint8_t *value) {
  unsigned n=0,base=10;if(s[0]=='0'&&s[1]=='x'){base=16;s+=2;}
@@ -112,11 +114,43 @@ static void planCommand(char **w,unsigned count) {
  uint32_t generation=0;reply(cfgMulPlanSave(&p,selected,&generation)?"SAVED plan; ON checks assigned radio support":"ERR plan write unconfirmed; inspect reboot");
 }
 
+static uint32_t poseNow(void){return (uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS;}
+static bool decimal(const char *s,uint32_t *n){*n=0;return !strcmp(s,"0")||revision(s,n);}
+static void poseCommand(char **w,unsigned count) {
+ if(count==2&&!strcmp(w[1],"show")){page=posePage;pageIndex=0;return;}
+ if(count==6&&!strcmp(w[1],"begin")) {
+  uint32_t clock,epoch,frame,skew;
+  if(!decimal(w[2],&clock)||!decimal(w[3],&epoch)||!decimal(w[4],&frame)||!decimal(w[5],&skew)||skew>1000||!mulGeometryBegin(clock,epoch,frame,(uint16_t)skew))reply("ERR pose begin clock epoch frame skew_ms");
+  else reply("POSE stream begun; old observations cleared");
+  return;
+ }
+ if(count==3&&!strcmp(w[1],"put")&&strlen(w[2])==2*MUL_POSE_BYTES) {
+  uint8_t bytes[MUL_POSE_BYTES];
+  for(unsigned i=0;i<sizeof(bytes);i++) {
+   unsigned value=0;
+   for(unsigned j=0;j<2;j++){char c=w[2][2*i+j];unsigned d=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:99;
+    if(d>15){reply("ERR pose hex record");return;}value=value*16+d;}
+   bytes[i]=(uint8_t)value;
+  }
+  mulPose_t pose;if(!mulPoseDecode(bytes,poseNow(),&pose)){reply("ERR pose version/CRC/fields/covariance");return;}
+  mulPoseStatus_t result=mulGeometryPut(&pose);
+  static const char *const messages[]={"POSE accepted","ERR pose missing","ERR pose invalid/stream absent","ERR pose clock/epoch","ERR pose frame","ERR pose skew","ERR pose age unknown","ERR pose stale","ERR pose distance","ERR pose reordered","ERR pose bank full"};
+  reply(messages[result]);return;
+ }
+ reply("ERR pose begin/put/show; see interface docs");
+}
 static void command(void) {
  char *words[11],**w=words;unsigned count=0;char *p=line;
  while(*p){while(*p==' ')p++;if(!*p)break;if(count==11)goto syntax;
   words[count++]=p;while(*p&&*p!=' '){if(*p>='A'&&*p<='Z')*p+='a'-'A';p++;}if(*p)*p++=0;}
  if(!count)return;
+ if(!strcmp(w[0],"pose")){poseCommand(w,count);return;}
+ if(count==3&&!strcmp(w[0],"geometry")&&!strcmp(w[1],"source")) {
+  mulDelaySource_t source;
+  if(!strcmp(w[2],"twr"))source=mulDelayTwr;else if(!strcmp(w[2],"external"))source=mulDelayExternal;else if(!strcmp(w[2],"none"))source=mulDelayNone;else {reply("ERR geometry source twr/external/none");return;}
+  if(!cfgGeometrySourceWrite(source)){reply("ERR source requires RF OFF/verified storage");return;}
+  mulGeometrySelect(source);reply("SAVED geometry source; poses are volatile");return;
+ }
  if(!strcmp(w[0],"plan")){planCommand(w,count);return;}
  const mulStoredPlan_t *selectedPlan=NULL;
  if(cfgMulPlanCached(&selectedPlan)==mulPlanStored&&selectedPlan->selected&&
@@ -293,7 +327,7 @@ static void command(void) {
  result(cfgMulWrite(role,ref,fol));return;
 syntax:reply("ERR syntax; :help or :mul show");
 }
-void mulConsoleReset(void) {collecting=overflow=skipLf=session=false;used=page=pageIndex=0;message=NULL;}
+void mulConsoleReset(void) {mulGeometryClear();collecting=overflow=skipLf=session=false;used=page=pageIndex=0;message=NULL;}
 bool mulConsoleByte(char ch) {
  if(skipLf){skipLf=false;if(ch=='\n')return true;}
  if(!collecting){if(ch!=':'&&!session)return false;collecting=true;used=0;overflow=false;if(ch==':')return true;}
@@ -312,6 +346,9 @@ bool mulConsolePoll(void) {
  static const char *const helps[]={
   "UWB: :command newline; :console for lines",
   "help show status on off save legacy",
+  "geometry source twr/external/none (RF OFF)",
+  "pose begin clock epoch frame skew_ms",
+  "pose put HEX80; pose show (USB observations)",
 #if MUL_ONLY
   "MUL-only: mode hybrid; role ref/follower/rlr",
 #else
@@ -346,6 +383,15 @@ bool mulConsolePoll(void) {
   "plan set lead_us/process_us/air_us/guard_us"};
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255;
  bool valid=saved(&node,&role,&ref,&fol),last=true,enabled=false;
+ if(page==posePage) {
+  static const char *const states[]={"AVAILABLE","MISSING","INVALID","DOMAIN","FRAME","SKEW","AGE_UNKNOWN","STALE","DISTANCE","REORDERED","FULL"};
+  static const char *const sources[]={"twr","external","none"};
+  mulPoseGeometry_t g;unsigned n;mulPoseStatus_t state=mulGeometrySnapshot(poseNow(),&g,&n);
+  if(pageIndex==0)snprintf(line,sizeof(line),"POSE src=%s n=%u state=%s",sources[mulGeometrySource()],n,states[state]);
+  else if(state!=mulPoseAvailable){snprintf(line,sizeof(line),"POSE correction=NA uncertainty=UNKNOWN");last=true;}
+  else if(pageIndex==1)snprintf(line,sizeof(line),"POSE %u>%u range_mm=%ld age_ms=%lu",g.reference,g.follower,(long)(g.distanceMm+0.5),(unsigned long)(poseNow()-g.measuredMs));
+  else {snprintf(line,sizeof(line),"POSE covariance=%s bound=UNKNOWN",g.covarianceKnown?"provided":"UNKNOWN");last=true;}
+ }
  if(page==answer)snprintf(line,sizeof(line),"%s",message);
  if(page==help){snprintf(line,sizeof(line),"%s",helps[pageIndex]);last=pageIndex+1==sizeof(helps)/sizeof(*helps);}
  if(page==planPage) {

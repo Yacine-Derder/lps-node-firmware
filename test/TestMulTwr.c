@@ -1,3 +1,5 @@
+#include "mul_pose.h"
+#include "mul_geometry.h"
 #include "mul_clock_fit.h"
 #include "mul_clock.h"
 #include "mul_clock_workspace.h"
@@ -156,6 +158,7 @@ static void scenario(int32_t ppb, int64_t tof) {
   for (int i=0;i<2;i++) mulRxInit(&radios[i].device);
 }
 void setUp(void) {
+  mulGeometrySelect(mulDelayTwr);mulGeometryClear();
   memset(radios,0,sizeof(radios)); memset(contexts,0,sizeof(contexts)); memset(useAlr,0,sizeof(useAlr));
   for (int i=0;i<3;i++) {
     radios[i].antenna=radios[i].physicalTx=MUL_ANTENNA_TX_DTU;
@@ -1169,4 +1172,52 @@ void test_explicitLocalArTargetsRejectForeignClockAndAfterSpiLateness(void) {
  radios[0].setupLag=4*MS;TEST_ASSERT_FALSE(mulTwrStartTargets(ctx(0),&radios[0].device,5,poll,end));
  TEST_ASSERT_TRUE(ctx(0)->attempted);TEST_ASSERT_FALSE(ctx(0)->active);TEST_ASSERT_EQUAL(0,radios[0].sends);
  radios[0].setupLag=0;TEST_ASSERT_FALSE(mulTwrStartTargets(ctx(0),&radios[0].device,5,poll,end));TEST_ASSERT_EQUAL(0,radios[0].sends);
+}
+
+void vPortEnterCritical(void){}
+void vPortExitCritical(void){}
+
+static void tracePoseRadio(FILE *out,unsigned n,const uint8_t *bytes,int64_t at,int64_t distance) {
+ if(!out)return;
+ fprintf(out,"%u %lu %010llX ",n,(unsigned long)(10000+at/(int64_t)MS),(unsigned long long)clockAt(2,at+distance));
+ for(unsigned i=0;i<n;i++)fprintf(out,"%02X",bytes[i]);
+ fputc('\n',out);
+}
+void test_actualFollowerUsesExternalGeometryAndNeverFallsBackToTwr(void) {
+ scenario(-150000,2131);multiConfig(2,1,10);mulGeometrySelect(mulDelayExternal);
+ useAlr[1]=true;advance(MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+ FILE *trace=NULL;const char *path=getenv("MUL_POSE_RADIO_TRACE");if(path){trace=fopen(path,"w");TEST_ASSERT_NOT_NULL(trace);}
+ for(unsigned seq=1;seq<=5;seq++) {
+  int64_t at=((int64_t)seq-5)*SEC;uint8_t bytes[40];
+  TEST_ASSERT_EQUAL(40,mulMultiBroadcastEncode(bytes,sizeof(bytes),&multiConfiguration.mulSchedule,0,seq,clockAt(0,at),NULL));
+  tracePoseRadio(trace,40,bytes,at,3131);
+ }
+ injectMulti(1,0,5,origins[0],origins[1]);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ followerClock=model;advance(SEC+MS);
+ TEST_ASSERT_TRUE(mulGeometryBegin(1,1,1,0));
+ mulPose_t a={.clock=1,.epoch=1,.frame=1,.sequence=1,.sourceUs=1000000,.node=132,.flags=7,.ttlMs=1000,
+  .receivedMs=ticks,.covarianceMm2={100,0,0,100,0,100}};
+ mulPose_t b=a;b.node=135;b.positionMm[0]=10000;
+ TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&a));TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&b));mulGeometryPoll(ticks);
+ injectMulti(1,0,6,clockAt(0,SEC),clockAt(1,SEC+flight));TEST_ASSERT_TRUE(flags.tx);
+ tracePoseRadio(trace,40,radios[1].rx,SEC,3131);
+ mulMultiBroadcast_t decoded;TEST_ASSERT_TRUE(mulMultiBroadcastDecode(&multiConfiguration.mulSchedule,radios[1].tx,80,&decoded));
+ TEST_ASSERT_EQUAL(3,decoded.relation.version);TEST_ASSERT_EQUAL(mulDelayExternal,mulRelationSource(&decoded.relation));
+ TEST_ASSERT_TRUE(decoded.relation.available);TEST_ASSERT_EQUAL(2131,decoded.relation.delayDtu);TEST_ASSERT_FALSE(decoded.relation.powerCorrectedTwr);
+ TEST_ASSERT_FALSE(ranging.delayValid);int64_t sent=sendTime(1);advance(sent+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ tracePoseRadio(trace,80,radios[1].tx,sent,1000);
+ // A valid old TWR result must not override source none or missing external poses.
+ ranging.delayValid=true;ranging.tof=900;ranging.epoch=followerClock.epoch;ranging.measuredMs=ticks;ranging.estimateId=6;
+ mulGeometrySelect(mulDelayNone);advance(2*SEC+MS);injectMulti(1,0,7,clockAt(0,2*SEC),clockAt(1,2*SEC+flight));
+ tracePoseRadio(trace,40,radios[1].rx,2*SEC,3131);
+ TEST_ASSERT_TRUE(mulMultiBroadcastDecode(&multiConfiguration.mulSchedule,radios[1].tx,80,&decoded));
+ TEST_ASSERT_FALSE(decoded.relation.available);TEST_ASSERT_EQUAL(mulDelayNone,mulRelationSource(&decoded.relation));
+ sent=sendTime(1);advance(sent+MS);radios[1].armed=false;dispatch(1,eventPacketSent);tracePoseRadio(trace,80,radios[1].tx,sent,1000);
+ mulGeometrySelect(mulDelayExternal);advance(3*SEC+MS);injectMulti(1,0,8,clockAt(0,3*SEC),clockAt(1,3*SEC+flight));
+ tracePoseRadio(trace,40,radios[1].rx,3*SEC,3131);
+ TEST_ASSERT_TRUE(mulMultiBroadcastDecode(&multiConfiguration.mulSchedule,radios[1].tx,80,&decoded));
+ TEST_ASSERT_FALSE(decoded.relation.available);TEST_ASSERT_EQUAL(mulDelayExternal,mulRelationSource(&decoded.relation));
+ sent=sendTime(1);advance(sent+MS);radios[1].armed=false;dispatch(1,eventPacketSent);tracePoseRadio(trace,80,radios[1].tx,sent,1000);
+ if(trace)fclose(trace);
+ mulGeometrySelect(mulDelayTwr);
 }

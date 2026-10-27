@@ -1255,3 +1255,64 @@ node's reservations independently. Missing/failed attempts remain visible and
 actual freshness can be unbounded under loss. A conservative planned per-pair gap
 allowance is nominal1000000/r milliseconds plus two cycles for target r milliHz.
 Physical scheduling latency and successful update rates require final experiments.
+
+
+### External pose ingress and propagation correction
+
+LPS accepts `pose begin` plus fixed80-byte version1 pose records encoded as USB
+hex lines. The portable codec owns identities, source clock/epoch/frame/time,
+sequence,3D position, supplied full symmetric covariance, validity/independence,
+TTL and an explicit reception-age upper bound. Source timestamps are used only
+for cross-pose consistency, never subtracted from MCU uptime or used as radio
+targets. Unknown age cannot produce a correction. A future source/bridge must
+provide an upper bound that includes transport and alignment uncertainty at
+local record acceptance. Source time uncertainty remains separate metadata.
+
+The stream binds an explicit context, holds at most8 IDs and rejects old/duplicate
+sequence or valid timestamp reuse without refreshing acquisition age. Invalid
+records withdraw an observation; reset/disconnect/begin invalidates the bank.
+TTL and unsigned local uptime checks reject stale/future values across wrap.
+Periodic main-task expiry retires bank entries with a local zero-TTL tombstone;
+identity/sequence/source time remain, so a full uptime wrap or pair retarget cannot
+revive an expired observation. Only newer accepted source data revives it.
+Positions define the ALR UWB reference point in a known frame. Any known rigid
+sensor-offset transform belongs to the external observation producer; this
+campaign does not estimate extrinsics. No frame alignment or source integration
+is performed. Covariance PSD validation and Euclidean geometry use supplied
+uncertainty. First-order range variance is available only when both inputs
+declare zero cross-robot covariance; otherwise it is unknown. No covariance,
+fit scatter or numerical resolution becomes a physical clock error bound.
+
+The main task computes geometry from immutable snapshots outside critical sections.
+Only bounded header/copy operations occur under locks. Generation checking prevents
+an input withdrawal or context switch from exposing an old cached result. The
+higher-priority UWB task consumes an integer delay/cache snapshot; it does no
+serial parsing, covariance projection or square root. GeometryPoll uses272 bytes
+of static stack frame plus304 in geometry; sourceDelay never overlaps this work.
+Main/UWB stacks remain1600 each, idle800, linker2048 and USB queue512. Static frame
+analysis supplements resource bounds; it does not prove a dynamic watermark or
+physical deadline.
+
+A single additive EEPROM byte selects TWR (absent-field legacy default), external
+pose geometry, or none. Edits require acknowledged RF OFF and verified readback;
+poses are volatile and never wear EEPROM. This uses the existing bounded legacy
+TLV transaction, not a new power-loss journal. Invalid/uncertain source storage
+blocks RF activation. Selection never silently substitutes TWR or truth for
+missing external data. It does not change independently configured AA airtime.
+The selected delay supplies regression compensation, simultaneous reservation
+mapping and follower relation publication through existing explicit APIs.
+
+Relation subversion3 preserves frame sizes while identifying external/none and
+rejecting any TWR power-calibration claim. TTL stays explicit; external fresh/reused
+state derives from actual age versus broadcast period. TWR retains v1/2 bytes.
+Source-aware vector/TDoA payload subversions retain provenance through STM32/ESP
+and compact logs; older strict decoders reject the new markers. Raw radio copies
+remain intact, total physical uncertainty stays UNKNOWN, and ordinary hybrid
+NO_RATE is unchanged. The canonical README defines exact byte layouts.
+
+Host-only tooling generates independent Gaussian or AR(1) temporally correlated
+noise with per-robot deterministic seeds, separate truth/noisy outputs, explicit
+noise parameters/covariance and submillimetre quantization bounds. Native C replay
+uses the same production codec/bank/geometry. Simulated reception time is declared
+in replay records; it is not an implementation of an MCS/ROS/Pi bridge. Physical
+transport ages cannot be inferred by playing a saved command file quickly.

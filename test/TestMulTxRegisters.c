@@ -1,3 +1,5 @@
+#include "mul_pose.h"
+#include "mul_geometry.h"
 #include "mul_ranging_plan.h"
 #include "mul_plan_protocol.h"
 #include "mul_clock_workspace.h"
@@ -432,3 +434,6 @@ void test_mulRuntimeSlotsControlActualDelayedTxAndMismatchSkips(void) {
   TEST_ASSERT_TRUE(actual>=target&&actual<target+512);
  }
 }
+
+void vPortEnterCritical(void){}
+void vPortExitCritical(void){}

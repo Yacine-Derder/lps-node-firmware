@@ -48,7 +48,7 @@ OBJS+=src/phy_interop_dw.o src/mul_core.o src/mul_diag_dw.o
 OBJS+=src/mul_common.o src/mul_alr.o src/mul_rlr.o
 OBJS+=src/mul_rx.o src/mul_power.o
 OBJS+=src/mul_clock.o src/mul_relation.o src/mul_role_state.o src/mul_downlink.o src/mul_localization.o
-OBJS+=src/mul_twr.o src/mul_observation.o
+OBJS+=src/mul_twr.o src/mul_observation.o src/mul_pose.o src/mul_geometry.o
 
 HALS+=gpio rcc cortex i2c pcd dma pcd_ex rcc_ex spi uart pwr
 OBJS+=$(foreach mod, $(HALS), $(HAL_ROOT)/Src/stm32$(CPU)xx_hal_$(mod).o)

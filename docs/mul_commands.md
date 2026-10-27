@@ -580,3 +580,68 @@ plan fingerprint. Saved journal sizes and existing fair defaults are unchanged.
 Plan preview reports actual codec, policy and priorities; Python preview accepts
 `scheduling_policy`, `aa_priority`, `ar_priority`. Freshness describes planned
 reservations, not a guarantee that an exchange succeeds or its data stays fresh.
+
+
+### Abstract pose observations (software-only interface)
+
+The persisted source defaults to TWR. With RF OFF acknowledged, select one of:
+
+```text
+:geometry source external
+:geometry source none
+:geometry source twr
+```
+
+External input uses `:pose begin CLOCK EPOCH FRAME MAX_SKEW_MS` and
+`:pose put HEX`, where HEX is exactly160 digits encoding the portable80-byte
+version1 record including CRC. `:pose show` reports source/count/availability,
+distance/age and covariance availability with physical bound UNKNOWN. Begin
+clears old observations; re-begin after source epoch/frame/roster changes. There
+are8 bounded identities. Disconnect clears volatile poses and partial commands.
+No pose record writes EEPROM or changes RF/motor ownership. Source selection
+changes propagation correction, not the plan's AA enable/rate.
+
+Pose fields and strict bounds are in portable/mul_core/README.md. Source clock,
+epoch and known frame must agree. Local reception uptime is separate from source
+time. `ageUpperMs` must conservatively include observation age, transit and
+alignment uncertainty at local acceptance;65535 means UNKNOWN and disables
+correction. TTL1..6000 is additionally capped by the build propagation policy.
+Nominal source timestamp skew is checked against0..1000ms policy. Supplied
+covariance is statistical; it never establishes a hard physical clock bound.
+
+Host files can be generated and replayed without devices:
+
+```sh
+python3 tools/mul_pose_inputs.py generate --input truth_input.jsonl \
+  --truth truth_eval.jsonl --noisy noisy.jsonl --commands pose_commands.txt \
+  --seed 123 --sigma-mm 50 50 50 --age-upper-ms 10
+python3 tools/mul_pose_inputs.py replay --input noisy.jsonl \
+  --output geometry.jsonl --reference 132 --follower 133
+```
+
+Input truth rows contain exactly node/source_us/x_mm/y_mm/z_mm. All output paths
+must differ from input and each other, including aliases. Noise uses configured
+Gaussian covariance before1mm quantization (component rounding bound0.5mm).
+`--rho` optionally adds per-sample AR(1) correlation; different robots retain
+independent streams. The default age is UNKNOWN; the example10ms is an explicit
+SIMULATION acceptance-age assumption, not a measured serial-link bound. Command
+files are reviewable artifacts and never sent to hardware by these tools. A live
+source would have to recompute/bound actual acceptance age and respect pacing.
+No ROS subscriptions, MCS connection or Raspberry Pi software is provided.
+
+Cross-platform host verification, using loopback sockets only:
+
+```sh
+# LPS checkout:
+MUL_POSE_RADIO_TRACE=/tmp/pose.frames python3 tools/test/mul_slots.py \
+  --mul-only --prop-age 6000 --slot 10 --sanitize
+# STM32 checkout, after the LPS test finishes:
+MUL_POSE_FRAMES=/tmp/pose.frames MUL_POSE_TLM_TRACE=/tmp/pose.uart \
+  bash tests/runtime_config/run.sh
+# ESP32 checkout:
+python3 tools/verify_multi_replay.py --geometry /tmp/pose.uart
+```
+
+This passes native LPS delayed-TX frames through the real STM32 runtime/radio
+adapter and ESP bridge/collector. Synthetic independent clocks, external geometry,
+source none and stale inputs are checked; it is not a physical accuracy test.

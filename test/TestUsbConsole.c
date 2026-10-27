@@ -1,3 +1,5 @@
+#include "mul_pose.h"
+#include "mul_geometry.h"
 #include "mul_clock_fit.h"
 #include "mul_clock.h"
 /* Execute the actual USB callbacks, packet reader and prefixed configuration
@@ -42,7 +44,8 @@ bool eepromWrite(int at,void *p,size_t n){TEST_ASSERT_TRUE(at>=0&&(size_t)at+n<=
 void HAL_Delay(uint32_t ms){(void)ms;}
 void setUp(void) {
  memset(nv,0,sizeof(nv));uint8_t image[]={0xbc,1,0,6,0,cfgAddress,1,0x84,cfgMode,1,5};memcpy(nv,image,sizeof(image));
- for(unsigned i=0;i<sizeof(image);i++)nv[11]+=nv[i];cfgInit();mulConsoleReset();boot.mode=5;boot.address[0]=0x84;uwbControlInit(&boot);
+ for(unsigned i=0;i<sizeof(image);i++)nv[11]+=nv[i];
+ cfgInit();mulConsoleReset();boot.mode=5;boot.address[0]=0x84;uwbControlInit(&boot);
  armed=false;connected=false;critical=queueCreates=txBytes=armedCount=writes=0;txSpaces=512;
  memset(&hUsbDeviceFS,0,sizeof(hUsbDeviceFS));memset(&cdc,0,sizeof(cdc));hUsbDeviceFS.pClassData=&cdc;
  TEST_ASSERT_EQUAL(USBD_OK,CDC_Init_FS());TEST_ASSERT_EQUAL(2,queueCreates);
@@ -97,4 +100,35 @@ void test_unifiedLineSessionSurvivesPacketBoundariesAndDisconnectClearsIt(void) 
  packet("on\n",3);drain(true);TEST_ASSERT_TRUE(uwbControlRequested());TEST_ASSERT_EQUAL(2,writes);
  uint32_t generation=CDC_ReceiveGeneration();CDC_DeInit_FS();TEST_ASSERT_NOT_EQUAL(generation,CDC_ReceiveGeneration());mulConsoleReset();
  TEST_ASSERT_FALSE(mulConsoleByte('o'));TEST_ASSERT_EQUAL(2,queueCreates);
+}
+
+TickType_t xTaskGetTickCount(void){return 0;}
+
+static void poseUsb(const char *text) {
+ unsigned n=strlen(text);while(n){unsigned chunk=n>17?17:n;packet(text,chunk);TEST_ASSERT_EQUAL(chunk,drain(true));text+=chunk;n-=chunk;}
+}
+static void poseUsbRecord(const mulPose_t *pose) {
+ uint8_t data[80];TEST_ASSERT_TRUE(mulPoseEncode(data,pose));char text[172];memcpy(text,":pose put ",10);
+ for(unsigned i=0;i<80;i++){static const char hex[]="0123456789abcdef";text[10+2*i]=hex[data[i]>>4];text[11+2*i]=hex[data[i]&15];}
+ text[170]='\n';text[171]=0;poseUsb(text);
+}
+void test_usbFragmentedPoseRecordsReachGeometryWithoutNvWritesAndDisconnectInvalidates(void) {
+ mulNetwork_t network;TEST_ASSERT_TRUE(mulNetworkInit(&network,132,133));mulGeometryPair(&network);
+ poseUsb(":pose begin 1 2 3 0\n");
+ mulPose_t a={.node=132,.flags=7,.clock=1,.epoch=2,.frame=3,.sequence=1,.sourceUs=1000000,.ttlMs=1000,.ageUpperMs=10,.covarianceMm2={100,0,0,100,0,100}};
+ mulPose_t b=a;b.node=133;b.positionMm[0]=3000;b.positionMm[1]=4000;
+ poseUsbRecord(&a);poseUsbRecord(&b);mulGeometryPoll(0);
+ mulPoseGeometry_t g;unsigned count=0;TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometrySnapshot(0,&g,&count));
+ TEST_ASSERT_EQUAL(2,count);
+ char oversized[220];memset(oversized,'a',sizeof(oversized));oversized[0]=':';oversized[218]='\n';oversized[219]=0;poseUsb(oversized);
+ TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometrySnapshot(0,&g,&count));TEST_ASSERT_EQUAL(2,count);
+ TEST_ASSERT_EQUAL_INT(1066,g.delayDtu);TEST_ASSERT_TRUE(g.covarianceKnown);TEST_ASSERT_EQUAL(0,writes);
+ // Replayed input cannot refresh local age; explicit invalid input withdraws it.
+ poseUsbRecord(&b);TEST_ASSERT_EQUAL(mulPoseStale,mulGeometrySnapshot(991,&g,NULL));
+ b.sequence++;b.flags=0;memset(b.covarianceMm2,0,sizeof(b.covarianceMm2));poseUsbRecord(&b);
+ TEST_ASSERT_EQUAL(mulPoseMissing,mulGeometrySnapshot(0,&g,NULL));mulGeometryPoll(0);TEST_ASSERT_EQUAL(mulPoseInvalid,mulGeometrySnapshot(0,&g,NULL));
+ b.flags=7;b.sequence++;b.sourceUs++;b.covarianceMm2[0]=b.covarianceMm2[3]=b.covarianceMm2[5]=100;a.sequence++;a.sourceUs++;
+ poseUsbRecord(&a);poseUsbRecord(&b);mulGeometryPoll(0);TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometrySnapshot(0,&g,NULL));
+ uint32_t gen=CDC_ReceiveGeneration();CDC_DeInit_FS();TEST_ASSERT_NOT_EQUAL(gen,CDC_ReceiveGeneration());mulConsoleReset();
+ TEST_ASSERT_EQUAL(mulPoseMissing,mulGeometrySnapshot(0,&g,NULL));TEST_ASSERT_EQUAL(0,writes);
 }

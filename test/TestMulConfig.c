@@ -1,3 +1,5 @@
+#include "mul_pose.h"
+#include "mul_geometry.h"
 #include "mul_clock_fit.h"
 #include "mul_clock.h"
 /* Actual legacy EEPROM TLV + additive role migration + console parser. */
@@ -404,4 +406,31 @@ void test_freshnessPlanPrioritiesPersistAndFairSelectionRestoresCodec2(void) {
  send(":plan set aa_priority 256\n:plan set policy unknown\n");TEST_ASSERT_EQUAL(before,writes);
  send(":plan set policy fair\n");TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&p));
  TEST_ASSERT_EQUAL(0,p->plan.aaPriority);TEST_ASSERT_EQUAL(0,p->plan.arPriority);TEST_ASSERT_EQUAL(2,mulRangingPlanVersion(&p->plan));
+}
+
+TickType_t xTaskGetTickCount(void){return 0;}
+
+void test_geometrySourceIsAdditivePersistentAndRequiresAcknowledgedRfOff(void) {
+ mulDelaySource_t source;TEST_ASSERT_TRUE(cfgGeometrySourceRead(&source));TEST_ASSERT_EQUAL(mulDelayTwr,source);
+ unsigned before=writes;send(":geometry source external\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");apply();send(":geometry source external\n");TEST_ASSERT_TRUE(cfgGeometrySourceRead(&source));
+ TEST_ASSERT_EQUAL(mulDelayExternal,source);TEST_ASSERT_FALSE(cfgPendingRestart());cfgInit();uwbControlInit(&boot);
+ TEST_ASSERT_EQUAL(mulDelayExternal,mulGeometrySource());before=writes;
+ send(":geometry source truth\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":geometry source none\n");TEST_ASSERT_EQUAL(mulDelayNone,mulGeometrySource());
+ send(":geometry source twr\n");TEST_ASSERT_EQUAL(mulDelayTwr,mulGeometrySource());
+}
+
+void test_expiredGeometryCannotReviveAfterFullUptimeWrapOrPairRetarget(void) {
+ mulNetwork_t network;TEST_ASSERT_TRUE(mulNetworkInit(&network,132,133));mulGeometryPair(&network);
+ TEST_ASSERT_TRUE(mulGeometryBegin(1,1,1,0));
+ mulPose_t a={.node=132,.flags=1,.clock=1,.epoch=1,.frame=1,.sequence=1,.sourceUs=1000000,.ttlMs=1000};
+ mulPose_t b=a;b.node=133;b.positionMm[0]=10000;
+ TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&a));TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&b));mulGeometryPoll(0);
+ TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometrySnapshot(0,NULL,NULL));mulGeometryPoll(1001);
+ TEST_ASSERT_EQUAL(mulPoseStale,mulGeometrySnapshot(0,NULL,NULL));
+ mulGeometryPair(&network);mulGeometryPoll(0);TEST_ASSERT_EQUAL(mulPoseStale,mulGeometrySnapshot(0,NULL,NULL));
+ a.sequence=b.sequence=2;a.sourceUs++;b.sourceUs++;
+ TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&a));TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&b));mulGeometryPoll(0);
+ TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometrySnapshot(0,NULL,NULL));
 }

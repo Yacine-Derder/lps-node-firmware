@@ -1,3 +1,5 @@
+#include "mul_pose.h"
+#include "mul_geometry.h"
 #include "mul_ranging_plan.h"
 #include "mul_plan_protocol.h"
 #include "mul_clock_fit.h"
@@ -1046,3 +1048,6 @@ void test_mulLegacyRlrUsesConfiguredRegressionAndKeepsPassiveRadio(void) {
  TEST_ASSERT_INT32_WITHIN(1,15000,mulRoleScratch.rlr.rate.skewPpb);
  TEST_ASSERT_EQUAL_UINT(0,txCount);TEST_ASSERT_TRUE(receiving);
 }
+
+void vPortEnterCritical(void){}
+void vPortExitCritical(void){}

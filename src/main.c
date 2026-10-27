@@ -40,6 +40,7 @@
 
 #include "cfg.h"
 #include "mul_console.h"
+#include "mul_geometry.h"
 #include "eeprom.h"
 
 #include "usb_device.h"
@@ -188,6 +189,7 @@ static void main_task(void *pvParameters) {
   while(1) {
     usbcommPrintWelcomeMessage();
 
+    mulGeometryPoll((uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS);
     ledTick();
     handleButton();
     // // Measure pressure

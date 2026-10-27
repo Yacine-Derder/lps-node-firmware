@@ -1195,3 +1195,142 @@ Then optional measured-wheel-step ESP EKF: audit STM epuck_link.c fields20/21 ne
 Finish G replay/fault matrix and single consolidated final physical experiment
 preparation. LPS stays ROS-agnostic; no ROS/MCS/Pi code or Pi access, no hardware
 experiments/flashing. Preserve unrelated docs/mul_core.md16/17. Goal remains active.
+
+
+## Stage F pose/propagation path connected (optional EKF/G still open)
+
+Canonical f51877d66d6f5de52034afdb84d72bb49bd019c1 is published and exported
+unchanged into STM35d4673 and ESP4b57c9b. Canonical commits ee6ab12/9aff8d5/d5dfd74/
+27d077b add pose/provenance plus strict invalid-source/reason/power rejection;
+f51877d latches pose-bank expiry across full uptime wraps. No vendor hand edits.
+
+New portable mul_pose.[ch]:80-byte CRC/versioned source-agnostic observation
+(node,source clock/epoch/frame/time64us,sequence32,3D intmm,full symmetric covariance
+mm²,validity/covariance/cross-robot-independence flags,age-upper/TTL/time-uncertainty).
+Exact layout/bounds are in canonical README. No ROS/MCS/network/noise dependencies.
+Source time is ONLY for pose consistency, never compared to MCU uptime or used
+for delayed TX. AgeUpperMs must bound age at local acceptance incl transit and
+alignment uncertainty;65535 UNKNOWN disables correction. TTL1..6000/capped by
+clock policy; max nominal skew0..1000ms. Unknown timestamp uncertainty remains
+unknown. Explicit stream begin binds clock/epoch/frame and clears old observations;
+max8 IDs, no silent eviction. Duplicate/old/half-period sequence and valid source
+timestamp reuse reject without age refresh. Invalid observations withdraw data.
+Full covariance PSD and input bounds reject bad records. Euclidean geometry
+projects statistical covariance only with declared cross-robot independence;
+co-location/correlation unknown stays unknown. Physical measurement/motion bounds
+remain UNKNOWN; no noise covariance is a guaranteed clock bound.
+
+LPS integration in src/mul_geometry.c, mul_console.c, main.c, mul_alr.c: USB
+`:pose begin CLOCK EPOCH FRAME MAX_SKEW_MS`,`:pose put HEX80` (160hex digits),
+`:pose show`; command line184 bytes, existing USB queue512 retained. Disconnect
+clears stream/partial input. Poses are volatile, not EEPROM writes. Main task
+computes geometry from immutable snapshots; generation checks invalidate cached
+results immediately on changes. Critical sections hold only bounded copies/header
+work. UWB owner uses cached integer delay/metadata and existing mapping/regression
+APIs, no parsing/sqrt/covariance projection/I2C. Source `geometry source twr|external|
+none` is an additive1-byte EEPROM TLV14, absent=legacy TWR. RF-OFF/readback rules
+apply; uncertain/invalid source storage blocks ON. This retains the existing
+non-journaled legacy TLV transaction, not a new power-cut storage claim.
+Selection does not alter independently enabled AA airtime. No fallback to TWR or
+truth occurs when external data is unavailable; a seeded valid TWR cache is
+explicitly ignored by external/none tests.
+
+Expiry: main periodic mulPoseStreamExpire retires expired entries with local
+TTL0 tombstones (forbidden on wire), retaining identity/sequence/source time.
+Snapshots latch stale status. Retargeting a pair or a full local uptime wrap cannot
+revive an expired record; only newer valid source input can. Periodic bank service
+must occur before a whole uint32 uptime wrap, as implemented by main loop. The
+late-found wrap-alias regression is now in portable and actual cache tests.
+No RAM field/buffer was added for the tombstone.
+
+Relation v3 retains74/80-byte lengths, marks external/none in flags6..7, cannot
+claim TWR power correction, and carries TTL/age. External freshness uses age versus
+period, not a fabricated TWR completion; field48 is reference binding in this
+source. TWR retains exactv1/2. RLR localization and source-aware TDoA/vector payload
+subversion1 preserve provenance through STM/ESP/compact logs; old strict decoders
+reject new markers. Vector149=1, packed source0missing/1TWR/2external/3none; TDoA
+115=1,116external1/none2,117zero. None cannot claim a valid corrected relation or
+metric result. Reason byte is checked before4-bit assignment (prevents malformed
+16..255 truncating into valid reasons). Physical uncertainty remains UNKNOWN.
+Ordinary hybrid NO_RATE/default no-TX unchanged.
+
+Host-only tools/mul_pose_inputs.py generates seeded independent Gaussian or
+per-sample AR(1) noise, noise metadata, raw pose payloads, simulated receipt times,
+separate pristine truth and command artifacts. It never opens serial devices.
+Distinct path/symlink/hardlink checks protect input/truth separation. Quantization
+component bound0.5mm is separate from configured Gaussian covariance. Native
+C replay tools/test/pose_replay.c uses production decode/bank/expiry/geometry,
+retaining source IDs/times, pair, acquisition age, nominal DTU and UNKNOWN bounds.
+It is not a ROS/MCS/Pi bridge. Command-file age values are simulation assumptions;
+any future live source must bound/recompute actual acceptance age/pacing.
+
+Actual cross-platform host proof: TestMulTwr external test writes optional
+MUL_POSE_RADIO_TRACE.11 frames consist of5 codec-generated reference warmup frames,
+3 received references and3 real adapter/verified delayed follower TX frames for
+external-valid/none/external-stale. Reference/follower/RLR clocks are independent
+(ref nominal,follower-150ppm,RLR-10ppm), native40 wrap retained. STM conditional
+MUL_POSE_FRAMES fixture configures actual persisted receiver and feeds these
+frames through real DW3000 frontend. It checks expected signed geometric TDoA
+(-2131DTU±3 in this noiseless simulation), explicit unavailable none/stale, raw
+bytes and zero RLR TX. MUL_POSE_TLM_TRACE exports35 records. ESP --geometry replay
+checks actual UART/parser/priority/TCP reconnect/debug+compact provenance and
+raw frames. Planned fixture also tests external v3 acrossN2/4/8 and100/200/1000ms.
+This is not physical interoperability/accuracy evidence. Exact commands are in
+docs/mul_commands.md; produce LPS frames before running the STM fixture.
+
+Verification: portable sanitizer suite plus targeted provenance malformed cases;
+237 production LPS native tests at10/50/500ms,237 ASan/UBSan at10;6 actual USB tests
+native+ASan/UBSan (fragmented169-byte pose line, oversized recovery, no-NV, stale/
+withdrawal/disconnect).5 host noise/replay tests cover reproducibility, Gaussian
+statistics/correlation, separate truth, full C replay, wrap/reorder/unknown-age/
+withdrawal/frame faults. Full STM runtime sanitizer suite + conditional actual-LPS
+fixture passes; ESP91host tests + source-parser cases and35-record/52-record
+loopback replay pass. Clean CH5/6s LPS checker: flash126108/free4964, RAM14400/free
+1984, workspace344, all retained stacks/queues unchanged and stock modes absent.
+Main geometry frame272 plus geometry304; UWB does no floating geometry work.
+Static stack reports preserved outside repo at/tmp/mul-pose-expiry-stack; real
+watermarks/timing remain final-campaign work. STM Universal FLASH161244/RAM39616
+(text160420,data768,bss38848), reserved-sector checker passes; ESP32-S3 builds.
+No hardware/Pi operation or intermediate physical experiment occurred.
+
+Key logs:/tmp/mul-pose-expiry-core.log,/tmp/mul-pose-expiry-lps.log,
+/tmp/mul-pose-expiry-matrix.log,/tmp/mul-pose-usb-expiry-sanitized.log,
+/tmp/mul-pose-expiry-host.log,/tmp/mul-pose-input-release.log,
+/tmp/mul-pose-expiry-build.log,/tmp/mul-pose-expiry-resources.json,
+/tmp/mul-pose-stm-published-tests.log,/tmp/mul-pose-stm-release-build.log,
+/tmp/mul-pose-esp-final-tests.log,/tmp/mul-pose-esp-final-build.log,
+/tmp/mul-pose-e2e-release.log,/tmp/mul-pose-planned-e2e.log.
+Final canonical expiry addition is unused by STM/ESP firmware paths; pin verification
+and builds pass, while its actual caller tests are LPS/core/replay above.
+
+### Next concrete work — remaining F optional EKF, then G
+
+Do NOT stop after another interface-only unit. Implement the optional portable
+[x,y,theta] measured-wheel-step EKF, prefer ESP execution, disabled by default,
+with synthetic measured-input/replay tests, TDoA plus optional AR TWR updates,
+provided ALR pose covariance and shared-reference measurement correlations,
+asynchronous time/epoch handling, innovation gating/loss/outliers, raw preservation
+and deterministic comparison modes. Keep UWB reference-point/extrinsic assumptions explicit; no online alignment.
+Deliver abstract ALR poses to that consumer
+without ROS/MCS/Pi code/access. Ordinary NO_RATE must never be replaced by a
+stationary assumption just to feed the EKF. Do not turn UNKNOWN physical bounds
+into calibrated measurement noise; require explicit experimental covariance policy.
+
+Critical audit finding: epuck-stm32/docs/epuck_link.md already calls DATA fields20/
+21 commanded steps. Parser stores them as signed32; that is wire range, not proof
+of producer width or measured mechanical wheel motion. GCtronic standard motor
+API PDF section7.75.2 (link added to that doc) describes motor phase counts; actual
+producer implementation is absent from these two worktrees. Do not assume any
+specific installed backend or relabel DATA2 as measured odometry. Raw values stay
+unchanged. DATA time is16-bit (65536ms wire wrap), received_at_ms is STM validation
+completion, accepted_records is local receive32 counter. DATA2 forwards localseq/
+coarse age/time16/steps unchanged, with no source boot ID, encoder-valid attestation
+or declared step-counter rollover. Investigate/guard, never use commanded speeds.
+A portable measured-input API can advance with host simulations while rejecting
+unknown/commanded provenance from the existing transport. Do not invent hardware
+measurements to unblock it or request intermediate hardware experiments.
+
+Finish G integration/moving/loss/outlier/covariance replay matrix and consolidated
+final physical experiment preparation after F. LPS remains wholly ROS-agnostic;
+all ROS/MCS/Pi software and access are excluded. Preserve user docs/mul_core.md
+16add/17delete edit and never stage it. Goal remains ACTIVE, F/G unfinished.

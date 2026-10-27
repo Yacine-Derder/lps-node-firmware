@@ -354,7 +354,7 @@ static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length) {
   ok=eepromWrite(0,buffer,sizeof(buffer));HAL_Delay(10);
   if(ok)ok=readData()&&!memcmp(expected,buffer,sizeof(buffer));
   if(!ok){memcpy(buffer,previous,sizeof(buffer));mulStorageUncertain=true;}
-  else if(field!=cfgRfEnable&&field!=cfgMulSlotMs&&field!=cfgMulSchedule&&field!=cfgMulClock)pendingRestart=true;
+  else if(field!=cfgRfEnable&&field!=cfgMulSlotMs&&field!=cfgMulSchedule&&field!=cfgMulClock&&field!=cfgMulGeometrySource)pendingRestart=true;
 done:
   writing=false;return ok;
 }
@@ -488,4 +488,15 @@ bool cfgMulPlanSave(const mulRangingPlan_t *plan,bool selected,uint32_t *generat
  // until reboot/reload rather than claiming the old plan is still current.
  if(!ok)mulStorageUncertain=true;
  writing=false;return ok;
+}
+
+bool cfgGeometrySourceRead(mulDelaySource_t *source) {
+ uint8_t size=0,value=0;if(!source||!cfgStorageReady())return false;
+ if(cfgFieldSize(cfgMulGeometrySource,&size)&&(size!=1||!cfgReadU8(cfgMulGeometrySource,&value)))return false;
+ if(value>mulDelayNone)return false;
+ *source=(mulDelaySource_t)value;return true;
+}
+bool cfgGeometrySourceWrite(mulDelaySource_t source) {
+ if(source>mulDelayNone||uwbControlRequested()||uwbControlRunning())return false;
+ uint8_t value=(uint8_t)source;return mulStore(cfgMulGeometrySource,&value,1);
 }

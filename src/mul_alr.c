@@ -8,6 +8,7 @@
 #include "mul_role_state.h"
 #include "mul_timing.h"
 #include "mul_clock_workspace.h"
+#include "mul_geometry.h"
 #include "task.h"
 
 #include <inttypes.h>
@@ -162,6 +163,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
 #if !MUL_HYBRID_CH5
   if(multiMode&&schedule->profile==MUL_PROFILE_EXPERIMENTAL&&(config->lowBitrate||config->longPreamble))alrRole=mulAlrUnsupported;
 #endif
+  mulGeometryPair(alrNetwork);
   referenceAcquired = false;
   mulClockReset(&followerClock);
   mulClockWorkspace_t *workspace=mulClockWorkspace();mulClockFitReset(&workspace->fit);
@@ -182,6 +184,12 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
   nextRawTx = mulTimestampMask((readHardwareTime(dev) + MUL_TX_LEAD_DTU +
                                MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1));
   mulRxInit(dev); // Reference listens for the follower and directed TWR responses.
+}
+
+static bool selectedDelay(uint32_t now,mulClockDelay_t *delay) {
+ mulDelaySource_t source=mulGeometrySource();
+ return source==mulDelayTwr?mulTwrDelay(&ranging,&followerClock,delay):
+  source==mulDelayExternal?mulGeometryDelay(alrNetwork,&followerClock,now,delay):false;
 }
 
 // Shared, tested Stage 2 TX setup. The caller supplies a raw local-clock target
@@ -211,10 +219,10 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
   if(multiMode)length=activePlan?mulPlanBroadcastEncode(txFrame,sizeof(txFrame),activePlan,0,pendingSequence,pendingTimestamp,NULL):mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,0,pendingSequence,pendingTimestamp,NULL);
   if (alrRole==mulAlrFollower) {
     mulClockDelay_t delay;
-    bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
-    mulRelation_t relation=mulRelationPublishNetwork(alrNetwork,&followerClock,supplied ? &delay : NULL,
-      pendingTimestamp,readHardwareTime(dev),(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,mulTwrDelayPowerCorrected(&ranging));
-    if (relation.version==2 && !supplied)
+    bool supplied=selectedDelay((uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,&delay);
+    mulRelation_t relation=mulRelationPublishSourceNetwork(alrNetwork,&followerClock,supplied ? &delay : NULL,
+      pendingTimestamp,readHardwareTime(dev),(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,mulGeometrySource()==mulDelayTwr&&mulTwrDelayPowerCorrected(&ranging),mulGeometrySource());
+    if (relation.version==2 && !supplied&&mulGeometrySource()==mulDelayTwr)
       relation.delayState=mulTwrPropagationState(&ranging,&followerClock,(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS);
     mulTestPacket_t packet={.sequence=pendingSequence,.txTimestamp=pendingTimestamp,.slotMs=mulNetworkSlotMs(alrNetwork)}; memcpy(packet.source,source,8);
     if(multiMode)length=activePlan?mulPlanBroadcastEncode(txFrame,sizeof(txFrame),activePlan,localSlot,pendingSequence,pendingTimestamp,&relation):mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,localSlot,pendingSequence,pendingTimestamp,&relation);
@@ -288,7 +296,7 @@ static void abortFollowerTx(dwDevice_t *dev)
 
 typedef struct {uint64_t start,poll,end;bool compensated;} mulLocalReservation_t;
 static bool mapReservation(const mulRangingOperation_t *op,uint32_t now,mulLocalReservation_t *out) {
- mulClockDelay_t delay;bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
+ mulClockDelay_t delay;bool supplied=selectedDelay((uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,&delay);
  uint32_t offsets[3]={op->startUs,op->pollUs,op->endUs};uint64_t targets[3];
  bool compensated=supplied&&mulClockDelayStatusNetwork(alrNetwork,&followerClock,&delay,now)==mulClockDelayValid;
  for(unsigned i=0;i<3;i++) {
@@ -502,7 +510,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       // Build metadata from THIS reference observation before encoding TX.
       // Bounded integer estimation does not steer the hardware slot.
       mulClockWorkspace_t *workspace=mulClockWorkspace();mulClockDelay_t delay;
-      bool supplied=mulTwrDelay(&ranging,&followerClock,&delay);
+      bool supplied=selectedDelay((uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,&delay);
       clockResult=mulClockObserveFitted(alrNetwork,&followerClock,&workspace->fit,&workspace->config,&packet,arrival,(uint32_t)now*portTICK_PERIOD_MS,true,supplied?&delay:NULL);
       if (clockResult==mulClockDiscontinuity || acquiredNow) {
         mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"clock_epoch",true); ranging.attempted=false;

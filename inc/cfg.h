@@ -46,6 +46,7 @@ typedef enum {
   cfgMulSlotMs, // Additive uint32 delay TLV; absent old EEPROM retains 500ms.
   cfgMulSchedule, // Optional canonical32-byte schedule, including its CRC.
   cfgMulClock, // Additive versioned12-byte clock estimator configuration.
+  cfgMulGeometrySource, // Additive byte:0 TWR (legacy default),1 external,2 none.
 } ConfigField;
 
 void cfgInit();
@@ -57,6 +58,8 @@ bool cfgMulPlanSave(const mulRangingPlan_t *plan,bool selected,uint32_t *generat
 bool cfgPendingRestart(void);
 bool cfgStorageReady(void);
 bool cfgRfEnabled(bool *enabled);
+bool cfgGeometrySourceRead(mulDelaySource_t *source);
+bool cfgGeometrySourceWrite(mulDelaySource_t source);
 bool cfgMulClockRead(mulClockFitConfig_t *config);
 bool cfgMulClockWrite(const mulClockFitConfig_t *config);
 bool cfgMulSlotRead(uint16_t *slotMs);
