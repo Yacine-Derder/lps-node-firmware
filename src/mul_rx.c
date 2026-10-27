@@ -26,7 +26,7 @@ static uint8_t diagOp,diagLocal,diagPoints;
 static bool diagValid;
 void mulRxDiagBeacon(uint64_t stamp){diagBeacon=stamp;}
 void mulRxDiagDecision(unsigned event,unsigned stage) {
- if(event==0)diagActivity|=2; //90-byte frame entered planned AA decoder.
+ if(event==0)diagActivity|=2; // RX event entered the planned AA handler.
  if(event==4&&stage==0x10)diagActivity|=4; // Accepted POLL.
  if(event==8)diagActivity|=8; // AA1 REJECT; consult stage/why there.
 }

@@ -348,6 +348,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   aaLocal=role==mulAlrReference?plannedSession.op.initiator:plannedSession.op.responder;
   aaInput=(uint8_t)event;aaNowValid=false;aaSending=0;
 #endif
+  if(event==eventPacketReceived)RX_DIAG(twr,0,0);
   if ((twr->active || (event == eventPacketReceived && dwGetDataLength(dev) == (twr->multiProfile?MUL_MULTI_TWR_BYTES:MUL_TWR_FRAME_LENGTH))) &&
       !mulAntennaValid(dev)) {
     if (!twr->active) printf("MUL TWR: result=FAILED reason=antenna_config\r\n");
@@ -355,7 +356,6 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     mulRxRearm(dev);
     return true;
   }
-  if(event==eventPacketReceived)RX_DIAG(twr,0,0);
   int64_t phase = mulTimestampDifference(hardwareNow(dev), origin);
 #if MUL_TWR_TRACE
   // Record the assigned responder window once even when no poll ever arrives.
