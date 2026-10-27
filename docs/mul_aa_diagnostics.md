@@ -489,3 +489,26 @@ versus decoded POLL arrival and AA1 rejection evidence can expose a timing
 mismatch. Sparse state snapshots cannot conclusively eliminate transient RX
 stops, RF/PHY loss or every form of event loss. No reception fix or physical
 reliability claim is made by this experiment.
+
+## Pending-RX race investigation
+
+The newer `alr132.log`/`alr133.log` capture contains62 verified AA POLLs,
+42 initiator DONE and20 FAIL. All six operation1 attempts (cycles9/19/29/39/49/59)
+fail, but this alone does not prove a separate operation-index bug. The shared
+planner and follower selector support both indices; operation1 has a different
+phase relative to millisecond software wakeups. Reference diagnostics report
+loss6, so absence of individual reference records is not conclusive.
+
+Two source-level hazards need deterministic coverage: `followerOnEvent()` falls
+through to `mulRxRearm()` on an idle software timeout, and `uwbTask()` checks the
+IRQ pin only in the semaphore-success branch. `dwNewReceive()` forces TRXOFF
+and clears good-RX status. A good frame completing after semaphore timeout but
+before that rearm can therefore be discarded; an already-high IRQ with no
+remaining semaphore token is not drained before the next timeout callback.
+The UWB task is the highest-priority application task; USB output uses zero-wait
+queue writes. A higher-priority application worker is not present in this build.
+Binary semaphore coalescing by itself is safe only if pending hardware events
+are drained; it cannot count frames or preserve an overwritten receive buffer.
+These hazards explain a possible IDLE/good-RX signature, not the identity of the
+pending frame nor every hardware failure. Deterministic reproductions and a
+new hardware run are needed to establish their contributions.
