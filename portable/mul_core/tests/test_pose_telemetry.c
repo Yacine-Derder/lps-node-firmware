@@ -10,6 +10,11 @@ int main(int argc,char **argv) {
  assert(mulTelemetryEncode(line,sizeof(line),&r)&&mulTelemetryDecode(line,&d));
  assert(d.vector.sourceVersion==1&&d.vector.values[0].source==1&&d.vector.values[1].source==2&&d.vector.values[2].source==3);
  if(argc>1)puts(line);
+ uint8_t bad[152];for(unsigned i=0;i<152;i++){unsigned value;assert(sscanf(line+5+2*i,"%2x",&value)==1);bad[i]=(uint8_t)value;}
+ bad[81]=16;uint16_t crc=mulTelemetryCrc(bad,150);bad[150]=(uint8_t)crc;bad[151]=(uint8_t)(crc>>8);
+ char malformed[MUL_TLM_LINE];for(unsigned i=0;i<152;i++)sprintf(malformed+5+2*i,"%02X",bad[i]);
+ for(unsigned i=0;i<5;i++)malformed[i]=line[i];
+ assert(!mulTelemetryDecode(malformed,&d));
  r.vector.values[2].clockValid=1;assert(!mulTelemetryEncode(line,sizeof(line),&r));r.vector.values[2].clockValid=0;
  r.vector.sourceVersion=0;assert(!mulTelemetryEncode(line,sizeof(line),&r));
  r=(mulTelemetry_t){.type=mulTlmTdoa,.node=141,.radio=2,.role=2,.mode=4,.epoch=9,.legacySlotMs=10,

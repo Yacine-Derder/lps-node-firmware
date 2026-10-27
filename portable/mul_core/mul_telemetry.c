@@ -223,7 +223,8 @@ bool mulTelemetryDecode(const char *line,mulTelemetry_t *r){
   v->observedMs=d.uptimeMs;v->referenceRx=get(b+52,5);v->slotMs=(uint16_t)get(b+57,2);v->periodMs=(uint16_t)get(b+59,2);
   v->sourceVersion=b[149];v->count=b[61];v->seenMask=b[62];v->validMask=b[63];memcpy(v->ids,b+64,8);
   for(unsigned i=0;i+1<v->count;i++) {
-   const uint8_t *entry=b+72+10*i;if(!v->sourceVersion&&(entry[8]&0xc0))return false;
+   const uint8_t *entry=b+72+10*i;if(entry[9]>9)return false;
+   if(!v->sourceVersion&&(entry[8]&0xc0))return false;
    mulMultiValue_t *x=&v->values[i];x->rangeDifferenceMm=signed32((uint32_t)get(entry,4));x->tdoaDtu=signed32((uint32_t)get(entry+4,4));
    x->source=entry[8]>>6;x->status=entry[8]&7;x->clockValid=(entry[8]>>3)&1;x->rateState=(entry[8]>>4)&3;x->reason=entry[9];
   }
