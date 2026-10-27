@@ -185,8 +185,8 @@ bool mulTwrDue(uint32_t sequence) { return sequence != 0 && sequence % 5 == 0; }
 void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool invalidateDelay)
 {
   bool wasActive = twr->active;
-  if(wasActive)TRACE(twr,mulAaFail,aaSending?aaSending:twr->stage,traceReason(reason),twr->expectedTx);
 #if MUL_TWR_TRACE
+  if(wasActive)TRACE(twr,mulAaFail,aaSending?aaSending:twr->stage,traceReason(reason),twr->expectedTx);
   aaSending=0;
 #endif
   twr->active = twr->txPending = false;

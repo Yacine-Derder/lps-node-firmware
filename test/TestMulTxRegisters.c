@@ -558,3 +558,21 @@ void test_generatedFollowerCompletesBothCycleNineOperationsWithoutRemoteContextM
  }
  TEST_ASSERT_EQUAL(7,receiveCount);TEST_ASSERT_EQUAL(5,completionCount);
 }
+
+static unsigned simultaneousTimeouts;
+static void timeoutBeforeGoodRx(dwDevice_t *device) {
+ simultaneousTimeouts++;
+ TEST_ASSERT_TRUE(device->sysstatus[1]&(1u<<(RXFCG_BIT-8)));
+ TEST_ASSERT_TRUE(device->sysstatus[2]&(1u<<(RXRFTO_BIT-16)));
+ mulRxRearm(device);
+}
+void test_driverKeepsExistingErrorTimeoutPrecedenceOverSimultaneousGoodRx(void) {
+ simultaneousTimeouts=0;dwAttachReceiveTimeoutHandler(&radio,timeoutBeforeGoodRx);
+ registers[SYS_STATUS][1]=(1u<<(RXDFR_BIT-8))|(1u<<(RXFCG_BIT-8));
+ registers[SYS_STATUS][2]=1u<<(RXRFTO_BIT-16);
+ dwHandleInterrupt(&radio);
+ TEST_ASSERT_EQUAL(1,simultaneousTimeouts);TEST_ASSERT_EQUAL(0,receiveCount);
+ TEST_ASSERT_EQUAL(0,registers[SYS_STATUS][1]&(1u<<(RXFCG_BIT-8)));
+ // The driver cannot identify which frame simultaneous sticky flags describe.
+ // Do not silently prefer GOOD and weaken its error/timeout recovery contract.
+}

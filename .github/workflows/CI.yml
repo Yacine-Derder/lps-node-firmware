@@ -45,6 +45,9 @@ jobs:
     - name: Generated AA stage and RX diagnostics
       run: python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000 --slot 10 --twr-trace --rx-diag
 
+    - name: RX diagnostics without AA1
+      run: python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000 --slot 10 --rx-diag
+
     - name: Offline AA analysis regression
       run: python3 -m unittest discover -s tools/test -p test_analyze_aa_rx.py
 

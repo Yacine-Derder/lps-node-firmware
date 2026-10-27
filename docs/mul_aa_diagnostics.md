@@ -316,7 +316,7 @@ make -j6 REV=B BOOTLOAD=0 EXTRA_CFLAGS='-DMUL_HYBRID_CH5=1 -DMUL_PROP_MAX_AGE_MS
 python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
 ```
 
-The checked image uses130292 flash bytes (780 free) and15528 RAM bytes including
+The checked image uses130356 flash bytes (716 free) and15528 RAM bytes including
 the linker stack (856 free). Both flags default off independently; AA1-only
 builds retain their existing behavior. No RF protocol, settings, delays, wakeups,
 recovery writes or state-machine transitions are changed. No vendor driver edit
@@ -532,5 +532,85 @@ been reproduced. It would be unjustified to claim that all six observed failures
 have one cause or that these fixes improve measured RF reliability without a
 new capture. Preamble-only and later-leg errors remain separate hypotheses.
 
-A separate output integration defect is also corrected: RX-only diagnostics now
-poll independently of `MUL_TWR_TRACE`, matching their independent build flag.
+A separate optional-build defect is also corrected: RX-only diagnostics now
+poll independently of `MUL_TWR_TRACE`, and trace-only cancellation metadata is
+guarded when AA1 is disabled. RX-only native/sanitizer coverage is added to CI.
+
+
+### Hardware verification of the pending-RX correction
+
+Use the exact clean CH5/6000/AA1/RX build command above, and program **both**
+boards with that same image using the earlier ST-LINK commands (reset halt,
+write/verify ELF, halt, shutdown). Before programming each board, save RF OFF
+with `:off` and verify `:status`. Resume with the documented reset-run command
+only after its saved RF-off state is confirmed. External EEPROM is preserved.
+No board has been programmed or enabled as part of this software verification.
+
+For this comparison use the original plan, not the separate50ms-delay experiment.
+On **each** verified132-reference/133-follower console, with RF OFF acknowledged:
+
+```text
+:off
+:status
+:plan set aa_start_delay_us 0
+:plan use on
+:plan show
+:status
+```
+
+Require requested0/running0/restart0, selected1, codec2, hash826414CC, period1000,
+AA1000/AR50 milliHz, reply20, offsets0/10ms. Cycle1 must show window16100..109200us
+and POLL23100us. Do not change any other timing, roster, radio or RLR setting.
+Cycle9 has AA operations0 and1; operation1 window498050..591150us and POLL505050us
+are generated unchanged. Preserve the STM32 RLR image/configuration.
+
+Close the interactive consoles, set the verified ALR132/ALR133 stable serial
+paths, and run the **exact60-second collection Python command above**, which
+starts133 then132 and requests OFF/status on both in `finally`. Use this section's
+zero-delay configuration instead of the preceding50ms setup. Both final status
+lines must show requested0/running0. Analyze with:
+
+```sh
+python3 tools/test/analyze_aa_rx.py alr132_rxdiag.log alr133_rxdiag.log
+```
+
+Before the correction, a pending complete frame could disappear across an idle
+software wake with no RX callback; preamble search was also interrupted by the
+periodic rearm. Afterward, idle wakeups leave `r` unchanged until a real RX/TX/error
+callback or required recovery, and an asserted IRQ is drained even without a
+semaphore token. Thus a persistent live RX-good event should now lead to a
+callback/AA1 acceptance or rejection instead of being silently cleared by that
+wake. A snapshot preceding POLL still cannot identify a pending packet as POLL.
+
+Compare operation0 and operation1 separately, including all six secondary
+opportunities near cycles9/19/29/39/49/59 when captured; do not assume one AA
+attempt per cycle. Record valid POLL RX, RESPONSE TX and subsequent failure
+stages on both nodes. If operation1 remains systematically absent, inspect its
+RX-good/handler/reject evidence and actual packet timestamps before changing
+its schedule. Residual preamble-only, searching-RX or later-leg failures need
+new evidence; success in host tests is not a physical reliability measurement.
+
+Local checks include real-driver pending POLL/preamble preservation at both
+indices, a complete operation0→operation1 exchange sequence without remote
+context mutation, coalesced/no-token IRQ dispatch and RF-off interruption.
+Existing tests continue to cover absolute deadlines, radio errors, broadcast
+preemption, plan validation/hash, AA/AR ownership and legacy behavior. No vendor
+library source or packet codec was changed.
+
+The simultaneous RXRFTO+RXFCG regression characterizes, rather than changes,
+the driver's existing timeout-before-good-RX precedence. Such a combined status
+still invokes timeout recovery and discards the buffer; sticky flags alone
+cannot establish which frame they describe. Treat this as distinct from the
+fixed software-only timeout race, and inspect `i`/`f`/`t` before blaming dispatch.
+Standalone libdw1000 tests also pass (41). Their unmodified old Rake harness
+needs process-local YAML/File API compatibility shims on Ruby3.2; direct `rake`
+fails before testing. No vendor dependency or source was edited for that issue.
+
+The old vendor harness was run without repository edits using:
+
+```sh
+(cd vendor/libdw1000 && ruby -ryaml -rrake -e 'module Psych; class << self; def load(yaml, **options); unsafe_load(yaml, **options); end; end; end; class << File; alias exists? exist?; end; load "Rakefile"; Rake::Task[:default].invoke')
+```
+
+This process-local compatibility shim loads only the checked-in test config;
+it does not install gems or alter vendored code.
