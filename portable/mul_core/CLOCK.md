@@ -26,8 +26,9 @@ H = [1,0,0]; R=1024 DTU^2; q=1 ppb^2/s^3
 Initialization is x=0, P=diag(R,1e10,1e4), matching the experiment prototype.
 Innovation weighting is min(1,4*sqrt(H P H'+R)/abs(innovation)), with effective
 R/weight^2 and Joseph covariance update. Symmetry is restored by averaging the
-off-diagonals. Finite checks and a scaled Cholesky PSD test reject corrupt state.
-Tiny normalized negative roundoff up to1e-12 is tolerated; this is a numerical
+off-diagonals. Finite checks and a three-state LDL covariance test reject corrupt state.
+Nonpositive leading LDL pivots fail closed; final-pivot negative roundoff up to
+1e-12 times its covariance diagonal is tolerated; this is a numerical
 PSD tolerance, not permission for negative rate variance. No filter tuning uses
 the held-out segment. Missing observations advance F/Q over the measured next
 interval; public prediction supports up to the existing2s mapping horizon. It

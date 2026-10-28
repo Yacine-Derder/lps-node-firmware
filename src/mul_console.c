@@ -179,21 +179,19 @@ static void command(void) {
  }
  if(count==2&&!strcmp(w[0],"clock")&&!strcmp(w[1],"show")){page=clockPage;pageIndex=0;return;}
  if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&
-    (!strcmp(w[2],"clock_estimator")||!strcmp(w[2],"clock_window")||!strcmp(w[2],"clock_compensate"))) {
-  if(uwbControlRequested()||uwbControlRunning()){reply("ERR clock change requires RF OFF");return;}
+    (!strcmp(w[2],"clock_estimator")||!strcmp(w[2],"clock_compensate"))) {
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR clock requires RF OFF");return;}
   mulClockFitConfig_t spec;if(!cfgMulClockRead(&spec)){reply("ERR invalid stored clock settings");return;}
   if(!strcmp(w[2],"clock_estimator")) {
-   if(!strcmp(w[3],"median")||!strcmp(w[3],"median_5")||!strcmp(w[3],"MEDIAN_5"))spec.estimator=0;
-   else if(!strcmp(w[3],"kalman")||!strcmp(w[3],"KALMAN")||!strcmp(w[3],"kalman_3_state"))spec.estimator=2;
-   else {reply("ERR clock_estimator: median_5/kalman");return;}
-  }else if(!strcmp(w[2],"clock_window")) {
-   reply("ERR clock_window retired; fixed Median-5");return;
+   if(!strcmp(w[3],"median")||!strcmp(w[3],"median_5"))spec.estimator=0;
+   else if(!strcmp(w[3],"kalman"))spec.estimator=2;
+   else {reply("ERR estimator: median_5/kalman");return;}
   }else {
    if(!strcmp(w[3],"on"))spec.compensate=1;
    else if(!strcmp(w[3],"off"))spec.compensate=0;
    else {reply("ERR clock_compensate: on/off");return;}
   }
-  reply(cfgMulClockWrite(&spec)?"SAVED clock settings; ON applies":"ERR clock/EEPROM unconfirmed");return;
+  reply(cfgMulClockWrite(&spec)?"SAVED clock; ON applies":"ERR clock/EEPROM unconfirmed");return;
  }
  if(count>=3&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"roster")) {
   mulSchedule_t schedule;
@@ -438,8 +436,8 @@ bool mulConsolePoll(void) {
  if(page==clockPage) {
   mulClockFitConfig_t c;
   if(!cfgMulClockRead(&c))snprintf(line,sizeof(line),"ERR invalid stored clock settings");
-  else if(pageIndex==0){snprintf(line,sizeof(line),"CLOCK method=%u window=%u minimum=%u",c.estimator,c.window,c.minSamples);last=false;}
-  else {mulSchedule_t spec;if(cfgMulScheduleRead(node,&spec))c.periodMs=spec.periodMs;snprintf(line,sizeof(line),"CLOCK period=%u gate_dtu=%u compensate=%u",c.periodMs,c.gateDtu,c.compensate);}
+  else if(pageIndex==0){snprintf(line,sizeof(line),"CLOCK method=%u history=5",c.estimator);last=false;}
+  else {mulSchedule_t spec;if(cfgMulScheduleRead(node,&spec))c.periodMs=spec.periodMs;snprintf(line,sizeof(line),"CLOCK period=%u compensate=%u",c.periodMs,c.compensate);}
  }
  if(page==show) {
   if(!valid)snprintf(line,sizeof(line),"ERR invalid roster; EEPROM retained");

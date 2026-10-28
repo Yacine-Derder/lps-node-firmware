@@ -2,6 +2,11 @@
 #include "mul_clock_fit.h"
 #include <math.h>
 #include <string.h>
+#if defined(__GNUC__)
+#define SHARED_HELPER __attribute__((noinline))
+#else
+#define SHARED_HELPER
+#endif
 #define R 1024.0
 #define K 63.8976 /* DTU/s per ppb */
 #define Q 1.0     /* drift random-walk spectral density, ppb^2/s^3 */
@@ -21,35 +26,34 @@ void mulClockFitReset(mulClockFit_t *s) {
   memset(s, 0, sizeof(*s));
   s->uncertaintyPpb = UINT32_MAX;
 }
-/* Scaled Cholesky/LDL PSD test avoids determinants spanning phase/rate units.
+/* Three-state LDL covariance check; pivots retain their state units, so
+ * roundoff tolerance scales with the corresponding diagonal. Nonpositive
+ * leading pivots fail closed (initialized/Q/R covariance is positive definite).
  */
 static bool healthy(const double x[3], double p[3][3]) {
-  double a[3][3];
   for (unsigned i = 0; i < 3; i++) {
     if (!isfinite(x[i]) || !isfinite(p[i][i]) || p[i][i] <= 0)
       return false;
     for (unsigned j = 0; j < 3; j++)
       if (!isfinite(p[i][j]))
         return false;
+    for (unsigned j = 0; j < i; j++)
+      if (fabs(p[i][j] - p[j][i]) > 1e-12 * (fabs(p[i][j]) + fabs(p[j][i]) + 1))
+        return false;
   }
-  for (unsigned i = 0; i < 3; i++)
-    for (unsigned j = 0; j < 3; j++)
-      a[i][j] = p[i][j] / sqrt(p[i][i] * p[j][j]);
-  for (unsigned i = 0; i < 3; i++) {
-    double d = a[i][i];
-    for (unsigned k = 0; k < i; k++)
-      d -= a[i][k] * a[i][k];
-    if (d < -1e-12)
-      return false;
-    a[i][i] = sqrt(d > 1e-15 ? d : 1e-15);
-    for (unsigned j = i + 1; j < 3; j++) {
-      double v = a[j][i];
-      for (unsigned k = 0; k < i; k++)
-        v -= a[j][k] * a[i][k];
-      a[j][i] = v / a[i][i];
-    }
-  }
-  return true;
+  double a = p[0][1] / p[0][0], b = p[0][2] / p[0][0];
+  double d = p[1][1] - a * p[0][1];
+  if (!isfinite(d) || d <= 0)
+    return false;
+  double cross = p[1][2] - b * p[0][1];
+  double last = p[2][2] - b * p[0][2] - cross * cross / d;
+  return isfinite(last) && last >= -1e-12 * p[2][2];
+}
+/* Inputs here are nonnegative and bounded before conversion; exact ceiling
+ * without pulling general-purpose libm rounding routines into Cortex-M0. */
+static SHARED_HELPER uint32_t ceiling(double v) {
+  uint32_t n = (uint32_t)v;
+  return n + (v > n);
 }
 static bool predict(const mulClockFit_t *s, double d, double x[3],
                     double p[3][3], double horizon) {
@@ -77,7 +81,7 @@ bool mulClockFitPredict(const mulClockFit_t *s, double d, double x[3],
                         double p[3][3]) {
   return predict(s, d, x, p, 2);
 }
-static void seed(mulClockFit_t *s, uint64_t epoch, uint64_t tx, uint64_t rx,
+static SHARED_HELPER void seed(mulClockFit_t *s, uint64_t epoch, uint64_t tx, uint64_t rx,
                  bool corrected) {
   uint32_t a = s->accepted, r = s->rejected, n = s->resets;
   mulClockFitReset(s);
@@ -123,8 +127,8 @@ static bool update(mulClockFit_t *s, double d, int64_t phase) {
     return false;
   memcpy(s->state, x, sizeof(x));
   memcpy(s->covariance, out, sizeof(out));
-  s->rmsDtu = fabs(innovation) >= UINT32_MAX ? UINT32_MAX
-                                             : (uint32_t)ceil(fabs(innovation));
+  s->rmsDtu =
+      fabs(innovation) >= UINT32_MAX ? UINT32_MAX : ceiling(fabs(innovation));
   return true;
 }
 mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
@@ -195,9 +199,8 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
   double variance = s->covariance[1][1] + 2 * half * s->covariance[1][2] +
                     half * half * s->covariance[2][2];
   double sigma = sqrt(variance);
-  s->uncertaintyPpb = !isfinite(sigma) || sigma >= UINT32_MAX
-                          ? UINT32_MAX
-                          : (uint32_t)ceil(sigma);
+  s->uncertaintyPpb =
+      !isfinite(sigma) || sigma >= UINT32_MAX ? UINT32_MAX : ceiling(sigma);
   /* 1ppm conditional sigma ceiling reuses the existing median stability scale;
    * not a physical accuracy bound. Five intervals are required on both methods.
    */
@@ -205,7 +208,7 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
              fabs(rate) <= MUL_CLOCK_MAX_PPB && isfinite(sigma) &&
              variance >= 0 && sigma <= MUL_CLOCK_STABILITY_PPB;
   s->skewPpb = isfinite(rate) && fabs(rate) <= MUL_CLOCK_MAX_PPB
-                   ? (int32_t)round(rate)
+                   ? (int32_t)(rate + (rate < 0 ? -.5 : .5))
                    : 0;
   /* A robust frequency fit cannot validate a grossly displaced RAW mapping
    * origin. Reuse the median's one-ppm interval stability gate after startup;

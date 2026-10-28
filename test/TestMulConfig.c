@@ -271,7 +271,7 @@ void test_clockEstimatorSettingsPersistenceAndRfOffGuards(void) {
  mulClockFitConfig_t c;TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(2,c.estimator);TEST_ASSERT_EQUAL(5,c.window);TEST_ASSERT_EQUAL(1,c.compensate);
  before=writes;cfgInit();TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(before,writes);
  send(":cfg set clock_window 7\n:cfg set clock_window 33\n:cfg set clock_estimator quadratic\n");TEST_ASSERT_EQUAL(before,writes);
- send(":clock show\n");TEST_ASSERT_NOT_NULL(strstr(output,"method=2 window=5"));
+ send(":clock show\n");TEST_ASSERT_NOT_NULL(strstr(output,"method=2 history=5"));
  send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(5,boot.mulClockConfig.window);
  send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(2,c.estimator);
  send(":off\n");apply();send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(0,c.estimator);
