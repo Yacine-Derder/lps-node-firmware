@@ -276,6 +276,18 @@ void test_clockEstimatorSettingsPersistenceAndRfOffGuards(void) {
  send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(2,c.estimator);
  send(":off\n");apply();send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(0,c.estimator);
 }
+void test_oldAndUnknownClockSelectorsMigrateWithoutRetargetingTheDevice(void) {
+ send(":off\n");apply();uint8_t address=0;TEST_ASSERT_TRUE(cfgReadU8(cfgAddress,&address));
+ uint8_t old[12]={1,1,24,8,0xe8,3,0,1,0,0,0,0};
+ TEST_ASSERT_TRUE(cfgWriteU8list(cfgMulClock,old,sizeof(old)));
+ cfgInit();mulClockFitConfig_t c;TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(0,c.estimator);TEST_ASSERT_EQUAL(5,c.window);
+ uint8_t retained=255;TEST_ASSERT_TRUE(cfgReadU8(cfgAddress,&retained));TEST_ASSERT_EQUAL(address,retained);
+ old[0]=2;old[1]=255;old[2]=old[3]=5;
+ unsigned at=5;while(at<99&&memory[at]!=cfgMulClock)at+=2+memory[at+1];TEST_ASSERT_TRUE(at+14<100);
+ memcpy(memory+at+2,old,sizeof(old));checksum();
+ cfgInit();TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(0,c.estimator);
+ TEST_ASSERT_TRUE(cfgReadU8(cfgAddress,&retained));TEST_ASSERT_EQUAL(address,retained);
+}
 void test_experimentalNumericalTimingRequiresExplicitBudgetsAndRfOff(void) {
  send(":off\n");apply();send(":cfg set slot_ms 10\n:cfg roster set 0x84 0x85 0x86 0x87\n:cfg set profile experimental\n");
  mulSchedule_t spec;TEST_ASSERT_TRUE(cfgMulScheduleRead(0x84,&spec));TEST_ASSERT_EQUAL(MUL_PROFILE_EXPERIMENTAL,spec.profile);

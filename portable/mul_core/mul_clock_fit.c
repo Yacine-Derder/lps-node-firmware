@@ -204,9 +204,10 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
   /* 1ppm conditional sigma ceiling reuses the existing median stability scale;
    * not a physical accuracy bound. Five intervals are required on both methods.
    */
-  s->ready = clock->count == 5 && s->count == 5 && isfinite(rate) &&
-             fabs(rate) <= MUL_CLOCK_MAX_PPB && isfinite(sigma) &&
-             variance >= 0 && sigma <= MUL_CLOCK_STABILITY_PPB;
+  bool mature = clock->count == 5 && s->count == 5;
+  s->ready = mature && isfinite(rate) && fabs(rate) <= MUL_CLOCK_MAX_PPB &&
+             isfinite(sigma) && variance >= 0 &&
+             sigma <= MUL_CLOCK_STABILITY_PPB;
   s->skewPpb = isfinite(rate) && fabs(rate) <= MUL_CLOCK_MAX_PPB
                    ? (int32_t)(rate + (rate < 0 ? -.5 : .5))
                    : 0;
@@ -214,7 +215,7 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
    * origin. Reuse the median's one-ppm interval stability gate after startup;
    * keep filtering, but expose this observation as unavailable in both methods.
    */
-  if (s->accepted >= 5 &&
+  if (mature &&
       s->rmsDtu > K * ((double)dt / 63897600000.) * MUL_CLOCK_STABILITY_PPB) {
     clock->status = mulClockWarmup;
     s->ready = 0;
@@ -227,7 +228,7 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
     s->applied = 1;
     s->fallback = mulClockFitUsed;
   } else
-    s->fallback = clock->count < 5 ? mulClockFitWarmup : mulClockFitUncertain;
+    s->fallback = mature ? mulClockFitUncertain : mulClockFitWarmup;
   return result;
 }
 bool mulClockFitConfigEncode(uint8_t out[MUL_CLOCK_CONFIG_BYTES],
