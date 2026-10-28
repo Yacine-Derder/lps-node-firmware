@@ -66,11 +66,20 @@ static void scenario(unsigned method, unsigned mode) {
                 now + i * 1000);
   assert(clock.status == mulClockValid);
   if (method == 2) {
+    memset(s.covariance, 0, sizeof(s.covariance));
+    s.covariance[0][0] = 1024;
+    s.covariance[1][1] = 1e10;
+    s.covariance[2][2] = 1e12;
+    observation(&clock, &s, &c, seq + 22, mulTimestampMask(tx + 12 * DT),
+                mulTimestampMask(rx + 12 * DT + 12 * DT * 15000 / 1000000000),
+                now + 12000);
+    assert(!s.applied && s.fallback == mulClockFitUncertain &&
+           clock.status == mulClockValid);
     s.covariance[1][1] = NAN;
-    tx += 12 * DT;
-    rx += 12 * DT + 12 * DT * 15000 / 1000000000;
-    observation(&clock, &s, &c, seq + 22, mulTimestampMask(tx),
-                mulTimestampMask(rx), now + 12000);
+    tx += 13 * DT;
+    rx += 13 * DT + 13 * DT * 15000 / 1000000000;
+    observation(&clock, &s, &c, seq + 23, mulTimestampMask(tx),
+                mulTimestampMask(rx), now + 13000);
     assert(!s.applied && s.fallback == mulClockFitNumerical &&
            clock.status == mulClockValid);
     // Corrupt Kalman covariance AND unavailable median: never manufacture
@@ -98,6 +107,7 @@ int main(void) {
   b[3] = 8;
   assert(mulClockFitConfigDecode(b, &c) && c.estimator == 0 && c.window == 5);
   b[0] = 2;
+  b[2] = b[3] = 5;
   b[1] = 255;
   assert(mulClockFitConfigDecode(b, &c) && c.estimator == 0);
   b[11] = 1;

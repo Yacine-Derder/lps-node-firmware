@@ -81,8 +81,8 @@ bool mulClockFitPredict(const mulClockFit_t *s, double d, double x[3],
                         double p[3][3]) {
   return predict(s, d, x, p, 2);
 }
-static SHARED_HELPER void seed(mulClockFit_t *s, uint64_t epoch, uint64_t tx, uint64_t rx,
-                 bool corrected) {
+static SHARED_HELPER void seed(mulClockFit_t *s, uint64_t epoch, uint64_t tx,
+                               uint64_t rx, bool corrected) {
   uint32_t a = s->accepted, r = s->rejected, n = s->resets;
   mulClockFitReset(s);
   s->accepted = a;
@@ -252,6 +252,8 @@ bool mulClockFitConfigEncode(uint8_t out[MUL_CLOCK_CONFIG_BYTES],
 bool mulClockFitConfigDecode(const uint8_t in[MUL_CLOCK_CONFIG_BYTES],
                              mulClockFitConfig_t *c) {
   if (!in || !c || (in[0] != 1 && in[0] != 2) || in[9] || in[10] || in[11])
+    return false;
+  if (in[0] == 2 && (in[2] != 5 || in[3] != 5))
     return false;
   mulClockFitConfig_t v = {.estimator = in[0] == 2 && in[1] == 2 ? 2 : 0,
                            .window = 5,
