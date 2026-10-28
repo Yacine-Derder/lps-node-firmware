@@ -45,7 +45,11 @@ epoch, finite/PSD covariance, abs(rate)<=200000ppb and conditional rate sigma<=1
 The sigma ceiling deliberately reuses the preexisting Median-5 one-ppm stability
 scale; it is a permissive oscillator-trust ceiling, not a physical accuracy bound.
 Its consequence is bounded startup confidence and rejection of a corrupt/unbounded
-filter, not a claim of millimetre accuracy. If KF is unreliable, the independently
+filter, not a claim of millimetre accuracy. After startup, a phase innovation
+larger than the existing one-ppm interval gate marks the current raw mapping
+origin unavailable even if the robust frequency state remains finite. This
+protects against a timestamp spike being reused as a trusted affine origin;
+it does not change R/q, Huber weighting or the latent Kalman update. If KF is unreliable, the independently
 maintained median applies only when its existing validity gate succeeds; otherwise
 mapping remains unavailable. Numerical failure reseeds KF and exposes reason3.
 Reasons:0=used,1=warmup,2=uncertain,3=numerical. Huber downweighting increments rejected

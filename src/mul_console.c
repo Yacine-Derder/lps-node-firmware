@@ -183,11 +183,11 @@ static void command(void) {
   if(uwbControlRequested()||uwbControlRunning()){reply("ERR clock change requires RF OFF");return;}
   mulClockFitConfig_t spec;if(!cfgMulClockRead(&spec)){reply("ERR invalid stored clock settings");return;}
   if(!strcmp(w[2],"clock_estimator")) {
-   if(!strcmp(w[3],"median"))spec.estimator=0;
-   else if(!strcmp(w[3],"regression"))spec.estimator=1;
-   else {reply("ERR clock_estimator: median/regression");return;}
+   if(!strcmp(w[3],"median")||!strcmp(w[3],"median_5")||!strcmp(w[3],"MEDIAN_5"))spec.estimator=0;
+   else if(!strcmp(w[3],"kalman")||!strcmp(w[3],"KALMAN")||!strcmp(w[3],"kalman_3_state"))spec.estimator=2;
+   else {reply("ERR clock_estimator: median_5/kalman");return;}
   }else if(!strcmp(w[2],"clock_window")) {
-   uint8_t n;if(!id(w[3],&n)||n<8||n>32){reply("ERR clock_window: 8..32");return;}spec.window=n;
+   reply("ERR clock_window retired; fixed Median-5");return;
   }else {
    if(!strcmp(w[3],"on"))spec.compensate=1;
    else if(!strcmp(w[3],"off"))spec.compensate=0;
@@ -366,8 +366,8 @@ bool mulConsolePoll(void) {
   "cfg set profile legacy/multi; RF OFF",
   "cfg set cycle_ms number; compat:1000",
   "cfg set schedule_revision 1..4294967295",
-  "cfg set clock_estimator median/regression",
-  "cfg set clock_window 8..32; clock show",
+  "cfg set clock_estimator median_5/kalman",
+  "clock show; cfg set clock_compensate on/off",
   "cfg set clock_compensate on/off; RF OFF",
   "cfg set profile experimental; HW unverified",
   "cfg set tx_lead_us/rx_budget_us number",

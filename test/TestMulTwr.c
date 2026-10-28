@@ -905,8 +905,8 @@ void test_mulMultiReferenceVisitsTwoOwnersDespiteFirstWindowFailure(void) {
  TEST_ASSERT_EQUAL_UINT32(2,pendingSequence);
  TEST_ASSERT_EQUAL_INT64(SEC,mulTimestampDifference(pendingTimestamp,clockAt(0,origin)));
 }
-void test_mulMultiFollowerRegressionWindowAndOutlierNeverSuppressScheduledBroadcast(void) {
- multiConfig(4,1,10);mulClockFitDefaults(&multiConfiguration.mulClockConfig);multiConfiguration.mulClockConfig.estimator=1;
+void test_mulMultiFollowerKalmanAndOutlierNeverSuppressScheduledBroadcast(void) {
+ multiConfig(4,1,10);mulClockFitDefaults(&multiConfiguration.mulClockConfig);multiConfiguration.mulClockConfig.estimator=2;
  useAlr[1]=true;skew=15000;flight=1000;advance(MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
  for(unsigned i=0;i<50;i++) {
   int64_t at=(int64_t)i*SEC;advance(at+flight+MS);
@@ -918,8 +918,8 @@ void test_mulMultiFollowerRegressionWindowAndOutlierNeverSuppressScheduledBroadc
   if(i==35){TEST_ASSERT_FALSE(decoded.relation.available);}
   advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
  }
- TEST_ASSERT_TRUE(mulClockWorkspace()->fit.ready);TEST_ASSERT_EQUAL(24,mulClockWorkspace()->fit.count);
- TEST_ASSERT_EQUAL_UINT32(1,mulClockWorkspace()->fit.rejected);TEST_ASSERT_INT_WITHIN(1,15000,followerClock.skewPpb);
+ TEST_ASSERT_TRUE(mulClockWorkspace()->fit.ready);TEST_ASSERT_EQUAL(5,mulClockWorkspace()->fit.count);
+ TEST_ASSERT_TRUE(mulClockWorkspace()->fit.rejected>=1);TEST_ASSERT_INT_WITHIN(1,15000,followerClock.skewPpb);
 }
 static void experimentalConfig(unsigned slot,unsigned spacing,unsigned period) {
  multiConfig(8,slot,10);mulScheduleExperimental(&multiConfiguration.mulSchedule);

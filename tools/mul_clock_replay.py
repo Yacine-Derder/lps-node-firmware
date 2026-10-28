@@ -82,7 +82,7 @@ def polynomial_predict(points, x, degree):
 
 
 class Replay:
-    def __init__(self, library, window=24, period=1000):
+    def __init__(self, library, window=5, period=1000):
         self.lib, self.window, self.period = library, window, period
         self.context = None
         self.identity = None
@@ -145,12 +145,12 @@ def build_library(directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('logs', nargs='+', type=Path)
-    parser.add_argument('--window', type=int, default=24)
+    parser.add_argument('--window', type=int, default=5)
     parser.add_argument('--period-ms', type=int, default=1000)
     parser.add_argument('--summary', action='store_true')
     args = parser.parse_args()
-    if not 8 <= args.window <= 32 or not 10 <= args.period_ms <= 2000:
-        parser.error('window8..32; period-ms10..2000')
+    if args.window != 5 or not 10 <= args.period_ms <= 2000:
+        parser.error('window fixed5; period-ms10..2000')
     with tempfile.TemporaryDirectory() as work:
         library = build_library(work)
         for path in args.logs:

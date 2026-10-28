@@ -201,12 +201,23 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
   /* 1ppm conditional sigma ceiling reuses the existing median stability scale;
    * not a physical accuracy bound. Five intervals are required on both methods.
    */
-  s->ready = clock->count == 5 && isfinite(rate) &&
+  s->ready = clock->count == 5 && s->count == 5 && isfinite(rate) &&
              fabs(rate) <= MUL_CLOCK_MAX_PPB && isfinite(sigma) &&
              variance >= 0 && sigma <= MUL_CLOCK_STABILITY_PPB;
   s->skewPpb = isfinite(rate) && fabs(rate) <= MUL_CLOCK_MAX_PPB
                    ? (int32_t)round(rate)
                    : 0;
+  /* A robust frequency fit cannot validate a grossly displaced RAW mapping
+   * origin. Reuse the median's one-ppm interval stability gate after startup;
+   * keep filtering, but expose this observation as unavailable in both methods.
+   */
+  if (s->accepted >= 5 &&
+      s->rmsDtu > K * ((double)dt / 63897600000.) * MUL_CLOCK_STABILITY_PPB) {
+    clock->status = mulClockWarmup;
+    s->ready = 0;
+    s->fallback = mulClockFitUncertain;
+    return result;
+  }
   if (s->ready) {
     clock->skewPpb = s->skewPpb;
     clock->status = mulClockValid;

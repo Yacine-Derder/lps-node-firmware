@@ -30,13 +30,13 @@ class ClockReplay(unittest.TestCase):
                            uptime_ms=10000+i*1000)
                 value = model.feed(row)
                 if i == 40:
-                    self.assertEqual(value['fallback'], 3)
+                    self.assertEqual(value['fallback'], 2)
                     self.assertNotEqual(value['mapping_status'], 2)
             self.assertTrue(value['fit_ready'])
             self.assertTrue(value['fit_applied'])
-            self.assertEqual(value['regression_ppb'], 15000)
+            self.assertEqual(value['kalman_ppb'], 15000)
             self.assertEqual(value['fitted_ppb'], 15000)
-            self.assertEqual(value['rejected'], 1)
+            self.assertGreaterEqual(value['rejected'], 1)
             with self.assertRaises(ValueError):
                 model.feed(dict(row, local_rx_dtu=1 << 40))
         finally:
@@ -86,7 +86,7 @@ class ClockReplay(unittest.TestCase):
                     value = model.feed(row)
                 self.assertTrue(value['fit_applied'])
                 self.assertEqual(value['sample_period_ms'], period)
-                self.assertEqual(value['regression_ppb'], 15000)
+                self.assertEqual(value['kalman_ppb'], 15000)
                 invalid = model.feed(dict(row, capture_age_ms=16))
                 self.assertEqual(invalid['capture_validity'], 'invalid')
                 self.assertEqual(invalid['result'], 0)  # Ignored; does not refresh the prior mapping.

@@ -265,15 +265,15 @@ void test_multiScheduleScalarCliAndShadowBindingGuards(void) {
  TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(MUL_PROFILE_LEGACY,boot.mulSchedule.profile);
 }
 void test_clockEstimatorSettingsPersistenceAndRfOffGuards(void) {
- unsigned before=writes;send(":cfg set clock_estimator regression\n");TEST_ASSERT_EQUAL(before,writes);
+ unsigned before=writes;send(":cfg set clock_estimator kalman\n");TEST_ASSERT_EQUAL(before,writes);
  send(":off\n");apply();send(":cfg set slot_ms 10\n:cfg roster set 0x84 0x85 0x86 0x87\n");
- send(":cfg set clock_estimator regression\n:cfg set clock_window 30\n:cfg set clock_compensate on\n");
- mulClockFitConfig_t c;TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(1,c.estimator);TEST_ASSERT_EQUAL(30,c.window);TEST_ASSERT_EQUAL(1,c.compensate);
+ send(":cfg set clock_estimator kalman\n:cfg set clock_compensate on\n");
+ mulClockFitConfig_t c;TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(2,c.estimator);TEST_ASSERT_EQUAL(5,c.window);TEST_ASSERT_EQUAL(1,c.compensate);
  before=writes;cfgInit();TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(before,writes);
  send(":cfg set clock_window 7\n:cfg set clock_window 33\n:cfg set clock_estimator quadratic\n");TEST_ASSERT_EQUAL(before,writes);
- send(":clock show\n");TEST_ASSERT_NOT_NULL(strstr(output,"method=1 window=30"));
- send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(30,boot.mulClockConfig.window);
- send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(1,c.estimator);
+ send(":clock show\n");TEST_ASSERT_NOT_NULL(strstr(output,"method=2 window=5"));
+ send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());TEST_ASSERT_EQUAL(5,boot.mulClockConfig.window);
+ send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(2,c.estimator);
  send(":off\n");apply();send(":cfg set clock_estimator median\n");TEST_ASSERT_TRUE(cfgMulClockRead(&c));TEST_ASSERT_EQUAL(0,c.estimator);
 }
 void test_experimentalNumericalTimingRequiresExplicitBudgetsAndRfOff(void) {
@@ -371,7 +371,7 @@ void test_planConsoleEditsPersistsPreviewsSelectsAndRejectsUnsupportedRadio(void
  unsigned before=writes;send(":plan set reply_ms 10\n");TEST_ASSERT_EQUAL(before,writes);
  send(":off\n");apply();before=writes;
  send(":cfg set slot_ms 10\n:plan set aa_millihz 10000\n:plan rlrs 144 144\n:plan set util_percent 100\n");TEST_ASSERT_EQUAL(before,writes);
- send(":cfg set clock_window 30\n");mulClockFitConfig_t clock;TEST_ASSERT_TRUE(cfgMulClockRead(&clock));TEST_ASSERT_EQUAL(30,clock.window);
+ send(":cfg set clock_window 30\n");mulClockFitConfig_t clock;TEST_ASSERT_TRUE(cfgMulClockRead(&clock));TEST_ASSERT_EQUAL(5,clock.window);
  cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_TRUE(stored->selected);
  send(":plan use off\n");apply();TEST_ASSERT_NULL(boot.mulPlan);uint16_t slot;TEST_ASSERT_TRUE(cfgMulSlotRead(&slot));TEST_ASSERT_EQUAL(500,slot);
 }
