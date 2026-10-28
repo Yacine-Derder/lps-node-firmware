@@ -8,6 +8,7 @@ ifneq ($(MUL_ONLY),1)
 $(error This production target is MUL-only; use Git revision fd44002 for the original combined image)
 endif
 .DEFAULT_GOAL := all
+.PHONY: all clean dfu check_submodules
 PYTHON           ?= python3
 # CFLAGS          += -fdiagnostics-color=auto
 # CFLAGS += -DUSE_FTDI_UART
@@ -130,7 +131,7 @@ erase:
 openocd:
 	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets
 
-dfu:
+dfu: check_submodules bin/lps-node-firmware.dfu
 	dfu-util -d 0483:df11 -a 0 -D bin/lps-node-firmware.dfu -s :leave
 
 reset_and_dfu:
