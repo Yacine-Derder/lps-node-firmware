@@ -22,11 +22,11 @@ typedef struct {
  * No absolute 40-bit timestamp is converted to floating point. */
 typedef struct {
   double state[3], covariance[3][3];
-  uint64_t lastTx, lastRx, elapsed, epoch;
+  uint64_t lastTx, lastRx, epoch;
   int64_t phase;
   int32_t skewPpb;
   uint32_t rmsDtu, uncertaintyPpb, rejected, accepted, resets;
-  uint8_t count, next, inliers, consecutive, compensated, ready, applied,
+  uint8_t count, inliers, compensated, ready, applied,
       fallback;
 } mulClockFit_t;
 void mulClockFitDefaults(mulClockFitConfig_t *c);
