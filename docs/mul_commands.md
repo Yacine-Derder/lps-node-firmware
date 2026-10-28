@@ -404,11 +404,13 @@ journal migration preserves implicit/explicit clock settings and retains rollbac
 under interrupted writes; LPS retains the original100-byte checksum image and its
 existing fail-closed recovery semantics.
 
-Optional research diagnostics: `cfg set clock_estimator regression`,
-`cfg set clock_window 24`, `cfg set samples on`, `cfg set telemetry on` on STM32;
-`clock show` reports current state. The default estimator remains median. Clock
-telemetry type10 v2 includes raw40-bit timestamps, actual period and capture age;
-v1 remains readable with unknown capture age. Routine logs preserve both.
+Clock selection is persistent and requires acknowledged RF OFF. Exactly two
+methods are supported: `cfg set clock_estimator MEDIAN_5` (default, alias `median`)
+and `cfg set clock_estimator KALMAN`. LPS console tokens are case-insensitive;
+its USB console uses the existing colon command prefix. Changes autosave; no
+separate SAVE or rebuild is needed. `clock_window` is retired. Clock diagnostics
+v3 and replay schema2 distinguish Kalman from old recorded regression diagnostics;
+old recordings remain readable. See [shared clock model](../portable/mul_core/CLOCK.md).
 
 ## MUL-only production image
 
@@ -656,3 +658,105 @@ Generated AA failure investigation: the opt-in `MUL_TWR_TRACE=1` image records
 bounded stage events on both ALRs and drains them through main-task USB output.
 See [AA diagnostic build, fields and failure inspection](mul_aa_diagnostics.md).
 It changes no plan/RF timing or protocol and defaults disabled.
+
+
+## Median-5 / three-state Kalman build and acceptance
+
+Production remains MUL-only: modes5/6 retain their IDs and all current features;
+stock0..4 remain unavailable. The canonical portable clock implementation is
+shared with STM32. Do not hand-edit consumer snapshots. Historical selector1
+(regression), absent settings and unknown selectors read as Median-5. New selector2
+requires clock codec2. Structurally damaged records still use the existing
+fail-closed storage handling; no plan/address/calibration is erased by migration.
+
+Human console commands, one line at a time after confirming RF OFF:
+
+```text
+:off
+:cfg set clock_estimator MEDIAN_5
+:clock show
+```
+
+For Kalman use `:cfg set clock_estimator KALMAN`. `:on` applies the saved setting
+when the operator resumes the established experiment. The reference may retain
+its default: it defines the clock domain and never performs follower updates.
+No device commands were executed during implementation.
+
+Build/verify, without contacting hardware:
+
+```sh
+cd ~/Documents/lps-node-firmware
+make clean
+make -j4
+python3 -m unittest discover -s tools/test -p test_dfu_dependencies.py
+make -n dfu
+python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000
+```
+
+The default `dfu` target now depends on submodule verification and the current
+`bin/lps-node-firmware.dfu`, which depends on BIN/ELF/source/core inputs. The safe
+unit test forces a changed core timestamp in a dry run and checks compilation,
+linking/conversion occur BEFORE dfu-util. Operator-only flashing remains exactly:
+
+```sh
+cd ~/Documents/lps-node-firmware
+sudo make dfu
+```
+
+The assistant never executes this command. Preserve existing EEPROM/configuration
+and the established DFU-entry procedure. Default PHY, RF scheduling, antenna/power
+calibration, plan fields and on-air formats are unchanged. Existing PHY/diagnostic
+build options remain available; no new build variable is needed for the estimators.
+
+Default image: flash126988/131072 B (4084 B free), static RAM including all reserved
+stacks14232/16384 B (2152 B free). The optional CH5 AA1+RX diagnostic image also
+links: flash131044 B (28 B free), RAM15360 B (1024 B free). That optional combination
+has virtually no remaining flash growth margin; recheck it with any compiler/source
+change. No diagnostic feature or stack reservation was removed. Obsolete regression
+window controls and its duplicate/unmeaningful inlier display were retired; new
+KF log keys: `h` history, `n` initialization count, `f` model ppb, `b` applied
+ppb, `v` absolute innovation DTU, `rej` downweighted count, `s` sigma ppb, `c`
+compensated, `r` ready, `m` mapping status, `a` age ms, `rst` reset count and `e`
+epoch. Physical bound remains UNKNOWN. `use=2/0/255` means Kalman/Median/unavailable;
+`fb=0/1/2/3` means used/warmup/uncertain/numerical.
+
+The clock-fit state is160 B instead of336 B, with an8-byte configuration struct
+(12-byte persistent wire codec). ARM GCC static frames are104 B for observation,
+376 B update,224 B prediction,112 B covariance check:816 B on that nested path
+before library frames; the ALR event frame adds272 B. Both1600 B task stacks and
+the2048 B interrupt-stack reservation are unchanged. These are compiler frame
+measurements, not measured runtime watermarks or proof of RF deadline margin.
+The Cortex-M0 executes double arithmetic in software; do not infer its latency
+from desktop replay. Measure stack high-water and RX-to-delayed-TX service on
+hardware, including startup, outliers and fallback, before long experiments.
+
+Read-only prototype checks (no tuning, no output files in experiment directories):
+
+```sh
+/usr/bin/python3 tools/test/verify_clock_model.py   ../uwb_logs/replay-full-20min/20261028T130040462965Z-robot-0-compact.jsonl   ../Codex/2026-10-28/referenced-chatgpt-conversation-this-is-an-3/outputs/analyze_uwb.py
+/usr/bin/python3 tools/test/verify_clock_model.py   ../uwb_logs/replay-full-20min/alr133.log   ../Codex/2026-10-28/referenced-chatgpt-conversation-this-is-an-3/outputs/analyze_uwb.py
+```
+
+The existing system Python has NumPy; no dependency installation is required.
+Receiver comparison:1184 observations,1179 exact applied integer rates, maximum
+rate/drift difference1.43e-8. Follower numerical comparison:1194 real TX/RX pairs,
+1188 exact applied rates, difference4.52e-9; coarse MCU age is unavailable in that
+serial log and explicitly inferred from1Hz sequence cadence. These are model-port
+checks, not evidence of follower accuracy improvement. The receiver-only experiment's
+small Kalman advantage was statistically inconclusive. Parameters remain frozen.
+
+Keep firmware revisions and selected methods for all nodes with each capture.
+Start manual validation with Median-5, then change only the selected estimator
+through the existing RF-OFF workflow. Verify warmup, missing-reference recovery,
+clock-epoch changes, fallback, both-unavailable behavior, unchanged slots/TWR and
+serial/transport losses. On STM32 use the single `build/Universal` preset and the
+existing Wi-Fi collector; its guide includes exact new/old replay validation.
+
+
+The final default linker map's largest individual flash symbols are console parsing
+(`mulConsoleByte`5464 B), ALR events3536 B, DW1000 tuning2536 B and TWR events2384 B.
+Software double add/subtract/multiply/divide together consume6620 B; clock observe
+is1332 B. Largest named RAM objects are the two1600 B task stacks, init buffer1024 B,
+idle stack800 B, diagnostic stream592 B and USB buffers/state. The separate2048 B
+interrupt stack is also included in the total reserved RAM above. The refactor
+removes176 B of old fit state without reducing any stack reservation.

@@ -17,7 +17,8 @@ import numpy as np
 ROOT=Path(__file__).resolve().parents[2]
 DT=63897600000;B=10**9;MASK=(1<<40)-1
 
-def compare(recording,prototype):
+def compare(recording,prototype,core=None):
+    core=(core or ROOT/'portable/mul_core').resolve()
     # Load ONLY the original function; importing the analysis module would run
     # tuning and rewrite outputs. We explicitly do neither.
     tree=ast.parse(prototype.read_text())
@@ -56,7 +57,7 @@ def compare(recording,prototype):
     expected,_=env['kalman'](points,1024.,1.)
     with tempfile.TemporaryDirectory() as d:
         lib=Path(d)/'model.so'
-        subprocess.run(['cc','-std=c11','-shared','-fPIC','-O2','-Iportable/mul_core','tools/test/clock_model_api.c','portable/mul_core/mul_clock_fit.c','portable/mul_core/mul_clock.c','portable/mul_core/mul_common.c','-lm','-o',str(lib)],cwd=ROOT,check=True)
+        subprocess.run(['cc','-std=c11','-shared','-fPIC','-O2','-I'+str(core),'tools/test/clock_model_api.c',str(core/'mul_clock_fit.c'),str(core/'mul_clock.c'),str(core/'mul_common.c'),'-lm','-o',str(lib)],cwd=ROOT,check=True)
         api=C.CDLL(str(lib));api.model_new.restype=C.c_void_p;api.model_free.argtypes=[C.c_void_p]
         api.model_step.argtypes=[C.c_void_p,C.c_uint32,C.c_uint64,C.c_uint64,C.c_uint32,C.POINTER(C.c_double)]
         ptr=api.model_new();assert ptr
@@ -74,7 +75,7 @@ def compare(recording,prototype):
         finally:api.model_free(ptr)
     assert max_error<1e-6,(max_error,len(points))
     assert exact==applied and applied>10,(exact,applied)
-    print(json.dumps(dict(observations=len(points),max_rate_drift_error=max_error,applied_rate_integer_matches=exact,applied=applied,R=1024,q=1,reference=str(prototype), coarse_age_source='inferred_1Hz_cadence_not_recorded_uptime' if recording.suffix=='.log' else 'recorded_receiver_uptime')))
+    print(json.dumps(dict(observations=len(points),max_rate_drift_error=max_error,applied_rate_integer_matches=exact,applied=applied,R=1024,q=1,reference=str(prototype),core=str(core), coarse_age_source='inferred_1Hz_cadence_not_recorded_uptime' if recording.suffix=='.log' else 'recorded_receiver_uptime')))
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('recording',type=Path);p.add_argument('prototype',type=Path);a=p.parse_args();compare(a.recording,a.prototype)
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('recording',type=Path);p.add_argument('prototype',type=Path);p.add_argument('--core',type=Path);a=p.parse_args();compare(a.recording,a.prototype,a.core)

@@ -38,10 +38,13 @@ Delayed-TX guards remain enforced. Fixed AA maintenance windows still require
 cycle>=1000ms; disabling AA permits shorter cycles, with propagation unavailable
 until refreshed or supplied externally. See [configuration](mul_commands.md).
 
-Selectable clock estimation uses the existing five-sample median or bounded
-centered robust regression (default24 observations), with median fallback when
-rate evolution invalidates a window fit. Arrival mapping and propagation correction
-remain distinct; fit uncertainty is conditional scatter, not a physical error bound.
+Selectable clock estimation uses Median-5 (default) or the shared three-state
+phase/frequency/drift Kalman model, with median fallback when Kalman is unreliable.
+Regression and the hybrid regression/median selector are removed. Codec1 stored
+selectors migrate to Median-5; codec2 selector2 explicitly selects Kalman. Arrival
+mapping and propagation correction remain distinct; covariance is conditional, not
+a physical error bound. Equations, units and validity rules are in
+[the shared clock contract](../portable/mul_core/CLOCK.md).
 Optional type10 raw clock diagnostics carry explicit period/capture-age semantics
 and enable production-C offline replay. No host reception time becomes UWB time.
 
@@ -1315,7 +1318,7 @@ poses are volatile and never wear EEPROM. This uses the existing bounded legacy
 TLV transaction, not a new power-loss journal. Invalid/uncertain source storage
 blocks RF activation. Selection never silently substitutes TWR or truth for
 missing external data. It does not change independently configured AA airtime.
-The selected delay supplies regression compensation, simultaneous reservation
+The selected delay supplies optional Kalman observation compensation, simultaneous reservation
 mapping and follower relation publication through existing explicit APIs.
 
 Relation subversion3 preserves frame sizes while identifying external/none and

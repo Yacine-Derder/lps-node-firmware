@@ -34,8 +34,9 @@ off. Continue D/E/F/G without physical checkpoints; hardware remains unauthorize
 ## Current software upgrade campaign
 
 Stages A/B and numerical timing integration are software-tested across LPS,
-STM32 and ESP32. The clock estimator is selectable median/regression with robust
-fallback; profile3 provides guarded numerical broadcast spacing and100..2000ms
+STM32 and ESP32. The clock estimator is selectable Median-5/Kalman-3-state
+(default Median-5), with versioned persistent migration and median fallback.
+Profile3 provides guarded numerical broadcast spacing and100..2000ms
 cycles with versioned persistence/telemetry. Tests and firmware builds do not
 establish physical timing or accuracy. Compatibility defaults remain unchanged.
 
