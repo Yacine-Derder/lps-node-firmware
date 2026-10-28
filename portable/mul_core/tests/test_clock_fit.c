@@ -88,6 +88,11 @@ static void scenario(unsigned method, unsigned mode) {
     mulClockFitReset(&s);
     observation(&clock, &s, &c, 1, 1, 2, 1);
     assert(!s.applied && clock.status != mulClockValid);
+    clock.epoch = 0;
+    for (unsigned j = 1; j < 8; j++)
+      observation(&clock, &s, &c, j + 1, 1 + j * DT, 2 + j * DT, 1 + j * 1000);
+    assert(clock.status != mulClockValid && !s.applied &&
+           s.fallback == mulClockFitNumerical);
   }
 }
 int main(void) {

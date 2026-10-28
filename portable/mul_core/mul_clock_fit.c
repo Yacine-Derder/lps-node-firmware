@@ -144,6 +144,12 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
       network, clock, p, rx, now, valid, c->periodMs);
   if (result == mulClockIgnored)
     return result;
+  if (!clock->epoch) {
+    clock->status = mulClockWarmup;
+    s->ready = s->applied = 0;
+    s->fallback = mulClockFitNumerical;
+    return result;
+  }
   if (c->estimator == mulClockEstimatorMedian) {
     s->epoch = clock->epoch;
     s->count = clock->count;
