@@ -28,6 +28,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "cfg.h"
+#include "mul_antenna.h"
 #include "eeprom.h"
 #include "uwb.h"
 #include "uwb_control.h"
@@ -60,6 +61,7 @@ static bool mulStorageUncertain, pendingRestart;
 static mulStoredPlan_t cachedPlan;
 static mulPlanStoreResult_t cachedPlanStatus=mulPlanAbsent;
 static void planBootLoad(void);
+static void antennaBootLoad(void);
 static volatile bool writing;
 static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length);
 bool cfgPendingRestart(void) {return pendingRestart||mulStorageUncertain||writing;}
@@ -189,6 +191,7 @@ static void idleConfiguration(void) {
 
 void cfgInit(void) {
   pendingRestart=false;cachedPlanStatus=mulPlanIoError;
+  mulAntennaSelect(MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU);
   mulStorageUncertain=true;
   if (readData()) {
     cfgHeader = (CfgHeader*) buffer;
@@ -218,7 +221,7 @@ void cfgInit(void) {
     tlv.data=&buffer[SIZE_HEADER];idleConfiguration();
     printf("CONFIG: EEPROM unreadable; radio idle; data retained\r\n");
   }
-  if(!mulStorageUncertain)planBootLoad();
+  if(!mulStorageUncertain){antennaBootLoad();if(!mulStorageUncertain)planBootLoad();}
 }
 
 bool cfgReset(void) {
@@ -499,4 +502,57 @@ bool cfgGeometrySourceRead(mulDelaySource_t *source) {
 bool cfgGeometrySourceWrite(mulDelaySource_t source) {
  if(source>mulDelayNone||uwbControlRequested()||uwbControlRunning())return false;
  uint8_t value=(uint8_t)source;return mulStore(cfgMulGeometrySource,&value,1);
+}
+
+/* Antenna journal: two32-byte aligned slots after the plan slots. The existing
+ * serialized plan workspace is reused; no additional EEPROM image/RAM buffer.
+ * Record24: magic/version/reserved/generation/TX/RX/CRC32/commit. */
+#define CAL_BASE 384u
+#define CAL_COMMIT UINT32_C(0x43414c43)
+#define CAL_MAGIC UINT32_C(0x314c4143)
+static uint32_t calGet(const uint8_t *b){return (uint32_t)b[0]|(uint32_t)b[1]<<8|(uint32_t)b[2]<<16|(uint32_t)b[3]<<24;}
+static void calPut(uint8_t *b,uint32_t n){for(unsigned i=0;i<4;i++)b[i]=n>>(8*i);}
+typedef struct {uint32_t generation;uint16_t tx,rx;uint8_t slot;} calRecord_t;
+static bool calDecode(const uint8_t *b,calRecord_t *c){
+ if(calGet(b)!=CAL_MAGIC||b[4]!=1||b[5]||b[6]||b[7]||calGet(b+20)!=CAL_COMMIT||calGet(b+16)!=mulScheduleCrc(b,16))return false;
+ c->generation=calGet(b+8);c->tx=b[12]|b[13]<<8;c->rx=b[14]|b[15]<<8;return true;
+}
+static mulPlanStoreResult_t calLoad(calRecord_t *out){
+ bool found=false,committed=false;
+ for(unsigned slot=0;slot<2;slot++) {
+  uint8_t *b=planWorkspace.bytes;
+  if(!eepromRead(CAL_BASE+slot*32,b,24))return mulPlanIoError;
+  committed|=calGet(b+20)==CAL_COMMIT;
+  calRecord_t c;if(!calDecode(b,&c))continue;c.slot=slot;
+  if(found){uint32_t delta=c.generation-out->generation;
+   if(delta==UINT32_C(0x80000000)||(!delta&&(c.tx!=out->tx||c.rx!=out->rx)))return mulPlanCorrupt;
+   if(delta>=UINT32_C(0x80000000))continue;
+  }
+  *out=c;found=true;
+ }
+ return found?mulPlanStored:committed?mulPlanCorrupt:mulPlanAbsent;
+}
+static void antennaBootLoad(void){
+ calRecord_t c;mulPlanStoreResult_t result=calLoad(&c);
+ if(result==mulPlanStored)mulAntennaSelect(c.tx,c.rx);
+ else if(result!=mulPlanAbsent)mulStorageUncertain=true;
+}
+bool cfgAntennaWrite(uint16_t tx,uint16_t rx){
+ if(uwbControlRequested()||uwbControlRunning())return false;
+ taskENTER_CRITICAL();bool busy=writing||mulStorageUncertain;if(!busy)writing=true;taskEXIT_CRITICAL();
+ if(busy)return false;
+ calRecord_t old;mulPlanStoreResult_t status=calLoad(&old);bool ok=false;
+ if(status==mulPlanStored&&old.tx==tx&&old.rx==rx){ok=true;goto done;}
+ if(status==mulPlanIoError||status==mulPlanCorrupt)goto done;
+ uint8_t *b=planWorkspace.bytes;memset(b,0,24);
+ calPut(b,CAL_MAGIC);b[4]=1;calPut(b+8,status==mulPlanStored?old.generation+1:1);
+ b[12]=tx;b[13]=tx>>8;b[14]=rx;b[15]=rx>>8;
+ calPut(b+16,mulScheduleCrc(b,16));calPut(b+20,CAL_COMMIT);
+ unsigned at=CAL_BASE+(status==mulPlanStored?(old.slot^1u):0)*32;
+ const uint8_t zero[4]={0};
+ ok=eepromWrite(at+20,(void *)zero,4)&&eepromWrite(at,b,20)&&eepromWrite(at+20,b+20,4)&&
+    eepromRead(at,planWorkspace.verify,24)&&!memcmp(b,planWorkspace.verify,24);
+ done:
+ if(ok)mulAntennaSelect(tx,rx);else mulStorageUncertain=true;
+ writing=false;return ok;
 }

@@ -70,7 +70,7 @@ cd ~/Documents/lps-node-firmware
 git log -1 --oneline
 git status --short
 make clean
-make -j6 REV=B BOOTLOAD=0 EXTRA_CFLAGS='-DMUL_HYBRID_CH5=1 -DMUL_PROP_MAX_AGE_MS=6000 -DMUL_TWR_TRACE=1'
+make -f profiles/stationary-ch5.mk -j6 EXTRA_CFLAGS='-DMUL_TWR_TRACE=1'
 python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
 arm-none-eabi-nm bin/lps-node-firmware.elf | grep -E 'mulTwrTracePoll|aaTrace'
 arm-none-eabi-strings bin/lps-node-firmware.elf | grep 'AA1 c='
@@ -312,7 +312,7 @@ no programming, serial access or RF operation was performed for this change):
 ```sh
 cd ~/Documents/lps-node-firmware
 make clean
-make -j6 REV=B BOOTLOAD=0 EXTRA_CFLAGS='-DMUL_HYBRID_CH5=1 -DMUL_PROP_MAX_AGE_MS=6000 -DMUL_TWR_TRACE=1 -DMUL_RX_DIAG=1'
+make -f profiles/stationary-ch5.mk -j6 EXTRA_CFLAGS='-DMUL_RX_DIAG=1'
 python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
 ```
 
@@ -710,3 +710,15 @@ the STM32 pin verifies independently. That tooling failure is not evidence of
 incompatibility for the current codec2 plan. Codec4 remains unsupported there.
 The existing combined-diagnostics ELF passes image checks with716 flash bytes
 and856 RAM bytes free; this audit did not rebuild or measure stack watermarks.
+
+
+### Calibration image resource constraint
+
+With the EEPROM calibration feature, use the named stationary profile above so
+CH5/age6000/speed0 are retained. AA1 tracing and RX diagnostics each fit separately:
+AA1 flash130152 B/RAM14972 B; RX flash130672 B/RAM14628 B. Enabling **both** exceeds
+128KiB flash by584 B with the checked ARM GCC13 build. The link fails; never use
+a stale DFU after a failed build. No diagnostic code or stack reservation has been
+removed to hide this limit. Combined tracing needs additional size work before use.
+For each diagnostic variant, operator flashing must repeat its exact makefile and
+EXTRA_CFLAGS; plain make deliberately returns to ordinary strict settings.

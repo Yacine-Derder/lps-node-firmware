@@ -792,3 +792,24 @@ safety reset. `MUL KF rr` reports the **last reset** reason:0 none,1 startup,
 `rst` remains cumulative. Median-5 remains default; no R/q or rejection gate changed.
 Deterministic clock tests reproduce the AA omission on every tenth cycle: v1
 reseeds twice per AR gap, stationary v2 remains initialized without resets.
+
+
+### Persistent mode5 antenna calibration
+
+With acknowledged RF OFF, `:cal set tx N rx N` atomically saves two unsigned16-bit
+hardware delays. `:cal show` reports the selected EEPROM/default pair;
+`:cal reset` explicitly saves legacy14498/18453. A two-slot CRC32 commit-last
+journal at384/416 shares the existing serialized plan workspace and never rewrites
+legacy/plan data. Boot accepts absent calibration without writes. Torn updates
+retain the preceding committed pair; failed I/O/readback blocks activation until
+reboot/recovery. Mode5 initialization applies both saved registers and TX cache;
+validation compares against that pair. It does not change RF timing calculations.
+See [three-device calibration and3-minute validation](../../epuck-esp32/docs/uwb_logging.md#per-device-antenna-calibration-and-availability-audit)
+for identifiability,44/56 incremental splitting and independent-distance checks.
+No physical calibration values were derived or applied during implementation.
+
+Stationary calibration image: flash128568/131072 B, static RAM including reserved
+stacks14236/16384 B. Calibration cache adds4 B; journal operations reuse the existing
+192-byte plan workspace. AA1 and RX diagnostic builds fit individually; their
+combined image overflows flash by584 B. Stacks remain unchanged. Earlier resource
+figures in the estimator acceptance section refer to the pre-calibration image.

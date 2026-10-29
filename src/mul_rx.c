@@ -101,18 +101,20 @@ void mulAntennaConfigure(dwDevice_t *dev)
   // libdw1000 caches ONE value and commits it to BOTH registers. MUL needs
   // independent directions. Cache TX for legacy driver helpers; write RX
   // explicitly, and never full-commit in MUL. Validation detects such overwrites.
-  dev->antennaDelay.full = MUL_ANTENNA_TX_DTU;
-  const uint8_t tx[] = {MUL_ANTENNA_TX_DTU & 0xff, MUL_ANTENNA_TX_DTU >> 8};
-  const uint8_t rx[] = {MUL_ANTENNA_RX_DTU & 0xff, MUL_ANTENNA_RX_DTU >> 8};
+  uint16_t txDelay,rxDelay;mulAntennaGet(&txDelay,&rxDelay);
+  dev->antennaDelay.full = txDelay;
+  const uint8_t tx[] = {txDelay & 0xff, txDelay >> 8};
+  const uint8_t rx[] = {rxDelay & 0xff, rxDelay >> 8};
   dwSpiWrite(dev, TX_ANTD, NO_SUB, tx, sizeof(tx));
   dwSpiWrite(dev, LDE_IF, LDE_RXANTD_SUB, rx, sizeof(rx));
 }
 
 bool mulAntennaValid(dwDevice_t *dev)
 {
-  return dwSpiRead16(dev, TX_ANTD, NO_SUB) == MUL_ANTENNA_TX_DTU &&
-         dwSpiRead16(dev, LDE_IF, LDE_RXANTD_SUB) == MUL_ANTENNA_RX_DTU &&
-         dev->antennaDelay.full == MUL_ANTENNA_TX_DTU;
+  uint16_t txDelay,rxDelay;mulAntennaGet(&txDelay,&rxDelay);
+  return dwSpiRead16(dev, TX_ANTD, NO_SUB) == txDelay &&
+         dwSpiRead16(dev, LDE_IF, LDE_RXANTD_SUB) == rxDelay &&
+         dev->antennaDelay.full == txDelay;
 }
 
 void mulRxRearm(dwDevice_t *dev)

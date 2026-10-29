@@ -67,6 +67,8 @@ bool cfgMulSlotWrite(uint16_t slotMs);
 bool cfgMulScheduleRead(uint8_t node,mulSchedule_t *schedule);
 bool cfgMulScheduleWrite(uint8_t node,const mulSchedule_t *schedule);
 
+// Independent commit-last journal at384/416, no legacy TLV rewrite.
+bool cfgAntennaWrite(uint16_t tx,uint16_t rx);
 bool cfgReset(void);
 
 bool cfgFieldSize(ConfigField field, uint8_t * size);

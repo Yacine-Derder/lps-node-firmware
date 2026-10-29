@@ -257,6 +257,12 @@ static void command(void) {
   reply(uwbControlRequestSlot(slot)?"SAVED slot_ms; ON activates; no restart":"ERR slot activation; RF remains off");return;
  }
  if(count==2&&!strcmp(w[0],"peer")&&!strcmp(w[1],"list")){page=peers;pageIndex=0;return;}
+ if(!strcmp(w[0],"cal")&&((count==2&&!strcmp(w[1],"reset"))||(count==6&&!strcmp(w[1],"set")&&!strcmp(w[2],"tx")&&!strcmp(w[4],"rx")))) {
+  uint32_t tx=MUL_ANTENNA_TX_DTU,rx=MUL_ANTENNA_RX_DTU;
+  if(count==6&&(!decimal(w[3],&tx)||!decimal(w[5],&rx)||tx>65535||rx>65535)){reply("ERR antenna: 0..65535 DTU");return;}
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR cal requires RF OFF acknowledged");return;}
+  reply(cfgAntennaWrite(tx,rx)?"SAVED antenna; ON applies":"ERR antenna EEPROM; RF blocked");return;
+ }
  if(count==2&&!strcmp(w[0],"cal")&&!strcmp(w[1],"show")){page=cal;pageIndex=0;return;}
  if(count==2&&!strcmp(w[0],"diag")&&!strcmp(w[1],"reset")) {
   reply(uwbControlResetCounters()?"Radio event counters reset; models retained":"ERR diag reset requires RF OFF acknowledged");return;
@@ -355,8 +361,8 @@ bool mulConsolePoll(void) {
 #endif
   "role ref/follower/rlr/standalone; addr id",
   "reference id; follower id; peer list",
-  "cal show; diag [reset]; :mul aliases retained",
-  "wifi/tlm and runtime cal unsupported",
+  "cal show|set tx N rx N|reset; diag [reset]",
+  "wifi/tlm unsupported; cal requires OFF",
   "Autosave; restart applies; off retains mode",
   "hybrid_static: stationary opt-in build only",
   "cfg set slot_ms number; compat:10/50/500",
@@ -458,8 +464,8 @@ bool mulConsolePoll(void) {
   if(pageIndex<5){snprintf(line,sizeof(line),"RADIO event=%u count=%lu",pageIndex,(unsigned long)uwbControlCount(pageIndex));last=pageIndex==4;}
  }
  if(page==cal) {
-  if(pageIndex==0){snprintf(line,sizeof(line),"CAL runtime=UNSUPPORTED accuracy=UNKNOWN");last=false;}
-  else if(pageIndex==1){snprintf(line,sizeof(line),"ALR build TX=%u RX=%u DTU",MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU);last=false;}
+  if(pageIndex==0){snprintf(line,sizeof(line),"CAL EEPROM/default accuracy=UNKNOWN");last=false;}
+  else if(pageIndex==1){uint16_t tx,rx;mulAntennaGet(&tx,&rx);snprintf(line,sizeof(line),"ALR saved TX=%u RX=%u DTU",tx,rx);last=false;}
   else {const uwbConfig_t *c=uwbGetConfig();snprintf(line,sizeof(line),"BOOT power smart=%u forced=%u",c->smartPower,c->forceTxPower);}
  }
 #ifdef USE_FTDI_UART

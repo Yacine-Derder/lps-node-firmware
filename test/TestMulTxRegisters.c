@@ -1,3 +1,4 @@
+#include "mul_antenna.h"
 #include "mul_pose.h"
 #include "mul_geometry.h"
 #include "mul_ranging_plan.h"
@@ -105,6 +106,7 @@ static void receivedCallback(dwDevice_t *device) {
 static dwOps_t radioOps = {.spiRead = radioRead, .spiWrite = radioWrite};
 
 void setUp(void) {
+  mulAntennaSelect(MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU);
   memset(registers, 0, sizeof(registers));
   memset(&radio, 0, sizeof(radio));
   memset(&nodeConfig, 0, sizeof(nodeConfig));
@@ -124,6 +126,7 @@ void setUp(void) {
 void tearDown(void) {}
 
 static void checkTimestamp(uint64_t expectedRaw, uint16_t antenna) {
+  mulAntennaSelect(antenna,MUL_ANTENNA_RX_DTU);
   registers[TX_ANTD][0] = antenna;
   registers[TX_ANTD][1] = antenna >> 8;
   systemTime = mulTimestampMask(expectedRaw - UINT64_C(1277952000)); // 20 ms
@@ -575,4 +578,13 @@ void test_driverKeepsExistingErrorTimeoutPrecedenceOverSimultaneousGoodRx(void) 
  TEST_ASSERT_EQUAL(0,registers[SYS_STATUS][1]&(1u<<(RXFCG_BIT-8)));
  // The driver cannot identify which frame simultaneous sticky flags describe.
  // Do not silently prefer GOOD and weaken its error/timeout recovery contract.
+}
+
+void test_savedAntennaDirectionsReachHardwareAndValidation(void){
+ mulAntennaSelect(15123,19234);mulAntennaConfigure(&radio);
+ TEST_ASSERT_EQUAL_UINT16(15123,dwSpiRead16(&radio,TX_ANTD,NO_SUB));
+ TEST_ASSERT_EQUAL_UINT16(19234,dwSpiRead16(&radio,LDE_IF,LDE_RXANTD_SUB));
+ TEST_ASSERT_EQUAL_UINT64(15123,radio.antennaDelay.full);TEST_ASSERT_TRUE(mulAntennaValid(&radio));
+ radio.antennaDelay.full=14498;TEST_ASSERT_FALSE(mulAntennaValid(&radio));
+ mulAlrAlgorithm.init(&nodeConfig,&radio);TEST_ASSERT_TRUE(mulAntennaValid(&radio));
 }

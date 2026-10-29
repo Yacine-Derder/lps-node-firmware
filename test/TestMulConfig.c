@@ -1,3 +1,4 @@
+#include "mul_antenna.h"
 #include "mul_pose.h"
 #include "mul_geometry.h"
 #include "mul_clock_fit.h"
@@ -25,16 +26,16 @@ bool uwbSetEnabled(bool enabled){return uwbControlRequest(enabled);}
 void dwIdle(dwDevice_t *dev){(void)dev;TEST_ASSERT_TRUE(owner);stops++;}
 void dwClearAllStatus(dwDevice_t *dev){(void)dev;TEST_ASSERT_TRUE(owner);clears++;}
 bool usbcommTryWrite(const char *data,unsigned len){TEST_ASSERT_TRUE(len<=48);if(!txReady)return false;TEST_ASSERT_TRUE(strlen(output)+len<sizeof(output));strncat(output,data,len);return true;}
-static uint8_t memory[8192];static unsigned writes;static int budget;static bool badRead,reenter;
+static uint8_t memory[8192];static unsigned writes;static int budget,byteBudget;static bool badRead,reenter;
 bool eepromRead(int address,void *data,size_t n) {if(badRead)return false;if(address<0||(size_t)address+n>sizeof(memory))return false;memcpy(data,memory+address,n);return true;}
-bool eepromWrite(int address,void *data,size_t n) {writes++;TEST_ASSERT_EQUAL(0,critical);if(reenter){reenter=false;TEST_ASSERT_FALSE(cfgWriteU8(cfgMode,0));TEST_ASSERT_FALSE(cfgStorageReady());TEST_ASSERT_TRUE(cfgPendingRestart());}if(budget==0)return false;if(budget>0)budget--;if(address<0||(size_t)address+n>sizeof(memory))return false;memcpy(memory+address,data,n);return true;}
+bool eepromWrite(int address,void *data,size_t n) {writes++;TEST_ASSERT_EQUAL(0,critical);if(reenter){reenter=false;TEST_ASSERT_FALSE(cfgWriteU8(cfgMode,0));TEST_ASSERT_FALSE(cfgStorageReady());TEST_ASSERT_TRUE(cfgPendingRestart());}if(budget==0)return false;if(budget>0)budget--;if(address<0||(size_t)address+n>sizeof(memory))return false;if(byteBudget>=0){size_t take=(size_t)byteBudget<n?(size_t)byteBudget:n;memcpy(memory+address,data,take);byteBudget-=take;return take==n;}memcpy(memory+address,data,n);return true;}
 void HAL_Delay(uint32_t ms) {(void)ms;}
 static void checksum(void) {unsigned size=memory[3]|memory[4]<<8;uint8_t sum=0;for(unsigned i=0;i<5+size;i++)sum+=memory[i];memory[5+size]=sum;}
 static void legacy(uint8_t address) {
  memset(memory,0,sizeof(memory));uint8_t record[]={0xbc,1,0,15,0,cfgAddress,1,address,cfgMode,1,5,cfgTxPower,4,0x12,0x34,0x56,0x78,cfgSmartPower,1,1};
  memcpy(memory,record,sizeof(record));checksum();cfgInit();writes=0;boot.mode=5;boot.address[0]=address;uwbControlInit(&boot);mulConsoleReset();
 }
-void setUp(void){budget=-1;badRead=reenter=false;stops=clears=inits=model=0;owner=false;txReady=true;output[0]=0;legacy(0x84);}
+void setUp(void){budget=byteBudget=-1;badRead=reenter=false;stops=clears=inits=model=0;owner=false;txReady=true;output[0]=0;legacy(0x84);}
 void tearDown(void){TEST_ASSERT_EQUAL(0,critical);}
 static void binding(uint8_t node,uint8_t role,uint8_t ref,uint8_t fol) {
  uint8_t actualRole=99,a=0,b=0;TEST_ASSERT_TRUE(cfgMulRead(node,&actualRole,&a,&b));TEST_ASSERT_EQUAL(role,actualRole);TEST_ASSERT_EQUAL(ref,a);TEST_ASSERT_EQUAL(fol,b);
@@ -138,7 +139,7 @@ void test_lineSessionInvalidSyntaxAndBackpressureDoNotLeakOrMutate(void) {
  send(":console\n");send("ShOw\r\n");unsigned before=writes;
  send("StAtUs\ncal show\n");TEST_ASSERT_NOT_NULL(strstr(output,"OVERRIDE phy=0 diag=0 ads=0"));
  TEST_ASSERT_NOT_NULL(strstr(output,"RF requested=1 running=0 restart=0"));
- TEST_ASSERT_NOT_NULL(strstr(output,"CAL runtime=UNSUPPORTED"));TEST_ASSERT_EQUAL(before,writes);
+ TEST_ASSERT_NOT_NULL(strstr(output,"CAL EEPROM/default"));TEST_ASSERT_EQUAL(before,writes);
  send("role wrong\noff extra\non extra\nmode xyz\nwifi on\npeer del 1\ncal on\n");
  TEST_ASSERT_EQUAL(before,writes);TEST_ASSERT_TRUE(uwbControlRequested());
  send("diag reset\n");TEST_ASSERT_EQUAL(before,writes);TEST_ASSERT_NOT_NULL(strstr(output,"requires RF OFF"));
@@ -482,4 +483,54 @@ void test_planAaDelayConsolePersistsAndRejectsUnsafeEditsWithoutWrites(void) {
  TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));TEST_ASSERT_EQUAL(100000,cached->plan.aaStartDelayUs);
  send(":plan set aa_start_delay_us 0\n");TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));
  TEST_ASSERT_EQUAL_HEX32(0x826414cc,mulRangingPlanFingerprint(&cached->plan));
+}
+
+void test_antennaCalibrationAtomicPairSurvivesEveryByteCutWithoutTouchingLegacy(void){
+ send(":off\n");apply();
+ uint8_t unrelated[384];memcpy(unrelated,memory,sizeof(unrelated));
+ TEST_ASSERT_TRUE(cfgAntennaWrite(14000,18000));
+ uint8_t image[8192];memcpy(image,memory,sizeof(image));
+ for(int cut=0;cut<=28;cut++){
+  memcpy(memory,image,sizeof(image));byteBudget=-1;cfgInit();
+  byteBudget=cut;bool ok=cfgAntennaWrite(15000,19000);byteBudget=-1;
+  if(!ok){TEST_ASSERT_FALSE(uwbControlCanEnable());}
+  cfgInit();uint16_t tx,rx;mulAntennaGet(&tx,&rx);
+  TEST_ASSERT_TRUE((tx==14000&&rx==18000)||(tx==15000&&rx==19000));
+  if(ok){TEST_ASSERT_EQUAL(15000,tx);TEST_ASSERT_EQUAL(19000,rx);}
+  TEST_ASSERT_EQUAL_MEMORY(unrelated,memory,sizeof(unrelated));
+ }
+}
+void test_antennaConsoleValidationRfOffPersistenceAndReset(void){
+ unsigned before=writes;send(":cal set tx 15000 rx 19000\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");apply();before=writes;
+ send(":cal set tx 65536 rx 1\n:cal set tx -1 rx 2\n:cal set tx 1 rx invalid\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":cal set tx 15000 rx 19000\n");uint16_t tx,rx;mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(15000,tx);TEST_ASSERT_EQUAL(19000,rx);
+ before=writes;cfgInit();TEST_ASSERT_EQUAL(before,writes);mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(15000,tx);
+ TEST_ASSERT_TRUE(cfgAntennaWrite(0,65535));cfgInit();mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(0,tx);TEST_ASSERT_EQUAL(65535,rx);
+ send(":cal reset\n");cfgInit();mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(MUL_ANTENNA_TX_DTU,tx);TEST_ASSERT_EQUAL(MUL_ANTENNA_RX_DTU,rx);
+}
+void test_antennaCorruptionBlocksRadioWithoutErasingConfiguration(void){
+ send(":off\n");apply();TEST_ASSERT_TRUE(cfgAntennaWrite(14000,18000));
+ uint8_t original[8192];memory[384+12]^=1;memcpy(original,memory,sizeof(original));
+ cfgInit();TEST_ASSERT_FALSE(cfgStorageReady());TEST_ASSERT_FALSE(uwbControlCanEnable());TEST_ASSERT_EQUAL_MEMORY(original,memory,sizeof(original));
+}
+
+void test_firstCalibrationInterruptedAtEveryByteKeepsDefaultsOrCommittedPair(void){
+ send(":off\n");apply();uint8_t image[8192];memcpy(image,memory,sizeof(image));
+ for(int cut=0;cut<=28;cut++){
+  memcpy(memory,image,sizeof(image));byteBudget=-1;cfgInit();byteBudget=cut;
+  (void)cfgAntennaWrite(15000,19000);byteBudget=-1;cfgInit();
+  uint16_t tx,rx;mulAntennaGet(&tx,&rx);
+  TEST_ASSERT_TRUE((tx==MUL_ANTENNA_TX_DTU&&rx==MUL_ANTENNA_RX_DTU)||(tx==15000&&rx==19000));
+  TEST_ASSERT_EQUAL_MEMORY(image,memory,384);
+ }
+}
+void test_calibrationGenerationWrapAndReadFailureFailClosed(void){
+ send(":off\n");apply();TEST_ASSERT_TRUE(cfgAntennaWrite(14000,18000));
+ memset(memory+384+8,255,4);uint32_t crc=mulScheduleCrc(memory+384,16);
+ for(unsigned i=0;i<4;i++)memory[384+16+i]=crc>>(8*i);
+ cfgInit();TEST_ASSERT_TRUE(cfgAntennaWrite(15000,19000));cfgInit();
+ uint16_t tx,rx;mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(15000,tx);TEST_ASSERT_EQUAL(19000,rx);
+ badRead=true;TEST_ASSERT_FALSE(cfgAntennaWrite(1,2));badRead=false;
+ TEST_ASSERT_FALSE(cfgStorageReady());TEST_ASSERT_FALSE(uwbControlCanEnable());
 }

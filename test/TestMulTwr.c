@@ -1,3 +1,4 @@
+#include "mul_antenna.h"
 #include "mul_pose.h"
 #include "mul_geometry.h"
 #include "mul_clock_fit.h"
@@ -100,6 +101,12 @@ uint16_t dwSpiRead16(dwDevice_t *dev, uint8_t reg, uint32_t sub) {
   TEST_ASSERT_EQUAL_UINT8(SYS_STATUS,reg); TEST_ASSERT_EQUAL_UINT32(3,sub); return radio(dev)->status;
 }
 void dwSpiWrite(dwDevice_t *dev, uint8_t reg, uint32_t sub, const void *data, size_t size) {
+  if(reg==TX_ANTD||reg==LDE_IF){
+    TEST_ASSERT_EQUAL_UINT(2,size);const uint8_t *b=data;uint16_t value=b[0]|b[1]<<8;
+    if(reg==TX_ANTD){TEST_ASSERT_EQUAL_UINT32(NO_SUB,sub);radio(dev)->antenna=value;}
+    else{TEST_ASSERT_EQUAL_UINT32(LDE_RXANTD_SUB,sub);radio(dev)->rxAntenna=value;}
+    return;
+  }
   const uint8_t expected[] = {0x08,0x04};
   TEST_ASSERT_EQUAL_UINT8(SYS_STATUS,reg); TEST_ASSERT_EQUAL_UINT32(3,sub);
   TEST_ASSERT_EQUAL_UINT(2,size); TEST_ASSERT_EQUAL_UINT8_ARRAY(expected,data,size);
@@ -162,6 +169,7 @@ static void scenario(int32_t ppb, int64_t tof) {
   for (int i=0;i<2;i++) mulRxInit(&radios[i].device);
 }
 void setUp(void) {
+  mulAntennaSelect(MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU);
   mulGeometrySelect(mulDelayTwr);mulGeometryClear();
   memset(radios,0,sizeof(radios)); memset(contexts,0,sizeof(contexts)); memset(useAlr,0,sizeof(useAlr));
   for (int i=0;i<3;i++) {

@@ -137,6 +137,7 @@ static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
 {
   activePlan=config->mulPlan;servedOperations=0;
   dwIdle(dev);
+  mulAntennaConfigure(dev);
   dwReceivePermanently(dev, false);
   memcpy(source, config->address, sizeof(source));
   nextSequence = 0;

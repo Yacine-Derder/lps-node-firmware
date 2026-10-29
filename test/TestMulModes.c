@@ -1,3 +1,4 @@
+#include "mul_antenna.h"
 #include "mul_pose.h"
 #include "mul_geometry.h"
 #include "mul_ranging_plan.h"
@@ -93,6 +94,12 @@ uint16_t dwSpiRead16(dwDevice_t *device, uint8_t reg, uint32_t offset) {
 void dwSpiWrite(dwDevice_t *device, uint8_t reg, uint32_t offset,
                 const void *data, size_t length) {
   (void)device;
+  if(reg==TX_ANTD||reg==LDE_IF){
+    TEST_ASSERT_EQUAL_UINT(2,length);const uint8_t *b=data;
+    if(reg==TX_ANTD){TEST_ASSERT_EQUAL_UINT32(NO_SUB,offset);antennaDelay=b[0]|b[1]<<8;}
+    else{TEST_ASSERT_EQUAL_UINT32(LDE_RXANTD_SUB,offset);TEST_ASSERT_EQUAL_UINT16(MUL_ANTENNA_RX_DTU,b[0]|b[1]<<8);}
+    return;
+  }
   const uint8_t expected[] = {0x08, 0x04};
   TEST_ASSERT_EQUAL_UINT8(SYS_STATUS, reg);
   TEST_ASSERT_EQUAL_UINT32(3, offset);
@@ -195,6 +202,7 @@ void setUp(void) {
   receiving = configuring = delayedArmed = false;
   hardwareNow = setupDelay = actualTx = delayedRaw = 0;
   antennaDelay = 0x4321;
+  mulAntennaSelect(antennaDelay,MUL_ANTENNA_RX_DTU);
   txError = 0;
   actualReads = aborts = 0;
   programmedTimeError = 0;
@@ -314,6 +322,7 @@ void test_mulAlrAntennaTimestampWrapsAndZeroDelayNeedsNoCorrection(void) {
   completeTx(-7);
 
   antennaDelay = 0;
+  mulAntennaSelect(0,MUL_ANTENNA_RX_DTU);
   mulAlrAlgorithm.init(&config, &dev);
   TEST_ASSERT_EQUAL_UINT32(100, elapseAndTimeout(0));
   TEST_ASSERT_TRUE(decodeCaptured(&packet));
