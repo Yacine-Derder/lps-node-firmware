@@ -1,4 +1,5 @@
 #include "mul_clock_fit.h"
+#include "mul_relation.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -118,6 +119,25 @@ static void ar_cycle(void) {
     memcpy(p.source,mulDefaultNetwork.addresses[0],8);
     mulClockObserveFitted(NULL,&clock,&fit,&c,&p,
       mulTimestampMask(seq*DT+1000+seq*10000),now,true,&delay);
+    uint64_t arrival=mulTimestampMask(seq*DT+1000+seq*10000);
+    uint64_t followerTx=mulTimestampMask(arrival+10*UINT64_C(63897600));
+    mulRelation_t relation=mulRelationPublish(&clock,&delay,followerTx,arrival,now,false);
+    if(seq>6){
+      bool expected=MUL_PROP_MAX_AGE_MS>1000||seq%10!=1;
+      assert(relation.available==expected);
+      assert(relation.version==(MUL_PROP_MAX_AGE_MS==1000?1:2));
+      mulTestPacket_t f={.sequence=seq,.txTimestamp=followerTx,.slotMs=10};
+      memcpy(f.source,mulDefaultNetwork.addresses[1],8);
+      uint8_t wire[MUL_RELATION_FRAME_LENGTH];mulRelationEncode(wire,&f,&relation);
+      mulTestPacket_t decoded;mulRelation_t r;
+      assert(mulBroadcastDecode(wire,sizeof(wire),&decoded,&r));
+      assert(r.available==expected);
+      // A continuous-v2 receiver must still accept a fresh strict-v1 peer.
+      if(expected){relation.version=1;relation.maxAgeMs=1000;relation.delayAgeMs=100;relation.remainingMs=800;
+        mulRelationEncode(wire,&f,&relation);
+        assert(mulBroadcastDecode(wire,sizeof(wire),&decoded,&r)&&r.version==1&&r.available);
+      }
+    }
     if(seq==1)assert(fit.resetReason==mulClockResetStartup);
     if(seq>10&&seq%10==1) {
       if(MUL_PROP_MAX_AGE_MS==1000)assert(fit.resetReason==mulClockResetCompensation&&!fit.compensated);
