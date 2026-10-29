@@ -26,16 +26,16 @@ bool uwbSetEnabled(bool enabled){return uwbControlRequest(enabled);}
 void dwIdle(dwDevice_t *dev){(void)dev;TEST_ASSERT_TRUE(owner);stops++;}
 void dwClearAllStatus(dwDevice_t *dev){(void)dev;TEST_ASSERT_TRUE(owner);clears++;}
 bool usbcommTryWrite(const char *data,unsigned len){TEST_ASSERT_TRUE(len<=48);if(!txReady)return false;TEST_ASSERT_TRUE(strlen(output)+len<sizeof(output));strncat(output,data,len);return true;}
-static uint8_t memory[8192];static unsigned writes;static int budget,byteBudget;static bool badRead,reenter;
+static uint8_t memory[8192];static unsigned writes;static int budget,byteBudget;static bool badRead,reenter,failCalAck;
 bool eepromRead(int address,void *data,size_t n) {if(badRead)return false;if(address<0||(size_t)address+n>sizeof(memory))return false;memcpy(data,memory+address,n);return true;}
-bool eepromWrite(int address,void *data,size_t n) {writes++;TEST_ASSERT_EQUAL(0,critical);if(reenter){reenter=false;TEST_ASSERT_FALSE(cfgWriteU8(cfgMode,0));TEST_ASSERT_FALSE(cfgStorageReady());TEST_ASSERT_TRUE(cfgPendingRestart());}if(budget==0)return false;if(budget>0)budget--;if(address<0||(size_t)address+n>sizeof(memory))return false;if(byteBudget>=0){size_t take=(size_t)byteBudget<n?(size_t)byteBudget:n;memcpy(memory+address,data,take);byteBudget-=take;return take==n;}memcpy(memory+address,data,n);return true;}
+bool eepromWrite(int address,void *data,size_t n) {writes++;TEST_ASSERT_EQUAL(0,critical);if(reenter){reenter=false;TEST_ASSERT_FALSE(cfgWriteU8(cfgMode,0));TEST_ASSERT_FALSE(cfgStorageReady());TEST_ASSERT_TRUE(cfgPendingRestart());}if(budget==0)return false;if(budget>0)budget--;if(address<0||(size_t)address+n>sizeof(memory))return false;if(byteBudget>=0){size_t take=(size_t)byteBudget<n?(size_t)byteBudget:n;memcpy(memory+address,data,take);byteBudget-=take;return take==n;}memcpy(memory+address,data,n);if(failCalAck&&address>=384&&address<448&&address%32==20&&n==4&&((uint8_t *)data)[0]){failCalAck=false;return false;}return true;}
 void HAL_Delay(uint32_t ms) {(void)ms;}
 static void checksum(void) {unsigned size=memory[3]|memory[4]<<8;uint8_t sum=0;for(unsigned i=0;i<5+size;i++)sum+=memory[i];memory[5+size]=sum;}
 static void legacy(uint8_t address) {
  memset(memory,0,sizeof(memory));uint8_t record[]={0xbc,1,0,15,0,cfgAddress,1,address,cfgMode,1,5,cfgTxPower,4,0x12,0x34,0x56,0x78,cfgSmartPower,1,1};
  memcpy(memory,record,sizeof(record));checksum();cfgInit();writes=0;boot.mode=5;boot.address[0]=address;uwbControlInit(&boot);mulConsoleReset();
 }
-void setUp(void){budget=byteBudget=-1;badRead=reenter=false;stops=clears=inits=model=0;owner=false;txReady=true;output[0]=0;legacy(0x84);}
+void setUp(void){budget=byteBudget=-1;badRead=reenter=failCalAck=false;stops=clears=inits=model=0;owner=false;txReady=true;output[0]=0;legacy(0x84);}
 void tearDown(void){TEST_ASSERT_EQUAL(0,critical);}
 static void binding(uint8_t node,uint8_t role,uint8_t ref,uint8_t fol) {
  uint8_t actualRole=99,a=0,b=0;TEST_ASSERT_TRUE(cfgMulRead(node,&actualRole,&a,&b));TEST_ASSERT_EQUAL(role,actualRole);TEST_ASSERT_EQUAL(ref,a);TEST_ASSERT_EQUAL(fol,b);
@@ -533,4 +533,12 @@ void test_calibrationGenerationWrapAndReadFailureFailClosed(void){
  uint16_t tx,rx;mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(15000,tx);TEST_ASSERT_EQUAL(19000,rx);
  badRead=true;TEST_ASSERT_FALSE(cfgAntennaWrite(1,2));badRead=false;
  TEST_ASSERT_FALSE(cfgStorageReady());TEST_ASSERT_FALSE(uwbControlCanEnable());
+}
+
+void test_calibrationLostCommitAcknowledgementRequiresRebootAndUsesNewPair(void){
+ send(":off\n");apply();TEST_ASSERT_TRUE(cfgAntennaWrite(14000,18000));
+ failCalAck=true;TEST_ASSERT_FALSE(cfgAntennaWrite(15000,19000));
+ TEST_ASSERT_FALSE(cfgStorageReady());TEST_ASSERT_FALSE(uwbControlCanEnable());
+ cfgInit();uint16_t tx,rx;mulAntennaGet(&tx,&rx);
+ TEST_ASSERT_TRUE(cfgStorageReady());TEST_ASSERT_EQUAL(15000,tx);TEST_ASSERT_EQUAL(19000,rx);
 }

@@ -813,3 +813,10 @@ stacks14236/16384 B. Calibration cache adds4 B; journal operations reuse the exi
 192-byte plan workspace. AA1 and RX diagnostic builds fit individually; their
 combined image overflows flash by584 B. Stacks remain unchanged. Earlier resource
 figures in the estimator acceptance section refer to the pre-calibration image.
+
+The build prints actual preprocessor propagation/PHY options even when the image
+is already current. Returning to plain make therefore displays age1000 explicitly.
+Static ARM stack frames for journal loading/writing are56/48 B before EEPROM/HAL
+callers. Calibration adds4 B initialized data, no RAM buffer, heap or task stack.
+These measurements are not runtime watermarks; physical stack/latency validation
+remains required. The existing clock update path is unchanged.
