@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "mul_console.h"
+#include "mul_antenna_offset.h"
 #include "cfg.h"
 #include "uwb_control.h"
 #include "mul_rx.h"
@@ -257,8 +258,9 @@ static void command(void) {
   reply(uwbControlRequestSlot(slot)?"SAVED slot_ms; ON activates; no restart":"ERR slot activation; RF remains off");return;
  }
  if(count==2&&!strcmp(w[0],"peer")&&!strcmp(w[1],"list")){page=peers;pageIndex=0;return;}
- if(!strcmp(w[0],"cal")&&((count==2&&!strcmp(w[1],"reset"))||(count==6&&!strcmp(w[1],"set")&&!strcmp(w[2],"tx")&&!strcmp(w[4],"rx")))) {
+ if(!strcmp(w[0],"cal")&&((count==2&&!strcmp(w[1],"reset"))||(count==4&&!strcmp(w[1],"set")&&!strcmp(w[2],"offset_mm"))||(count==6&&!strcmp(w[1],"set")&&!strcmp(w[2],"tx")&&!strcmp(w[4],"rx")))) {
   uint32_t tx=MUL_ANTENNA_TX_DTU,rx=MUL_ANTENNA_RX_DTU;
+  if(count==4){uint16_t a,b;if(!mulAntennaOffsetParse(w[3],MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU,&a,&b)){reply("ERR signed offset/register range");return;}tx=a;rx=b;}
   if(count==6&&(!decimal(w[3],&tx)||!decimal(w[5],&rx)||tx>65535||rx>65535)){reply("ERR antenna: 0..65535 DTU");return;}
   if(uwbControlRequested()||uwbControlRunning()){reply("ERR cal requires RF OFF acknowledged");return;}
   reply(cfgAntennaWrite(tx,rx)?"SAVED antenna; ON applies":"ERR antenna EEPROM; RF blocked");return;
@@ -361,7 +363,7 @@ bool mulConsolePoll(void) {
 #endif
   "role ref/follower/rlr/standalone; addr id",
   "reference id; follower id; peer list",
-  "cal show|set tx N rx N|reset; diag [reset]",
+  "cal show|set tx N rx N|set offset_mm N|reset",
   "wifi/tlm unsupported; cal requires OFF",
   "Autosave; restart applies; off retains mode",
   "hybrid_static: stationary opt-in build only",
@@ -464,9 +466,16 @@ bool mulConsolePoll(void) {
   if(pageIndex<5){snprintf(line,sizeof(line),"RADIO event=%u count=%lu",pageIndex,(unsigned long)uwbControlCount(pageIndex));last=pageIndex==4;}
  }
  if(page==cal) {
-  if(pageIndex==0){snprintf(line,sizeof(line),"CAL EEPROM/default accuracy=UNKNOWN");last=false;}
-  else if(pageIndex==1){uint16_t tx,rx;mulAntennaGet(&tx,&rx);snprintf(line,sizeof(line),"ALR saved TX=%u RX=%u DTU",tx,rx);last=false;}
-  else {const uwbConfig_t *c=uwbGetConfig();snprintf(line,sizeof(line),"BOOT power smart=%u forced=%u",c->smartPower,c->forceTxPower);}
+  uint16_t tx,rx;mulAntennaGet(&tx,&rx);last=false;
+  if(pageIndex==0)snprintf(line,sizeof(line),"CAL EEPROM/default accuracy=UNKNOWN");
+  else if(pageIndex==1)snprintf(line,sizeof(line),"BASE TX=%u RX=%u DTU",MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU);
+  else if(pageIndex==2)snprintf(line,sizeof(line),"ALR saved TX=%u RX=%u DTU",tx,rx);
+  else if(pageIndex==3)snprintf(line,sizeof(line),"offset_mm=MANUAL/CUSTOM (not stored)");
+  else if(pageIndex==4){int32_t um;
+   if(mulAntennaOffsetEquivalentUm(MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU,tx,rx,&um)){
+    uint32_t magnitude=um<0?-um:um;snprintf(line,sizeof(line),"equivalent_mm=%s%lu.%03lu",um<0?"-":"",(unsigned long)(magnitude/1000),(unsigned long)(magnitude%1000));
+   }else snprintf(line,sizeof(line),"equivalent_mm=MANUAL/CUSTOM");
+  }else {const uwbConfig_t *c=uwbGetConfig();snprintf(line,sizeof(line),"BOOT power smart=%u forced=%u",c->smartPower,c->forceTxPower);last=true;}
  }
 #ifdef USE_FTDI_UART
  puts(line);

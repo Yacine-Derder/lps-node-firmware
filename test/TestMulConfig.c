@@ -542,3 +542,19 @@ void test_calibrationLostCommitAcknowledgementRequiresRebootAndUsesNewPair(void)
  cfgInit();uint16_t tx,rx;mulAntennaGet(&tx,&rx);
  TEST_ASSERT_TRUE(cfgStorageReady());TEST_ASSERT_EQUAL(15000,tx);TEST_ASSERT_EQUAL(19000,rx);
 }
+
+void test_absoluteAntennaOffsetPersistsWithoutAccumulationOrLegacyWrites(void){
+ unsigned before=writes;send(":cal set offset_mm -50\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");apply();uint8_t legacyBytes[384];memcpy(legacyBytes,memory,384);
+ send(":cal set offset_mm -50\n");uint16_t tx,rx;mulAntennaGet(&tx,&rx);
+ TEST_ASSERT_EQUAL(14489,tx);TEST_ASSERT_EQUAL(18441,rx);
+ before=writes;send(":cal set offset_mm -50\n");TEST_ASSERT_EQUAL(before,writes);
+ cfgInit();mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(14489,tx);TEST_ASSERT_EQUAL(18441,rx);
+ TEST_ASSERT_EQUAL_MEMORY(legacyBytes,memory,384);
+ output[0]=0;send(":cal show\n");TEST_ASSERT_NOT_NULL(strstr(output,"BASE TX=14498 RX=18453"));
+ TEST_ASSERT_NOT_NULL(strstr(output,"offset_mm=MANUAL/CUSTOM"));TEST_ASSERT_NOT_NULL(strstr(output,"equivalent_mm=-49.264"));
+ before=writes;send(":cal set offset_mm +\n:cal set offset_mm -2147483648\n:cal set offset_mm 2147483647\n:cal set offset_mm 1x\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":cal set offset_mm +50\n");mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(14507,tx);TEST_ASSERT_EQUAL(18465,rx);
+ send(":cal set offset_mm 0\n");mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(14498,tx);TEST_ASSERT_EQUAL(18453,rx);
+ send(":cal set tx 14000 rx 18000\n");output[0]=0;send(":cal show\n");TEST_ASSERT_NOT_NULL(strstr(output,"equivalent_mm=MANUAL/CUSTOM"));
+}

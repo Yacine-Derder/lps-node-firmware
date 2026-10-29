@@ -820,3 +820,53 @@ Static ARM stack frames for journal loading/writing are56/48 B before EEPROM/HAL
 callers. Calibration adds4 B initialized data, no RAM buffer, heap or task stack.
 These measurements are not runtime watermarks; physical stack/latency validation
 remains required. The existing clock update path is unchanged.
+
+## Absolute signed antenna offset in millimetres
+
+With acknowledged RF OFF, use `:cal set offset_mm -50` (also accepts `+50` or
+`0`). Positive offsets increase programmed delay and reduce measured range;
+negative offsets do the opposite. Every request is relative to the immutable
+original TX14498/RX18453 baseline, never the current saved pair. Repeating it does
+not accumulate correction or wear EEPROM when the effective pair is unchanged.
+
+The shared integer conversion rounds nearest, exact ties away from zero:
+`aggregate=round(mm*127795200/299792458)`, `txDelta=round(44*aggregate/100)`,
+`rxDelta=aggregate-txDelta`. Both derived registers must remain0..65535 or the
+command is rejected without modifying either value. The existing atomic EEPROM
+journal and hardware readback remain unchanged; no offset field or schema was
+added. Existing manual `:cal set tx N rx N` and `:cal reset` retain their behavior.
+Firmware upgrade does not write or reinterpret a saved pair.
+
+| Requested mm | Saved TX | Saved RX | Calculated equivalent mm |
+|---:|---:|---:|---:|
+| -50 |14489|18441|-49.264|
+| 0 |14498|18453|0.000|
+| +50 |14507|18465|49.264|
+
+`:cal show` displays baseline, saved registers and `offset_mm=MANUAL/CUSTOM
+(not stored)`. If the pair matches the44/56 model it also displays
+`equivalent_mm=-49.264`, for example; otherwise the equivalent is also
+`MANUAL/CUSTOM`. Integer DTU quantization makes the requested scalar ambiguous:
+49mm and50mm encode the same pair. The equivalent is calculated from the
+aggregate hardware change, rounded to0.001mm, **not a fabricated stored request**
+or evidence of physical accuracy. The44/56 split remains an engineering assumption.
+
+Build and operator-only programming (no device operations were run by the agent):
+
+```sh
+cd ~/Documents/lps-node-firmware
+make -f profiles/stationary-ch5.mk -j4
+# Operator enters the established DFU mode, then:
+sudo make -f profiles/stationary-ch5.mk dfu
+```
+
+Before programming, record `:cal show` and the saved configuration. After
+programming, use `:off`, confirm RF stopped and inspect `:cal show` before any
+calibration change: the same old pair must remain. If deliberately testing the
+new command, apply an operator-chosen offset, repeat it, reboot with RF OFF and
+check the unchanged pair and equivalent. Restore the recorded manual pair when
+finished. No new calibration experiment or physical range claim is required.
+
+The stationary image after this interface change uses flash129760/131072 B
+(1312 B free), RAM14236/16384 B (2148 B free), versus flash128568 and the same RAM
+before. No optional diagnostics were enabled and no stack reservation changed.
