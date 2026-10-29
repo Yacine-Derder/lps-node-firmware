@@ -437,7 +437,7 @@ bool mulConsolePoll(void) {
   mulClockFitConfig_t c;
   if(!cfgMulClockRead(&c))snprintf(line,sizeof(line),"ERR invalid stored clock settings");
   else if(pageIndex==0){snprintf(line,sizeof(line),"CLOCK method=%u history=5",c.estimator);last=false;}
-  else {mulSchedule_t spec;if(cfgMulScheduleRead(node,&spec))c.periodMs=spec.periodMs;snprintf(line,sizeof(line),"CLOCK period=%u compensate=%u",c.periodMs,c.compensate);}
+  else {mulSchedule_t spec;if(cfgMulScheduleRead(node,&spec))c.periodMs=spec.periodMs;snprintf(line,sizeof(line),"CLOCK period=%u comp=%u age=%u speed=%d v=%u",c.periodMs,c.compensate,MUL_PROP_MAX_AGE_MS,MUL_RELATIVE_SPEED_MM_S,MUL_PROP_MAX_AGE_MS==1000?1:2);}
  }
  if(page==show) {
   if(!valid)snprintf(line,sizeof(line),"ERR invalid roster; EEPROM retained");

@@ -760,3 +760,35 @@ is1332 B. Largest named RAM objects are the two1600 B task stacks, init buffer10
 idle stack800 B, diagnostic stream592 B and USB buffers/state. The separate2048 B
 interrupt stack is also included in the total reserved RAM above. The refactor
 removes176 B of old fit state without reducing any stack reservation.
+
+## Reproducible stationary channel5 experiment
+
+Use `make -f profiles/stationary-ch5.mk -j4` on **both ALRs**. It includes channel5,
+propagation maximum age6000ms (relation v2), an explicit zero relative-speed
+assumption and a compile-time guard against partial settings. It does not change
+stored plans, scheduling, addresses, antenna calibration or estimator selection.
+This profile is justified only for fixed stationary anchors; ordinary builds keep
+strict1000ms/v1 and unknown motion. `:clock show` reports effective age, speed and
+TWR relation version. External geometry still uses its existing relation v3.
+Compile/link flag changes now invalidate objects automatically, including returning
+to plain `make`; no stale image silently retains the other profile.
+
+Human-only programming uses `sudo make -f profiles/stationary-ch5.mk dfu` after
+building/checking this profile, with the existing DFU-entry procedure. Never follow
+a profile build with plain `sudo make dfu` expecting to retain profile options:
+plain make deliberately selects the ordinary strict build. The receiver Universal
+build already accepts6000ms relations. Preserve its stationary rate policy.
+
+October29 diagnosis: all four captures contain relation v1; the October28 baseline
+contains v2. Every captured cycle ending in1 lacks a valid relation after scheduled
+AR maintenance omitted the preceding AA refresh. Test3/4 follower logs show65/49
+single reset increments coincident with compensation toggles and unchanged epoch;
+missing/corrupt serial lines prevent attributing every cumulative reset. Toggling
+correction availability reseeds the filter by design to avoid mixing coordinates.
+The stationary profile removes the demonstrated premature-expiry trigger, not the
+safety reset. `MUL KF rr` reports the **last reset** reason:0 none,1 startup,
+2 observation discontinuity,3 epoch change,4 compensation switch,5 invalid interval,
+6 covariance/numerical failure. It is not a counter of each reason. Existing
+`rst` remains cumulative. Median-5 remains default; no R/q or rejection gate changed.
+Deterministic clock tests reproduce the AA omission on every tenth cycle: v1
+reseeds twice per AR gap, stationary v2 remains initialized without resets.

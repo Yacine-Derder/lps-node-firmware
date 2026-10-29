@@ -545,10 +545,10 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
            (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
            armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED", (unsigned int)mulNetworkSlotMs(alrNetwork));
     const mulClockWorkspace_t *workspace=mulClockWorkspace();
-    if(workspace->config.estimator)printf("MUL KF: h=%u n=%u f=%ld b=%ld v=%lu rej=%lu s=%lu c=%u r=%u use=%u fb=%u m=%u a=%lu rst=%lu e=%08lX%08lX bound=UNKNOWN\r\n",
+    if(workspace->config.estimator)printf("MUL KF: h=%u n=%u f=%ld b=%ld v=%lu rej=%lu s=%lu c=%u r=%u use=%u fb=%u m=%u a=%lu rst=%lu rr=%u e=%08lX%08lX bound=UNKNOWN\r\n",
       workspace->config.window,workspace->fit.count,(long)workspace->fit.skewPpb,(long)followerClock.skewPpb,
       (unsigned long)workspace->fit.rmsDtu,(unsigned long)workspace->fit.rejected,(unsigned long)workspace->fit.uncertaintyPpb,workspace->fit.compensated,workspace->fit.ready,followerClock.status==mulClockValid?(workspace->fit.applied?2:0):255,workspace->fit.fallback,
-      mulClockMapStatus(&followerClock,(uint32_t)now*portTICK_PERIOD_MS),(unsigned long)((uint32_t)now*portTICK_PERIOD_MS-followerClock.observedMs),(unsigned long)workspace->fit.resets,(unsigned long)(followerClock.epoch>>32),(unsigned long)followerClock.epoch);
+      mulClockMapStatus(&followerClock,(uint32_t)now*portTICK_PERIOD_MS),(unsigned long)((uint32_t)now*portTICK_PERIOD_MS-followerClock.observedMs),(unsigned long)workspace->fit.resets,workspace->fit.resetReason,(unsigned long)(followerClock.epoch>>32),(unsigned long)followerClock.epoch);
     if(!workspace->config.estimator) {
     int32_t ppb = followerClock.skewPpb;
     uint32_t magnitude = (uint32_t)(ppb < 0 ? -ppb : ppb);

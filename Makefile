@@ -113,6 +113,8 @@ $(BUILD_PROFILE):
 	@touch $@
 $(OBJS): $(MUL_CORE_INPUTS) $(BUILD_PROFILE) Makefile inc/uwb.h inc/mul_clock_workspace.h
 
+include tools/make/build-flags.mk
+
 bin/lps-node-firmware.elf: $(OBJS)
 	$(LD) -o $@ $^ $(LDFLAGS)
 	$(SIZE) $@
