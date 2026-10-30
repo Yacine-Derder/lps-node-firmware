@@ -143,9 +143,10 @@ static bool recover(mulClock_t *clock,const mulClockFit_t *s,const mulClockFitCo
                     const mulTestPacket_t *p,uint64_t rx,uint32_t now){
  if(!mulClockFitHoldover(clock,s,c,now)||clock->periodMs!=c->periodMs)return false;
  uint32_t advance=p->sequence-clock->sequence;
+ if(!advance||advance>(MUL_CLOCK_RECOVERY_MS/c->periodMs))return false;
  int64_t dt=mulTimestampDifference(p->txTimestamp,clock->referenceTx),dr=mulTimestampDifference(rx,clock->localRx);
  int64_t expected=(int64_t)advance*c->periodMs*INT64_C(63897600),tolerance=(c->periodMs/10)*INT64_C(63897600);
- if(!advance||advance>(MUL_CLOCK_RECOVERY_MS/c->periodMs)||dt<=0||dr<=0||
+ if(dt<=0||dr<=0||
     dt<expected-tolerance||dt>expected+tolerance||
     dr-dt>dt*MUL_CLOCK_MAX_PPB/1000000000||dt-dr>dt*MUL_CLOCK_MAX_PPB/1000000000)return false;
  clock->count=clock->next=clock->samples=0;clock->status=mulClockWarmup;
@@ -249,6 +250,12 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
    */
   if (mature &&
       s->rmsDtu > K * ((double)dt / 63897600000.) * MUL_CLOCK_STABILITY_PPB) {
+    if(resumed){
+      mulClockReset(clock);
+      (void)mulClockObservePeriodNetwork(network,clock,p,rx,now,true,c->periodMs);
+      seed(s,clock->epoch,p->txTimestamp,rx,false,mulClockResetDiscontinuity);
+      return mulClockDiscontinuity;
+    }
     clock->status = mulClockWarmup;
     s->ready = 0;
     s->fallback = mulClockFitUncertain;
