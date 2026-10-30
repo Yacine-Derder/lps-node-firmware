@@ -197,3 +197,88 @@ collecting data. An infeasible/unobservable condition is reported, never silentl
 removed from the denominator. Assess physical error relative to the user's
 reported5–7cm baseline, keeping noisy-pose contribution and truth uncertainty
 explicit. No software result closes physical calibration or RF acceptance.
+
+## Kalman missing-reference recovery handoff
+
+Canonical core08db4d8 retains a previously ready same-epoch KF for bounded recovery
+through6s; Median-5 stays default. Read `portable/mul_core/CLOCK.md` for the exact
+continuity, innovation and uncertainty gates. Mapping still expires after2s.
+A valid new real timestamp is mandatory. Longer gaps and rejected return origins
+reset; explicit RF OFF/ON still reinitializes the radio owner. No schedule,
+calibration, EEPROM, power correction or packet format changed.
+
+October30 raw captures show receiver reference-sequence advances of2/3/4/5/10
+in the Kalman run. These are observed-record gaps, not proof of physical RF loss.
+The old3000ms liveness/interval gates and adapter resets amplified such gaps into
+five-interval warmup. The source of the missing observations itself is not proven.
+
+Identical cold-start receiver replay, original follower relations held fixed:
+
+| Input | Old KF valid / snapshots | New KF | Old/new resets |
+|---|---:|---:|---:|
+| Kalman physical run |224/263|225/263|8/4|
+| Median-A physical run |264/285|264/285|1/1|
+
+On the Kalman input, KF-unapplied evaluations fall27→14. The224 common valid
+TDoAs are identical (RMS/max change0mm); all236 common valid clock rates are
+identical. Conditional output scatter is46.739→46.665mm, with different valid
+selection. Six observed3..6-cycle snapshot-gap returns have ready-wait cycle
+counts11/6/9/6/0/7→11/6/0/0/0/0; overlapping losses, unavailable snapshots and
+ineligible prior state remain conservative. This is not all294 physical cycles:
+recordings begin after prior filter history and contain missing observations.
+Neither independent geometry nor ground truth for this run is available here;
+no new physical RMSE or accuracy claim follows from this replay.
+
+ALR133's282 recorded real TX/RX pairs, replayed **without propagation compensation**
+and with explicitly inferred1Hz coarse time, give250→263 valid mappings and10→6
+resets. This isolates numerical gap behavior, not the complete follower RF/TWR
+adapter, actual uptime or accuracy. The deterministic real-adapter test separately
+checks recovery after two missed references. Synthetic constant-skew tests bound
+post-return rate error below2ppb; changing-rate/bursty tests retain the existing
+20ppb assertion. Corrupt timestamps/covariance and stale origins remain rejected.
+
+Resources, ARM GCC13: stationary LPS flash130424/131072 B (648 B free),
+RAM14236/16384 B; fit state160 B with recovery flag in existing padding. No stack
+reservation changed. Static core nested frames total816 B before library frames;
+ALR event adds280 B (1096 B together). Both1600 B task stacks and2048 B interrupt
+reservation remain; these are not runtime watermarks or WCET measurements.
+Universal STM32 flash168480/786432 B, RAM44168/131072 B. The ESP bridge protocol
+is unchanged; shared snapshots and host tooling are synchronized.
+
+Reproduce analysis without devices:
+
+```sh
+cd ~/Documents/epuck-esp32
+python3 tools/compare_clock_recovery.py ../uwb_logs/clock-comparison/kalman/20261030T144807019903Z-robot-0-raw.jsonl --alr ../uwb_logs/clock-comparison/kalman/alr133-kalman.log
+python3 tools/compare_clock_recovery.py ../uwb_logs/clock-comparison/median-A/20261030T143930318029Z-robot-0-raw.jsonl
+```
+
+The tool compiles old4060df1 and new production C on identical captured inputs;
+it asserts byte-for-byte Median output equality. Results are counterfactual and
+do not replace the unchanged exact logged-baseline validator.
+
+Operator-only next hardware check (not performed by the agent):
+
+1. Record saved plan, calibration and methods. Build/program both ALRs using
+   `make -f profiles/stationary-ch5.mk -j4` and the established operator-only
+   `sudo make -f profiles/stationary-ch5.mk dfu`. Keep stationary CH5/age6000/speed0.
+   Build/program STM32 with `cmake --preset Universal` and
+   `cmake --build --preset Universal`, using the existing configuration-preserving
+   SWD procedure in the logging guide. No reset/default/erase commands are needed.
+2. With RF OFF, select `:cfg set clock_estimator KALMAN` on follower and
+   `cfg set clock_estimator KALMAN` on receiver. Verify saved antenna values,
+   plan826414CC and timing budgets unchanged; resume only under operator control.
+3. Capture at least3minutes with both ALR USB logs and receiver raw/compact logs.
+   Observe natural gaps or, where practical, operator-controlled brief attenuation
+   that leaves the reference clock and sequence running. Reference OFF/ON or a
+   power cycle restarts sequence and is a discontinuity test, not missing-packet
+   holdover. Include1/2/multiple misses and a>6s interruption separately.
+4. Require no valid stale mappings, immediate trusted return for eligible short
+   gaps, full reset on genuine discontinuity/long outage, unchanged RF slots and
+   calibration, exact replay and explicit transport-loss accounting. Inspect LPS
+   `hold`, `rc`, `rst`, `rr`, `use`, `fb`, mapping status/age; STM32 CLOCK adds
+   `holdover`/`recovered`. `recovered` marks retained gap history, not validity.
+   Fit sigma remains the last updated covariance diagnostic during a silent gap;
+   holdover never authorizes TDoA. Measure runtime stack high-water and service
+   latency before long tests; compare identical independently measured geometry
+   against a Median control before claiming retained physical accuracy.
