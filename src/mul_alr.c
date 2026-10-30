@@ -421,8 +421,11 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     (TickType_t)(now - lastReferenceTick) >= pdMS_TO_TICKS(MUL_REFERENCE_LOSS_MS);
   if (lostNow) {
     referenceAcquired = false;
-    mulClockReset(&followerClock);
-    mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging, dev, "reference_lost", true);
+    mulClockWorkspace_t *w=mulClockWorkspace();
+    if(!mulClockFitHoldover(&followerClock,&w->fit,&w->config,(uint32_t)now*portTICK_PERIOD_MS)){
+      mulClockReset(&followerClock);mulTwrInvalidateAa(&ranging);
+    }
+    mulTwrCancel(&ranging, dev, "reference_lost", true);
     ranging.attempted = false;
     if (flags.tx) {
       abortFollowerTx(dev);
@@ -514,7 +517,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       mulClockWorkspace_t *workspace=mulClockWorkspace();mulClockDelay_t delay;
       bool supplied=selectedDelay((uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,&delay);
       clockResult=mulClockObserveFitted(alrNetwork,&followerClock,&workspace->fit,&workspace->config,&packet,arrival,(uint32_t)now*portTICK_PERIOD_MS,true,supplied?&delay:NULL);
-      if (clockResult==mulClockDiscontinuity || acquiredNow) {
+      if (clockResult==mulClockDiscontinuity || (acquiredNow&&!workspace->fit.recovered)) {
         mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"clock_epoch",true); ranging.attempted=false;
       }
       armed = scheduleFollowerTx(dev, arrival);
@@ -531,8 +534,8 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   }
   if (lostNow) {
     printf("MUL ALR: REF_LOST src=0x%02X state=SEARCHING\r\n",alrNetwork->addresses[0][0]);
-    printf("MUL ALR: CLOCK src=0x%02X samples=0 state=SEARCHING\r\n",alrNetwork->addresses[0][0]);
-    printf("MUL ALR: MAP src=0x%02X state=INVALID sync=UNCALIBRATED bound_ns=UNKNOWN\r\n",alrNetwork->addresses[0][0]);
+    printf("MUL ALR: CLOCK src=0x%02X samples=%u hold=%u state=SEARCHING\r\n",alrNetwork->addresses[0][0],followerClock.count,mulClockFitHoldover(&followerClock,&mulClockWorkspace()->fit,&mulClockWorkspace()->config,(uint32_t)now*portTICK_PERIOD_MS));
+    printf("MUL ALR: MAP src=0x%02X state=%s sync=UNCALIBRATED bound_ns=UNKNOWN\r\n",alrNetwork->addresses[0][0],mulClockMapStatus(&followerClock,(uint32_t)now*portTICK_PERIOD_MS)==mulClockMapStale?"STALE":"INVALID");
   }
   if (fresh) {
     // All logging stays after the hardware slot is armed/re-armed.
@@ -546,10 +549,10 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
            (uint32_t)packet.txTimestamp, (unsigned int)(arrival >> 32), (uint32_t)arrival,
            armed ? "TX_PENDING" : "ACQUIRED_SLOT_SKIPPED", (unsigned int)mulNetworkSlotMs(alrNetwork));
     const mulClockWorkspace_t *workspace=mulClockWorkspace();
-    if(workspace->config.estimator)printf("MUL KF: h=%u n=%u f=%ld b=%ld v=%lu rej=%lu s=%lu c=%u r=%u use=%u fb=%u m=%u a=%lu rst=%lu rr=%u e=%08lX%08lX bound=UNKNOWN\r\n",
+    if(workspace->config.estimator)printf("MUL KF: h=%u n=%u f=%ld b=%ld v=%lu rej=%lu s=%lu c=%u r=%u use=%u fb=%u m=%u a=%lu rst=%lu rr=%u rc=%u e=%08lX%08lX bound=UNKNOWN\r\n",
       workspace->config.window,workspace->fit.count,(long)workspace->fit.skewPpb,(long)followerClock.skewPpb,
       (unsigned long)workspace->fit.rmsDtu,(unsigned long)workspace->fit.rejected,(unsigned long)workspace->fit.uncertaintyPpb,workspace->fit.compensated,workspace->fit.ready,followerClock.status==mulClockValid?(workspace->fit.applied?2:0):255,workspace->fit.fallback,
-      mulClockMapStatus(&followerClock,(uint32_t)now*portTICK_PERIOD_MS),(unsigned long)((uint32_t)now*portTICK_PERIOD_MS-followerClock.observedMs),(unsigned long)workspace->fit.resets,workspace->fit.resetReason,(unsigned long)(followerClock.epoch>>32),(unsigned long)followerClock.epoch);
+      mulClockMapStatus(&followerClock,(uint32_t)now*portTICK_PERIOD_MS),(unsigned long)((uint32_t)now*portTICK_PERIOD_MS-followerClock.observedMs),(unsigned long)workspace->fit.resets,workspace->fit.resetReason,workspace->fit.recovered,(unsigned long)(followerClock.epoch>>32),(unsigned long)followerClock.epoch);
     if(!workspace->config.estimator) {
     int32_t ppb = followerClock.skewPpb;
     uint32_t magnitude = (uint32_t)(ppb < 0 ? -ppb : ppb);

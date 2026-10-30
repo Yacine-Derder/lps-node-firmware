@@ -1064,3 +1064,22 @@ void test_mulLegacyRlrUsesConfiguredKalmanAndKeepsPassiveRadio(void) {
 
 void vPortEnterCritical(void){}
 void vPortExitCritical(void){}
+
+void test_followerKalmanRecoversAfterTwoMissedReferencesWithoutRewarming(void){
+ mulClockFitDefaults(&config.mulClockConfig);config.mulClockConfig.estimator=2;
+ initFollower();
+ for(unsigned i=0;i<12;i++){
+  testTick=10000+i*1000;uint64_t tx=mulTimestampMask(i*PERIOD_DTU);
+  uint64_t rx=mulTimestampMask(tx+i*PERIOD_DTU*1000/1000000000);
+  hardwareNow=mulTimestampMask(rx+DTU_PER_MS);receiveReference(100+i,tx,rx);finishFollowerSlot();
+ }
+ uint64_t epoch=followerClock.epoch;unsigned resets=mulClockWorkspace()->fit.resets;
+ testTick+=3000;hardwareNow=mulTimestampMask(hardwareNow+3*PERIOD_DTU);
+ mulAlrAlgorithm.onEvent(&dev,eventTimeout);
+ TEST_ASSERT_FALSE(referenceAcquired);TEST_ASSERT_EQUAL_INT(mulClockMapStale,mulClockMapStatus(&followerClock,testTick));
+ uint64_t tx=mulTimestampMask(14*PERIOD_DTU),rx=mulTimestampMask(tx+14*PERIOD_DTU*1000/1000000000);
+ hardwareNow=mulTimestampMask(rx+DTU_PER_MS);receiveReference(114,tx,rx);
+ TEST_ASSERT_EQUAL_UINT64(epoch,followerClock.epoch);TEST_ASSERT_EQUAL(resets,mulClockWorkspace()->fit.resets);
+ TEST_ASSERT_TRUE(mulClockWorkspace()->fit.recovered);TEST_ASSERT_TRUE(mulClockWorkspace()->fit.applied);
+ TEST_ASSERT_EQUAL_INT(mulClockValid,followerClock.status);finishFollowerSlot();
+}
