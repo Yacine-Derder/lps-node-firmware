@@ -207,15 +207,21 @@ The matrix mathematics is unchanged. Unavailable priors are not transmitted as
 valid relations. One pending observation is immutable until completion; epoch
 loss cancels it and unexpected backlog rejects a newer clock observation with
 unavailable metadata rather than replacing accepted work. The worker reserves
-10ms plus1ms margin before local TWR/broadcast deadlines, removes planner elapsed
+10ms plus1ms margin for legacy plans; explicit codec5 TDMA uses its configured
+Kalman budget plus1ms and permits independent work during other followers'
+broadcasts. The global TWR phase and local radio deadlines still gate admission.
+It removes planner elapsed
 time and wait rounding from its slack estimate, and arranges a wakeup in the
 existing20ms end-of-cycle quiet interval. This supports offline200ms-cycle tests
 without changing live plans; it is not a hardware WCET guarantee. See
 [clock contract](../portable/mul_core/CLOCK.md#optional-deferred-observation-on-the-lps-follower)
 and [validation guide](mul_aa_diagnostics.md#deferred-kalman-at-5ms).
+The opt-in [TDMA plan](mul_tdma.md) adds four timing controls, one canonical
+round-robin TWR opportunity per cycle, codec5 storage and automatic remaining
+guard. Legacy codec2/3/4 plans keep their existing semantics.
 All logging remains after radio programming.
 No RX is enabled while the delayed TX waits in idle. Completion captures TX_STAMP,
-re-arms RX, and logs role, scheduled, packet, actual, and signed packet delta.
+re-arms RX, and optionally queues compact SL1 intended/actual timestamps.
 RX errors/unexpected radio events cancel a pending slot, except stale TWR RX IRQs,
 which cannot displace its already-armed broadcast. An absolute local-hardware
 watchdog aborts if completion is missing 100 ms after the target; early wakeups

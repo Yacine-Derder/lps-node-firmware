@@ -62,16 +62,18 @@ static void planCommand(char **w,unsigned count) {
  const mulStoredPlan_t *stored=NULL;mulPlanStoreResult_t state=cfgMulPlanCached(&stored);
  if(state==mulPlanIoError||state==mulPlanCorrupt){reply("ERR plan storage unconfirmed; inspect reboot");return;}
  mulRangingPlan_t p;bool selected=stored&&stored->selected;
- if(count==2&&!strcmp(w[1],"init")) {
+ if((count==2||(count==3&&!strcmp(w[2],"tdma")))&&!strcmp(w[1],"init")) {
   if(stored){reply("ERR plan exists; use plan set/show/use");return;}
   uint8_t node=0;cfgReadU8(cfgAddress,&node);memset(&p,0,sizeof(p));
   if(!cfgMulScheduleRead(node,&p.broadcast)){reply("ERR invalid broadcast configuration");return;}
   p.replyMs=mulScheduleReplyMs(&p.broadcast);
   if(p.broadcast.profile!=MUL_PROFILE_EXPERIMENTAL)mulScheduleExperimental(&p.broadcast);
   p.broadcast.rangingFlags=0;p.aaMilliHz=500;p.arMilliHz=2000;p.maxUtilization=70;
+  if(count==3)mulRangingPlanTdma(&p);
  }else {
   if(!stored){reply("ERR no plan; use plan init with RF OFF");return;}p=stored->plan;
-  if(count==3&&!strcmp(w[1],"use")) {
+  if(count==3&&!strcmp(w[1],"mode")&&!strcmp(w[2],"tdma"))mulRangingPlanTdma(&p);
+  else if(count==3&&!strcmp(w[1],"use")) {
    if(!strcmp(w[2],"on"))selected=true;else if(!strcmp(w[2],"off"))selected=false;else {reply("ERR plan use on/off");return;}
   }else if(count>=2&&(!strcmp(w[1],"alrs")||!strcmp(w[1],"rlrs"))) {
    bool alrs=!strcmp(w[1],"alrs");unsigned n=count-2;
@@ -80,6 +82,10 @@ static void planCommand(char **w,unsigned count) {
    for(unsigned i=0;i<n;i++)if(!id(w[i+2],&ids[i])){reply("ERR invalid roster ID");return;}
    if(alrs)p.broadcast.count=(uint8_t)n;else p.rlrCount=(uint8_t)n;
   }else if(count==4&&!strcmp(w[1],"set")) {
+   if(p.policy==MUL_PLAN_TDMA&&(!strcmp(w[2],"aa_millihz")||!strcmp(w[2],"ar_millihz")||
+      !strcmp(w[2],"aa_priority")||!strcmp(w[2],"ar_priority")||!strcmp(w[2],"aa_start_delay_us")||!strcmp(w[2],"util_percent"))) {
+    reply("ERR TDMA uses kalman_budget_ms/twr_window_ms, not rates");return;
+   }
    if(!strcmp(w[2],"aa")||!strcmp(w[2],"ar")) {
     unsigned flag=!strcmp(w[2],"aa")?MUL_PLAN_AA:MUL_PLAN_AR;
     if(!strcmp(w[3],"on"))p.enabled|=flag;else if(!strcmp(w[3],"off"))p.enabled&=~flag;else {reply("ERR ranging type: on/off");return;}
@@ -93,7 +99,11 @@ static void planCommand(char **w,unsigned count) {
     else if(!strcmp(w[2],"aa_start_delay_us"))p.aaStartDelayUs=n;
     else {
      if(n>UINT16_MAX){reply("ERR timing/rate exceeds uint16");return;}
-     if(!strcmp(w[2],"aa_millihz"))p.aaMilliHz=n;
+     if(!strcmp(w[2],"kalman_budget_ms")||!strcmp(w[2],"twr_window_ms")) {
+      if(p.policy!=MUL_PLAN_TDMA){reply("ERR plan mode tdma first");return;}
+      if(!strcmp(w[2],"kalman_budget_ms"))p.kalmanBudgetMs=n;else p.twrWindowMs=n;
+     }
+     else if(!strcmp(w[2],"aa_millihz"))p.aaMilliHz=n;
      else if(!strcmp(w[2],"ar_millihz"))p.arMilliHz=n;
      else if(!strcmp(w[2],"aa_priority")||!strcmp(w[2],"ar_priority")) {
       if(n>255){reply("ERR priority0..255");return;}
@@ -380,7 +390,8 @@ bool mulConsolePoll(void) {
   "cfg set airtime_us/guard_us number",
   "cfg set alr_alr_twr on/off; RF OFF",
   "cfg set twr_reply_ms 20/10/5; RF OFF",
-  "plan init/show; plan use on/off; RF OFF",
+  "plan init [tdma]/show; mode tdma; use on/off",
+  "plan set kalman_budget_ms/twr_window_ms",
   "plan alrs id0 id1...; plan rlrs id0...",
   "plan set aa/ar on/off; aa_millihz/ar_millihz",
   "plan set reply_ms/util_percent",
@@ -409,20 +420,22 @@ bool mulConsolePoll(void) {
    const mulRangingPlan_t *p=&stored->plan;mulRangingBudget_t b;const char *error=mulRangingPlanValidate(p,&b);
    if(error)snprintf(line,sizeof(line),"ERR %s",error);
    else {
-    unsigned base=6+p->broadcast.count+p->rlrCount,n=mulRangingPlanCount(p,1),total=base+2+2*n;last=pageIndex+1>=total;
+    unsigned base=6+p->broadcast.count+p->rlrCount,n=p->policy==MUL_PLAN_TDMA?5:mulRangingPlanCount(p,1),total=base+2+2*n;last=pageIndex+1>=total;
     if(pageIndex==0)snprintf(line,sizeof(line),"PLAN selected=%u gen=%lu codec=%u p=%u",stored->selected,(unsigned long)stored->generation,mulRangingPlanVersion(p),p->policy);
     else if(pageIndex==1)snprintf(line,sizeof(line),"PLAN hash=%08lX ALR=%u RLR=%u",(unsigned long)mulRangingPlanFingerprint(p),p->broadcast.count,p->rlrCount);
     else if(pageIndex==2)snprintf(line,sizeof(line),"PLAN slot=%u cycle=%u reply=%u",p->broadcast.slotMs,p->broadcast.periodMs,p->replyMs);
     else if(pageIndex==3)snprintf(line,sizeof(line),"PLAN AA=%u AR=%u util=%u",!!(p->enabled&MUL_PLAN_AA),!!(p->enabled&MUL_PLAN_AR),p->maxUtilization);
+    else if(pageIndex==4&&p->policy==MUL_PLAN_TDMA)snprintf(line,sizeof(line),"TDMA kalman_budget_ms=%u twr_window_ms=%u",p->kalmanBudgetMs,p->twrWindowMs);
     else if(pageIndex==4)snprintf(line,sizeof(line),"RATE AA=%u/%u AR=%u/%u",p->aaMilliHz,p->aaPriority,p->arMilliHz,p->arPriority);
+    else if(pageIndex==5&&p->policy==MUL_PLAN_TDMA)snprintf(line,sizeof(line),"TDMA start_us=%lu guard_us=%lu",(unsigned long)b.dataEndUs,(unsigned long)b.guardUs);
     else if(pageIndex==5)snprintf(line,sizeof(line),"PLAN aa_start_delay_us=%lu",(unsigned long)p->aaStartDelayUs);
     else if(pageIndex<6+p->broadcast.count){unsigned i=pageIndex-6;snprintf(line,sizeof(line),"ALR %u id=%u offset=%u ms",i,p->broadcast.ids[i],i*p->broadcast.slotMs);}
     else if(pageIndex<base){unsigned i=pageIndex-6-p->broadcast.count;snprintf(line,sizeof(line),"RLR %u id=%u",i,p->rlrs[i]);}
     else if(pageIndex==base)snprintf(line,sizeof(line),"AIR reserve=%lu capacity=%u peak=%u",(unsigned long)b.reservationUs,b.capacity,b.peakOperations);
-    else if(pageIndex==base+1)snprintf(line,sizeof(line),"PREVIEW cycle=1 units=reference_us");
-    else {unsigned i=(pageIndex-base-2)/2;mulRangingOperation_t op;(void)mulRangingPlanOperation(p,1,i,&op);
-     if((pageIndex-base)%2==0)snprintf(line,sizeof(line),"OP%u %c %u>%u %lu..%luus",i,op.kind==MUL_PLAN_AA?'A':'R',op.initiator,op.responder,(unsigned long)op.startUs,(unsigned long)op.endUs);
-     else snprintf(line,sizeof(line),"POLL op=%u at=%lu us",i,(unsigned long)op.pollUs);
+    else if(pageIndex==base+1)snprintf(line,sizeof(line),"PREVIEW reference_us; TDMA cycles0..4 else cycle1");
+    else {unsigned i=(pageIndex-base-2)/2;mulRangingOperation_t op;(void)mulRangingPlanOperation(p,p->policy==MUL_PLAN_TDMA?i:1,p->policy==MUL_PLAN_TDMA?0:i,&op);
+     if((pageIndex-base)%2==0)snprintf(line,sizeof(line),"%c%u %c %u>%u %lu..%luus",p->policy==MUL_PLAN_TDMA?'C':'O',i,op.kind==MUL_PLAN_AA?'A':'R',op.initiator,op.responder,(unsigned long)op.startUs,(unsigned long)op.endUs);
+     else snprintf(line,sizeof(line),"POLL %s=%u at=%lu us",p->policy==MUL_PLAN_TDMA?"cycle":"op",i,(unsigned long)op.pollUs);
     }
    }
   }

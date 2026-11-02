@@ -31,6 +31,15 @@ for host evaluation. SLAM, map alignment and inferred uncertainty are out of sco
 Optional measured-wheel-step EKF should prefer ESP32, retain raw data and default
 off. Continue D/E/F/G without physical checkpoints; hardware remains unauthorized.
 
+## Opt-in TDMA scheduler
+
+Codec5 adds four timing controls, independent post-own-TX Kalman work and one
+canonical cycle-indexed AA/AR TWR opportunity. Existing codec2/3/4 plans are retained;
+no live plan or EEPROM migration is automatic. LPS and STM32 share the canonical
+planner; ESP32 transports the existing RF5/replay formats. See
+[configuration, timing and operator validation](docs/mul_tdma.md). Physical200ms
+and3ms feasibility remain unverified;3ms TDMA slots are rejected.
+
 ## Current software upgrade campaign
 
 Stages A/B and numerical timing integration are software-tested across LPS,

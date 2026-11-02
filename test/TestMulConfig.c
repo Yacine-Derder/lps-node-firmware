@@ -576,3 +576,19 @@ void test_rf4SavedPlanPayloadIsUnchangedAndBootDoesNotRewriteIt(void){
  TEST_ASSERT_EQUAL_HEX32(0x65321a17,mulRangingPlanFingerprint(&cached->plan));
  TEST_ASSERT_EQUAL(before,writes);TEST_ASSERT_EQUAL_MEMORY(image,memory,sizeof(image));
 }
+
+void test_tdmaConsoleExplicitConversionPersistsBudgetsRejectsUnsafeAndRfOnEdits(void) {
+ send(":off\n");apply();send(":plan init\n:plan set process_us 2000\n:plan set lead_us 1000\n:plan set slot_ms 5\n:plan alrs 132 134 133\n:plan rlrs 141\n");
+ const mulStoredPlan_t *stored;TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));
+ TEST_ASSERT_NOT_EQUAL(MUL_PLAN_TDMA,stored->plan.policy);
+ send(":plan mode tdma\n:plan set process_us 2000\n:plan set lead_us 1000\n:plan set slot_ms 5\n:plan set cycle_ms 200\n:plan set kalman_budget_ms 10\n:plan set twr_window_ms 90\n:plan use on\n");
+ TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_TRUE(stored->selected);
+ TEST_ASSERT_EQUAL(5,mulRangingPlanVersion(&stored->plan));TEST_ASSERT_EQUAL(200,stored->plan.broadcast.periodMs);
+ TEST_ASSERT_EQUAL(10,stored->plan.kalmanBudgetMs);TEST_ASSERT_EQUAL(90,stored->plan.twrWindowMs);
+ uint32_t hash=mulRangingPlanFingerprint(&stored->plan);unsigned before=writes;
+ send(":plan set cycle_ms 100\n:plan set kalman_budget_ms 4\n:plan set twr_window_ms 87\n:plan set aa_millihz 1000\n:plan set slot_ms 3\n");TEST_ASSERT_EQUAL(before,writes);
+ output[0]=0;send(":plan show\n");TEST_ASSERT_NOT_NULL(strstr(output,"kalman_budget_ms=10"));TEST_ASSERT_NOT_NULL(strstr(output,"guard_us=85900"));
+ cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_EQUAL(hash,mulRangingPlanFingerprint(&stored->plan));
+ send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());before=writes;
+ send(":plan set kalman_budget_ms 20\n");TEST_ASSERT_EQUAL(before,writes);
+}

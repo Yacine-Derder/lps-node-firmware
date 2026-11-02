@@ -12,6 +12,10 @@
 #endif
 #if MUL_SLOT_TRACE
 void mulAlrSlotPoll(bool (*write)(const char *,unsigned));
+void mulAlrTiming(unsigned event,uint32_t cycle,unsigned initiator,unsigned responder,unsigned why,
+ uint64_t a,uint64_t b,uint64_t c,uint64_t d);
+#else
+#define mulAlrTiming(...) ((void)0)
 #endif
 
 extern uwbAlgorithm_t mulAlrAlgorithm;

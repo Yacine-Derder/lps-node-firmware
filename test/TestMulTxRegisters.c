@@ -598,12 +598,22 @@ void test_savedAntennaDirectionsReachHardwareAndValidation(void){
 }
 
 #if MUL_SLOT_TRACE
-static char slotLines[1024];static bool slotWritable=true;
+static char slotLines[4096];static bool slotWritable=true;
 static bool slotSink(const char *s,unsigned n) {
  TEST_ASSERT_TRUE(n<128);if(!slotWritable)return false;
  TEST_ASSERT_TRUE(strlen(slotLines)+n<sizeof(slotLines));strncat(slotLines,s,n);return true;
 }
-static void slotDrain(void){for(unsigned i=0;i<4;i++)mulAlrSlotPoll(slotSink);}
+static void slotDrain(void){for(unsigned i=0;i<24;i++)mulAlrSlotPoll(slotSink);}
+static bool slotWhy(unsigned why) {
+ char needle[20];snprintf(needle,sizeof(needle)," w=%u ",why);
+ for(const char *p=slotLines;*p;) {
+  const char *end=strchr(p,'\n'),*event=strstr(p," e=1 "),*reason=strstr(p,needle);
+  if(event&&reason&&(!end||(event<end&&reason<end)))return true;
+  if(!end)break;
+  p=end+1;
+ }
+ return false;
+}
 #endif
 static void slotPlan(mulRangingPlan_t *p,unsigned slotMs,unsigned id) {
 #if MUL_SLOT_TRACE
@@ -650,7 +660,7 @@ void test_generatedFirstFollowerShortSlotsKeepGuardsAcrossRosterAndWrap(void) {
    systemTime=mulTimestampMask(rx+40*63897600ULL);fakeTicks=cycle*1000+40;
    mulAlrAlgorithm.onEvent(&radio,eventTimeout); // Missing other broadcast still permits deferred service.
 #if MUL_SLOT_TRACE
-   slotLines[0]=0;slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,"w=0"));
+   slotLines[0]=0;slotDrain();TEST_ASSERT_TRUE(slotWhy(0));
 #endif
   }
  }
@@ -662,7 +672,7 @@ void test_generatedLatencyFailureFollowsFirstSlotRatherThanNodeIdentity(void) {
   slotReference(&p,0,0,4500*63897600ULL/1000);
   TEST_ASSERT_EQUAL(position==2,started);
 #if MUL_SLOT_TRACE
-  slotLines[0]=0;slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,position==2?"w=0":"w=1"));
+  slotLines[0]=0;slotDrain();TEST_ASSERT_TRUE(slotWhy(position==2?0:1));
 #endif
  }
 }
@@ -678,9 +688,8 @@ void test_generatedShortSlotMissedDeadlinesAndHardwareFailuresStayFailClosed(voi
   if(fault!=4){TEST_ASSERT_FALSE(started);}
   TEST_ASSERT_EQUAL(RX_MODE,radio.deviceMode);
 #if MUL_SLOT_TRACE
-  const unsigned reasons[]={1,7,5,3,6,1};char reason[16];
-  snprintf(reason,sizeof(reason),"w=%u",reasons[fault]);slotLines[0]=0;slotDrain();
-  TEST_ASSERT_NOT_NULL(strstr(slotLines,reason));
+  const unsigned reasons[]={1,7,5,3,6,1};slotLines[0]=0;slotDrain();
+  TEST_ASSERT_TRUE(slotWhy(reasons[fault]));
 #endif
   badDx=txWarning=false;spiCostDtu=frameCostDtu=0;
   systemTime=140*63897600ULL;mulAlrAlgorithm.onEvent(&radio,eventTimeout);
@@ -704,7 +713,7 @@ void test_threeMsExperimentalSlotRequiresFeasibleBudgetAndEnoughActualLead(void)
  systemTime=40*63897600ULL;mulAlrAlgorithm.onEvent(&radio,eventTimeout);
  slotReference(&p,1,1000*63897600ULL,2500*63897600ULL/1000);TEST_ASSERT_FALSE(started);
 #if MUL_SLOT_TRACE
- slotLines[0]=0;slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,"w=1"));
+ slotLines[0]=0;slotDrain();TEST_ASSERT_TRUE(slotWhy(1));
 #endif
 }
 void test_slotTraceBackpressureNeverBlocksOrOverwritesPartialRecord(void) {
@@ -714,7 +723,20 @@ void test_slotTraceBackpressureNeverBlocksOrOverwritesPartialRecord(void) {
  slotWritable=false;mulAlrSlotPoll(slotSink);TEST_ASSERT_EQUAL_STRING("",slotLines);
  slotWritable=true;mulAlrSlotPoll(slotSink);TEST_ASSERT_NOT_NULL(strstr(slotLines,"c=10"));
  systemTime=6*63897600ULL;registers[SYS_STATUS][0]=1<<TXFRS_BIT;dwHandleInterrupt(&radio);
- slotReference(&p,11,1000*63897600ULL,63897600);slotDrain();
- TEST_ASSERT_NULL(strstr(slotLines,"c=11"));TEST_ASSERT_NOT_NULL(strstr(slotLines,"k=3"));
+ slotReference(&p,11,1000*63897600ULL,63897600);
+ for(unsigned i=0;i<3;i++)mulAlrSlotPoll(slotSink);
+ TEST_ASSERT_NULL(strstr(slotLines,"c=11 "));TEST_ASSERT_NOT_NULL(strstr(slotLines,"k=3"));
+ slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,"c=11 ")); // FIFO preserves the next record too.
+#endif
+}
+
+void test_timingRingOverflowPreservesFifoAndRadioState(void) {
+#if MUL_SLOT_TRACE
+ setUp();slotDrain();slotLines[0]=0;
+ bool wasStarted=started;unsigned mode=radio.deviceMode;
+ for(unsigned i=0;i<6;i++)mulAlrTiming(3,100+i,132,133,0,i,i+1,0,0);
+ TEST_ASSERT_EQUAL(wasStarted,started);TEST_ASSERT_EQUAL(mode,radio.deviceMode);
+ slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,"c=100 "));TEST_ASSERT_NOT_NULL(strstr(slotLines,"c=103 "));
+ TEST_ASSERT_NULL(strstr(slotLines,"c=104 "));TEST_ASSERT_NULL(strstr(slotLines,"c=105 "));
 #endif
 }

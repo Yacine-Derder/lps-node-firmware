@@ -1601,3 +1601,64 @@ void test_deferredKalmanStaleCompletionAbortsHardwareBeforeReleasingObservation(
  TEST_ASSERT_TRUE(deferredClock.fit.active);TEST_ASSERT_EQUAL(accepted,mulClockWorkspace()->fit.accepted);
  deferredQuiet(&p,15);TEST_ASSERT_EQUAL(accepted+1,mulClockWorkspace()->fit.accepted);
 }
+
+void test_tdmaDeferredWorkerStartsAtOwnConfirmedTxOverlappingOtherFollower(void) {
+ const unsigned periods[]={200,250,500,1000};
+ for(unsigned k=0;k<4;k++)for(unsigned first=133;first<=134;first++) {
+  setUp();mulRangingPlan_t p;deferredConfiguration(&p,1000,first);
+  mulRangingPlanTdma(&p);p.broadcast.periodMs=periods[k];multiConfiguration.mulSchedule=p.broadcast;TEST_ASSERT_NULL(mulRangingPlanValidate(&p,NULL));
+  mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+  for(unsigned cycle=0;cycle<30;cycle++) {
+   unsigned before=mulClockWorkspace()->fit.accepted;deferredReference(&p,cycle);
+   TEST_ASSERT_EQUAL(before,mulClockWorkspace()->fit.accepted);
+   advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+   // Own slot is5ms, next follower broadcasts at10ms: drain independently now.
+   TEST_ASSERT_TRUE(physical<((int64_t)cycle*periods[k]+10)*MS);
+   TEST_ASSERT_FALSE(deferredClock.fit.active);
+   if(cycle>10)TEST_ASSERT_EQUAL(before+1,mulClockWorkspace()->fit.accepted);
+   unsigned done=mulClockWorkspace()->fit.accepted;(void)followerWait(&radios[1].device);
+   TEST_ASSERT_EQUAL(done,mulClockWorkspace()->fit.accepted);
+  }
+ }
+}
+void test_tdmaDeferredWorkerHonorsBudgetAndGlobalTwrEvenWhenNotInPair(void) {
+ setUp();mulRangingPlan_t p;deferredConfiguration(&p,200,134);mulRangingPlanTdma(&p);
+ mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+ for(unsigned cycle=0;cycle<15;cycle++) {
+  deferredReference(&p,cycle);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ }
+ deferredReference(&p,15);unsigned before=mulClockWorkspace()->fit.accepted;
+ // Delay servicing completion until too close to the global24.1ms TWR start.
+ advance((15*200+18)*MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ TEST_ASSERT_TRUE(deferredClock.fit.active);TEST_ASSERT_EQUAL(before,mulClockWorkspace()->fit.accepted);
+ advance((15*200+30)*MS);(void)followerWait(&radios[1].device);
+ TEST_ASSERT_TRUE(deferredClock.fit.active);TEST_ASSERT_EQUAL(before,mulClockWorkspace()->fit.accepted);
+ advance((15*200+181)*MS);(void)followerWait(&radios[1].device);
+ TEST_ASSERT_FALSE(deferredClock.fit.active);TEST_ASSERT_EQUAL(before+1,mulClockWorkspace()->fit.accepted);
+}
+
+void test_tdmaActualTwrOneExchangePerCycleRotatesDespiteLossAndKeepsCalibration(void) {
+ for(unsigned cycle=0;cycle<30;cycle++) {
+  setUp();scenario(-150000,2131);exchangeSequence=cycle;model.sequence=cycle;
+  mulRangingPlan_t p={.replyMs=20,.rlrCount=1,.rlrs={141}};
+  mulScheduleLegacy(&p.broadcast,132,133,5);mulScheduleExperimental(&p.broadcast);
+  p.broadcast.periodMs=200;p.broadcast.rangingFlags=0;p.broadcast.txLeadUs=1000;p.broadcast.rxBudgetUs=2000;
+  mulRangingPlanTdma(&p);simulationPlan=&p;
+  TEST_ASSERT_EQUAL(1,mulRangingPlanCount(&p,cycle));
+  mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,cycle,0,&op));
+  TEST_ASSERT_EQUAL(cycle%3==2?133:132,op.initiator);TEST_ASSERT_EQUAL(cycle%3==0?133:141,op.responder);
+  advance((int64_t)op.startUs*MS/1000);
+  TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,cycle,0));TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(1),&p,cycle,0));
+  TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,cycle,origins[0]));
+  if(cycle%7==0) {
+   advance((int64_t)op.endUs*MS/1000);dispatch(0,eventReceiveTimeout);
+   TEST_ASSERT_FALSE(ctx(0)->active);TEST_ASSERT_FALSE(mulTwrStart(ctx(0),&radios[0].device,cycle,origins[0]));
+  }else {
+   completeExchange();TEST_ASSERT_FALSE(ctx(0)->active);TEST_ASSERT_FALSE(ctx(1)->active);
+   TEST_ASSERT_UINT32_WITHIN(1,flight,ctx(1)->tof);
+   TEST_ASSERT_EQUAL(op.kind==MUL_PLAN_AA,ctx(1)->aa.valid);
+   TEST_ASSERT_TRUE(physical<(int64_t)op.endUs*MS/1000);
+  }
+  TEST_ASSERT_FALSE(mulTwrConfigurePlan(ctx(0),&p,cycle,0));
+ }
+}

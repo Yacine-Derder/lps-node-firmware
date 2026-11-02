@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 #include "mul_twr.h"
+#include "mul_alr.h"
 #include "mul_rx.h"
 #include "mul_multi_protocol.h"
 
@@ -200,6 +201,8 @@ void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool inval
     dwIdle(dev);
     clearErrors(dev);
     mulRxRearm(dev);
+    mulAlrTiming(4,twr->id,twr->planned?plannedSession.op.initiator:0,
+      twr->planned?plannedSession.op.responder:0,2,hardwareNow(dev),twr->deadline,twr->stage,0);
     if (reason) printf("MUL TWR: id=%" PRIu32 " result=FAILED reason=%s\r\n", twr->id, reason);
     else twr->deferredCancel = true;
   }
@@ -291,6 +294,7 @@ bool mulTwrStartTargets(mulTwr_t *twr,dwDevice_t *dev,uint32_t cycle,uint64_t po
  aaLocal=plannedSession.op.initiator;aaInput=7;aaNowValid=false;aaEnd=twr->windowEnd;
 #endif
  TRACE(twr,mulAaWindow,mulTwrPoll,0,poll);
+ mulAlrTiming(4,cycle,plannedSession.op.initiator,plannedSession.op.responder,1,poll,end,0,0);
  memset(twr->stamps,0,sizeof(twr->stamps));memset(twr->power,0,sizeof(twr->power));
  return sendPacket(twr,dev,mulTwrPoll,poll);
 }
@@ -305,6 +309,7 @@ bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t ori
   aaLocal=plannedSession.op.initiator;aaInput=7;aaNowValid=false;aaEnd=twr->windowEnd;
 #endif
   TRACE(twr,mulAaWindow,mulTwrPoll,0,mulTimestampMask(origin+pollOffset(twr)));
+  mulAlrTiming(4,sequence,twr->planned?plannedSession.op.initiator:0,twr->planned?plannedSession.op.responder:0,1,mulTimestampMask(origin+pollOffset(twr)),twr->windowEnd,0,0);
   memset(twr->stamps, 0, sizeof(twr->stamps));
   memset(twr->power, 0, sizeof(twr->power));
   return sendPacket(twr, dev, mulTwrPoll, mulTimestampMask(origin+pollOffset(twr)));
@@ -313,24 +318,9 @@ bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t ori
 static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
 {
   mulNetwork_t pairNetwork;
-  // Only after RESULT: this exchange has no pending TX. Generated plans may
-  // reserve another exchange soon; CDC queue writes remain nonblocking.
-  printf("MUL TWR D: id=%" PRIu32 " ant=%u/%u cal=LPS P=",
-    twr->id, (unsigned int)dwSpiRead16(dev, TX_ANTD, NO_SUB),
-    (unsigned int)dwSpiRead16(dev, LDE_IF, LDE_RXANTD_SUB));
-  for (unsigned int i=0; i<6; i++) {
-    printf("%02X%08" PRIX32 "%s", (unsigned int)(twr->stamps[i]>>32),
-      (uint32_t)twr->stamps[i], i == 5 ? "" : ",");
-  }
-  printf(" raw_tof=%" PRIu32 " corrected_tof=",(uint32_t)twr->rawTof);
-  if (twr->candidatePowerCorrected) printf("%" PRIu32,(uint32_t)twr->candidateTof); else printf("UNAVAILABLE");
-  printf(" I=%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 " Q=",
-    (uint32_t)mulTimestampDifference(twr->stamps[3],twr->stamps[0]),
-    (uint32_t)mulTimestampDifference(twr->stamps[4],twr->stamps[3]),
-    (uint32_t)mulTimestampDifference(twr->stamps[5],twr->stamps[2]),
-    (uint32_t)mulTimestampDifference(twr->stamps[2],twr->stamps[1]));
-  for (unsigned int i=0;i<3;i++) printf("%d/%d/%u/%u%s",twr->power[i].powerCentiDbm,
-    twr->power[i].deltaDtu,twr->power[i].status,twr->power[i].table,i==2 ? "\r\n" : ",");
+  (void)dev;
+  mulAlrTiming(4,twr->id,twrNetwork->addresses[0][0],twrNetwork->addresses[1][0],0,
+    twr->stamps[0],twr->stamps[5],twr->candidateTof,twr->rawTof);
   // Vacuum speed of light 299792458 m/s; display integer millimetres, not an accuracy claim.
   uint32_t mm = (uint32_t)(((uint64_t)twr->candidateTof*UINT64_C(299792458000) + UINT64_C(31948800000)) /
                          UINT64_C(63897600000));
@@ -597,19 +587,10 @@ void mulTwrSync(mulTwr_t *twr, const mulClock_t *clock, uint32_t nowMs, bool for
   const mulNetwork_t *pair=delayNetwork(twr,&pairNetwork);
   mulClockDelay_t delay;
   bool supplied = mulTwrDelay(twr, clock, &delay);
-  mulClockDelayStatus_t status = mulClockDelayStatusNetwork(pair,clock, supplied ? &delay : NULL, nowMs);
   mulClockCorrectedMapping_t mapped;
   bool available = mulClockMapRefToFollowerSimultaneousNetwork(pair,clock, clock->referenceTx,
     supplied ? &delay : NULL, nowMs, &mapped);
-  mulClockMapStatus_t mapStatus = mulClockMapStatus(clock, nowMs);
-  if (force || twr->syncDirty || available != twr->syncAvailable) {
-    printf("MUL ALR: SYNC src=0x%02X map=%s delay=%s correction=%s delay_age_ms=%" PRIu32
-           " physical_bound=UNKNOWN\r\n",
-      pair->addresses[0][0],mapStatus == mulClockMapValid ? "VALID" : mapStatus == mulClockMapWarmup ? "WARMUP" :
-      mapStatus == mulClockMapStale ? "STALE" : "INVALID",
-      status == mulClockDelayValid ? "VALID" : status == mulClockDelayStale ? "STALE" : "INVALID",
-      available ? "AVAILABLE" : "UNAVAILABLE", supplied ? nowMs-delay.measuredMs : 0);
-  }
+  (void)force;
   twr->syncAvailable = available;
   twr->syncDirty = false;
 }

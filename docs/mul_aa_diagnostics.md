@@ -1,5 +1,13 @@
 # Generated AA TWR stage diagnostics
 
+Current codec5/TDMA builds use the compact event-tagged SL1 format described in
+[the TDMA guide](mul_tdma.md#essential-diagnostics-and-physical-acceptance).
+The older verbose TX/KF/SYNC and six-stamp text logs below describe historical
+captures; they are no longer emitted by current production images. AA1 remains
+available as a separate optional detailed TWR trace. Use the TDMA guide for current
+build/configuration/validation commands and resource results.
+
+
 The optional LPS build flag `MUL_TWR_TRACE=1` adds local USB diagnostics to both
 ALRs. It defaults to0. Both ALRs use the same image; persisted addresses/roles
 still select initiator/responder. No on-air bytes, plan hash, scheduling constants,
