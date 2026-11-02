@@ -4,6 +4,16 @@
 
 #include "uwb.h"
 
+#ifndef MUL_SLOT_TRACE
+#define MUL_SLOT_TRACE 0
+#endif
+#if MUL_SLOT_TRACE != 0 && MUL_SLOT_TRACE != 1
+#error MUL_SLOT_TRACE must be 0 or 1
+#endif
+#if MUL_SLOT_TRACE
+void mulAlrSlotPoll(bool (*write)(const char *,unsigned));
+#endif
+
 extern uwbAlgorithm_t mulAlrAlgorithm;
 
 #endif // MUL_ALR_H

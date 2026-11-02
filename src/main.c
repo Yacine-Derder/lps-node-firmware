@@ -24,6 +24,7 @@
  */
 #include <stm32f0xx_hal.h>
 #include "mul_rx.h"
+#include "mul_alr.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -221,6 +222,9 @@ static void main_task(void *pvParameters) {
 #endif
       handleSerialInput(ch);
     }
+#if MUL_SLOT_TRACE
+    mulAlrSlotPoll(usbcommTryWrite);
+#endif
 #if MUL_RX_DIAG
     mulRxDiagPoll(usbcommTryWrite);
 #endif

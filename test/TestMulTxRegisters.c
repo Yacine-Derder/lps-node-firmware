@@ -36,6 +36,9 @@ static uint8_t transmitted[MUL_TWR_FRAME_LENGTH];
 static dwDevice_t radio;
 static uwbConfig_t nodeConfig;
 static uint64_t systemTime;
+static uint64_t spiCostDtu,frameCostDtu;
+static bool badDx,txWarning;
+static unsigned spiReads,spiWrites,systemReads,preDxReads;
 static TickType_t fakeTicks;
 TickType_t xTaskGetTickCount(void) { return fakeTicks; }
 
@@ -62,8 +65,10 @@ static void radioRead(dwDevice_t *device, const void *header, size_t headerLengt
   unsigned int reg = bytes[0] & 0x3f;
   unsigned int offset = spiOffset(bytes, headerLength);
   TEST_ASSERT_TRUE(offset + length <= sizeof(registers[reg]));
-  if (reg == SYS_TIME) mulEncodeTimestamp(registers[reg], systemTime);
+  spiReads++;systemTime=mulTimestampMask(systemTime+spiCostDtu);
+  if (reg == SYS_TIME) {systemReads++;mulEncodeTimestamp(registers[reg], systemTime);}
   memcpy(data, registers[reg] + offset, length);
+  if(badDx&&reg==DX_TIME)((uint8_t *)data)[1]^=2;
 }
 
 static void radioWrite(dwDevice_t *device, const void *header, size_t headerLength,
@@ -73,6 +78,8 @@ static void radioWrite(dwDevice_t *device, const void *header, size_t headerLeng
   unsigned int reg = bytes[0] & 0x3f;
   unsigned int offset = spiOffset(bytes, headerLength);
   TEST_ASSERT_TRUE(offset + length <= sizeof(registers[reg]));
+  if(reg==DX_TIME)preDxReads=systemReads;
+  spiWrites++;systemTime=mulTimestampMask(systemTime+spiCostDtu+(reg==TX_BUFFER?frameCostDtu:0));
   if (reg == SYS_STATUS) {
     for (size_t i = 0; i < length; i++)
       registers[reg][offset + i] &= ~((const uint8_t *)data)[i];
@@ -88,6 +95,7 @@ static void radioWrite(dwDevice_t *device, const void *header, size_t headerLeng
     mulEncodeTimestamp(registers[TX_TIME], raw + antenna);
     memcpy(transmitted, registers[TX_BUFFER], sizeof(transmitted));
     started = true;
+    if(txWarning)registers[SYS_STATUS][3]|=8;
   }
 }
 
@@ -113,7 +121,7 @@ void setUp(void) {
   nodeConfig.address[0] = 0x84;
   nodeConfig.address[6] = 0xcf;
   nodeConfig.address[7] = 0xbc;
-  systemTime = 0; fakeTicks=0;
+  systemTime = 0; fakeTicks=0;spiCostDtu=frameCostDtu=0;badDx=txWarning=false;spiReads=spiWrites=0;
   started = false;
   completionCount = 0;
   receiveCount = 0;rxOffWrites=0;
@@ -587,4 +595,122 @@ void test_savedAntennaDirectionsReachHardwareAndValidation(void){
  TEST_ASSERT_EQUAL_UINT64(15123,radio.antennaDelay.full);TEST_ASSERT_TRUE(mulAntennaValid(&radio));
  radio.antennaDelay.full=14498;TEST_ASSERT_FALSE(mulAntennaValid(&radio));
  mulAlrAlgorithm.init(&nodeConfig,&radio);TEST_ASSERT_TRUE(mulAntennaValid(&radio));
+}
+
+#if MUL_SLOT_TRACE
+static char slotLines[1024];static bool slotWritable=true;
+static bool slotSink(const char *s,unsigned n) {
+ TEST_ASSERT_TRUE(n<128);if(!slotWritable)return false;
+ TEST_ASSERT_TRUE(strlen(slotLines)+n<sizeof(slotLines));strncat(slotLines,s,n);return true;
+}
+static void slotDrain(void){for(unsigned i=0;i<4;i++)mulAlrSlotPoll(slotSink);}
+#endif
+static void slotPlan(mulRangingPlan_t *p,unsigned slotMs,unsigned id) {
+#if MUL_SLOT_TRACE
+ slotWritable=true;slotLines[0]=0;slotDrain();
+#endif
+ memset(p,0,sizeof(*p));p->replyMs=20;p->maxUtilization=70;p->enabled=3;
+ p->aaMilliHz=p->arMilliHz=1000;p->rlrCount=1;p->rlrs[0]=141;p->aaStartDelayUs=50000;
+ mulScheduleLegacy(&p->broadcast,132,id,slotMs);mulScheduleExperimental(&p->broadcast);
+ p->broadcast.count=3;p->broadcast.ids[2]=id==133?134:133;
+ p->broadcast.rangingFlags=0;p->broadcast.txLeadUs=1000;p->broadcast.rxBudgetUs=2000;
+ TEST_ASSERT_NULL(mulRangingPlanValidate(p,NULL));
+ nodeConfig.address[0]=id;nodeConfig.mulConfigured=true;nodeConfig.mulRole=mulAlrFollower;
+ nodeConfig.mulSchedule=p->broadcast;nodeConfig.mulPlan=p;
+ mulClockFitDefaults(&nodeConfig.mulClockConfig);nodeConfig.mulClockConfig.estimator=mulClockEstimatorKalman;
+ TEST_ASSERT_TRUE(mulNetworkInit(&nodeConfig.mulNetwork,132,id));
+ mulAlrAlgorithm.init(&nodeConfig,&radio);
+}
+static void slotReference(const mulRangingPlan_t *p,uint32_t cycle,uint64_t rx,uint64_t latency) {
+ unsigned n=mulPlanBroadcastEncode(registers[RX_BUFFER],sizeof(registers[RX_BUFFER]),p,0,cycle,
+   mulTimestampMask((uint64_t)cycle*1000*63897600),NULL);
+ TEST_ASSERT_EQUAL(40,n);registers[RX_FINFO][0]=n+2;mulEncodeTimestamp(registers[RX_TIME],rx);
+ systemTime=mulTimestampMask(rx+latency);started=false;systemReads=preDxReads=0;
+ registers[SYS_STATUS][1]=1<<(RXFCG_BIT-8);dwHandleInterrupt(&radio);
+}
+void test_generatedFirstFollowerShortSlotsKeepGuardsAcrossRosterAndWrap(void) {
+ for(unsigned slot=5;slot<=10;slot+=5)for(unsigned id=133;id<=134;id++) {
+  setUp();mulRangingPlan_t p;slotPlan(&p,slot,id);
+  // Transfer latency includes IRQ/driver reads and TX setup; no zero-cost SPI.
+  spiCostDtu=50*638976/10;
+  for(unsigned cycle=0;cycle<12;cycle++) {
+   uint64_t rx=mulTimestampMask(MUL_TIMESTAMP_MASK-500*63897600ULL+
+     (uint64_t)cycle*1000*63897600+cycle*300000); // drift, native40 wrap
+   fakeTicks=cycle*1000;slotReference(&p,cycle,rx,1000*63897600ULL/1000);
+   TEST_ASSERT_TRUE(started);
+   // No old-cycle reservation walk before the reference-to-broadcast turn.
+   TEST_ASSERT_EQUAL_UINT(2+2*MUL_SLOT_TRACE,preDxReads);
+   mulMultiBroadcast_t decoded;TEST_ASSERT_TRUE(mulPlanBroadcastDecode(&p,transmitted,80,&decoded));
+   TEST_ASSERT_EQUAL(id,decoded.packet.source[0]);TEST_ASSERT_EQUAL(cycle,decoded.packet.sequence);
+   int64_t offset=mulTimestampDifference(decoded.packet.txTimestamp,rx);
+   TEST_ASSERT_TRUE(offset>=(int64_t)slot*63897600&&offset<(int64_t)slot*63897600+512);
+   TEST_ASSERT_TRUE(mulTimestampDifference(mulDecodeTimestamp(registers[DX_TIME]),systemTime)>=63897600);
+   systemTime=mulTimestampMask(decoded.packet.txTimestamp+63897600);
+   registers[SYS_STATUS][0]=1<<TXFRS_BIT;dwHandleInterrupt(&radio);
+#if MUL_SLOT_TRACE
+   slotLines[0]=0;slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,"w=0"));
+#endif
+  }
+ }
+}
+void test_generatedLatencyFailureFollowsFirstSlotRatherThanNodeIdentity(void) {
+ for(unsigned first=133;first<=134;first++)for(unsigned position=1;position<=2;position++) {
+  setUp();mulRangingPlan_t p;slotPlan(&p,5,first);
+  if(position==2){nodeConfig.address[0]=first==133?134:133;mulAlrAlgorithm.init(&nodeConfig,&radio);}
+  slotReference(&p,0,0,4500*63897600ULL/1000);
+  TEST_ASSERT_EQUAL(position==2,started);
+#if MUL_SLOT_TRACE
+  slotLines[0]=0;slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,position==2?"w=0":"w=1"));
+#endif
+ }
+}
+void test_generatedShortSlotMissedDeadlinesAndHardwareFailuresStayFailClosed(void) {
+ for(unsigned fault=0;fault<6;fault++) {
+  setUp();mulRangingPlan_t p;slotPlan(&p,5,133);
+  uint64_t latency=(fault==0?4500:fault==1?16000:1000)*63897600ULL/1000;
+  if(fault==2)frameCostDtu=4000*63897600ULL/1000;
+  if(fault==3)badDx=true;
+  if(fault==4)txWarning=true;
+  if(fault==5)spiCostDtu=400*63897600ULL/1000;
+  slotReference(&p,0,100*63897600ULL,latency);
+  if(fault!=4){TEST_ASSERT_FALSE(started);}
+  TEST_ASSERT_EQUAL(RX_MODE,radio.deviceMode);
+#if MUL_SLOT_TRACE
+  const unsigned reasons[]={1,7,5,3,6,1};char reason[16];
+  snprintf(reason,sizeof(reason),"w=%u",reasons[fault]);slotLines[0]=0;slotDrain();
+  TEST_ASSERT_NOT_NULL(strstr(slotLines,reason));
+#endif
+  badDx=txWarning=false;spiCostDtu=frameCostDtu=0;
+  // A missed slot is never moved/retried; a subsequent fresh reference recovers.
+  slotReference(&p,1,1100*63897600ULL,63897600);TEST_ASSERT_TRUE(started);
+#if MUL_SLOT_TRACE
+  slotLines[0]=0;slotDrain();
+#endif
+ }
+}
+void test_threeMsExperimentalSlotRequiresFeasibleBudgetAndEnoughActualLead(void) {
+ setUp();mulRangingPlan_t p;slotPlan(&p,5,133);
+ p.broadcast.slotMs=3;TEST_ASSERT_NOT_NULL(mulRangingPlanValidate(&p,NULL));
+ p.broadcast.rxBudgetUs=500;TEST_ASSERT_NULL(mulRangingPlanValidate(&p,NULL));
+ nodeConfig.mulSchedule=p.broadcast;mulAlrAlgorithm.init(&nodeConfig,&radio);
+ slotReference(&p,0,0,63897600);TEST_ASSERT_TRUE(started);
+#if MUL_SLOT_TRACE
+ slotLines[0]=0;slotDrain();
+#endif
+ systemTime=4*63897600ULL;registers[SYS_STATUS][0]=1<<TXFRS_BIT;dwHandleInterrupt(&radio);
+ slotReference(&p,1,1000*63897600ULL,2500*63897600ULL/1000);TEST_ASSERT_FALSE(started);
+#if MUL_SLOT_TRACE
+ slotLines[0]=0;slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,"w=1"));
+#endif
+}
+void test_slotTraceBackpressureNeverBlocksOrOverwritesPartialRecord(void) {
+#if MUL_SLOT_TRACE
+ setUp();slotLines[0]=0;slotWritable=true;slotDrain();
+ mulRangingPlan_t p;slotPlan(&p,5,133);slotReference(&p,10,0,63897600);
+ slotWritable=false;mulAlrSlotPoll(slotSink);TEST_ASSERT_EQUAL_STRING("",slotLines);
+ slotWritable=true;mulAlrSlotPoll(slotSink);TEST_ASSERT_NOT_NULL(strstr(slotLines,"c=10"));
+ systemTime=6*63897600ULL;registers[SYS_STATUS][0]=1<<TXFRS_BIT;dwHandleInterrupt(&radio);
+ slotReference(&p,11,1000*63897600ULL,63897600);slotDrain();
+ TEST_ASSERT_NULL(strstr(slotLines,"c=11"));TEST_ASSERT_NOT_NULL(strstr(slotLines,"k=3"));
+#endif
 }

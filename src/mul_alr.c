@@ -56,6 +56,37 @@ static uint32_t refSequence(void){return multiMode?referenceState.multi.sequence
 static uint64_t refRx(void){return multiMode?referenceState.multi.rxTimestamp:followerReference.rxTimestamp;}
 static uint64_t refTx(void){return multiMode?referenceState.multi.txTimestamp:followerReference.txTimestamp;}
 
+// Follower decision codes: 0 armed,1 late before setup,2 future/stale,
+// 3 DX readback,4 payload,5 late after setup,6 hardware warning,
+// 7 RX age,8 rejected frame,9 old/duplicate. No formatting in the measured path.
+static uint8_t slotReason;
+#if MUL_SLOT_TRACE
+static struct {uint64_t t[8];uint32_t cycle;uint8_t local,why;} slotTrace,slotRecord;
+static bool slotReady;
+static uint16_t slotLost;
+#define SLOT_TIME(i,v) (slotTrace.t[i]=(v))
+static void slotPublish(void) {
+ slotTrace.cycle=refSequence();slotTrace.local=source[0];slotTrace.why=slotReason;
+ taskENTER_CRITICAL();
+ if(slotReady)slotLost++;else {slotRecord=slotTrace;slotReady=true;}
+ taskEXIT_CRITICAL();
+}
+void mulAlrSlotPoll(bool (*write)(const char *,unsigned)) {
+ // The producer retains the record until all four bounded lines are accepted.
+ // USB backpressure drops new records, never blocks the radio or overwrites it.
+ static unsigned part;char line[128];
+ if(!slotReady||!write)return;
+ uint64_t a=slotRecord.t[2*part],b=slotRecord.t[2*part+1];
+ int n=snprintf(line,sizeof(line),"SL1 c=%" PRIu32 " l=%02X k=%u a=%02X%08" PRIX32 " b=%02X%08" PRIX32 " w=%u z=%u\r\n",
+  slotRecord.cycle,slotRecord.local,part,(unsigned)(a>>32),(uint32_t)a,(unsigned)(b>>32),(uint32_t)b,slotRecord.why,slotLost);
+ if(n>0&&(unsigned)n<sizeof(line)&&write(line,(unsigned)n)&&++part==4) {
+  taskENTER_CRITICAL();slotReady=false;taskEXIT_CRITICAL();part=0;
+ }
+}
+#else
+#define SLOT_TIME(i,v) ((void)0)
+#endif
+
 static TickType_t lastReferenceTick;
 #define followerClock mulRoleIo.alr.clock
 #define ranging mulRoleScratch.twr
@@ -127,7 +158,8 @@ static bool readBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *arri
  if(!(activePlan?mulPlanBroadcastDecode(activePlan,frame,n,&decoded):mulMultiBroadcastDecode(schedule,frame,n,&decoded)))return false;
  dwTime_t rx={.full=0};dwGetRawReceiveTimestamp(dev,&rx);
  int64_t age=mulTimestampDifference(readHardwareTime(dev),rx.full);
- if(age<0||age>(int64_t)(15*MUL_DTU_PER_MS))return false;
+ SLOT_TIME(0,mulTimestampMask(rx.full));
+ if(age<0||age>(int64_t)(15*MUL_DTU_PER_MS)){slotReason=7;return false;}
  *arrival=mulTimestampMask(rx.full);*packet=decoded.packet;packet->slotMs=schedule->slotMs;
  if(slot)*slot=decoded.slot;
  return true;
@@ -211,13 +243,16 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
   dwSpiRead(dev, DX_TIME, NO_SUB, programmed.raw, LEN_DX_TIME);
   if (programmed.full != rawTx.full) {
     dwIdle(dev);
-    printf("MUL ALR: DX_TIME mismatch seq=%" PRIu32 "\r\n", pendingSequence);
+    slotReason=3;
+    if(alrRole!=mulAlrFollower)printf("MUL ALR: DX_TIME mismatch seq=%" PRIu32 "\r\n", pendingSequence);
     return false;
   }
   pendingTimestamp = mulTimestampMask(programmed.full + txAntennaDelay);
-  (void)mulEncodeScheduledPacket(txFrame,source,pendingSequence,pendingTimestamp,mulNetworkSlotMs(alrNetwork));
   unsigned int length=MUL_TEST_FRAME_LENGTH;
+  if(alrRole!=mulAlrFollower) {
   if(multiMode)length=activePlan?mulPlanBroadcastEncode(txFrame,sizeof(txFrame),activePlan,0,pendingSequence,pendingTimestamp,NULL):mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,0,pendingSequence,pendingTimestamp,NULL);
+  else (void)mulEncodeScheduledPacket(txFrame,source,pendingSequence,pendingTimestamp,mulNetworkSlotMs(alrNetwork));
+  }
   if (alrRole==mulAlrFollower) {
     mulClockDelay_t delay;
     bool supplied=selectedDelay((uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,&delay);
@@ -229,24 +264,28 @@ static bool startDelayedTx(dwDevice_t *dev, dwTime_t rawTx, uint16_t txAntennaDe
     if(multiMode)length=activePlan?mulPlanBroadcastEncode(txFrame,sizeof(txFrame),activePlan,localSlot,pendingSequence,pendingTimestamp,&relation):mulMultiBroadcastEncode(txFrame,sizeof(txFrame),schedule,localSlot,pendingSequence,pendingTimestamp,&relation);
     else {mulRelationEncode(txFrame,&packet,&relation);length=MUL_RELATION_FRAME_LENGTH;}
   }
-  if(!length){dwIdle(dev);printf("MUL ALR: invalid TX payload; skipped\r\n");return false;}
+  if(!length){slotReason=4;dwIdle(dev);if(alrRole!=mulAlrFollower)printf("MUL ALR: invalid TX payload; skipped\r\n");return false;}
   dwSetData(dev, txFrame, length);
 
   // Check again after SPI setup, before arming. Leave room for preamble/power-up.
-  if (mulTimestampDifference(rawTx.full, readHardwareTime(dev)) <
+  uint64_t prepared=readHardwareTime(dev);SLOT_TIME(4,prepared);
+  if (mulTimestampDifference(rawTx.full, prepared) <
       (int64_t)MUL_TX_MIN_LEAD_DTU) {
     dwIdle(dev);
-    printf("MUL ALR: Skipped late TX seq=%" PRIu32 "\r\n", pendingSequence);
+    slotReason=5;
+    if(alrRole!=mulAlrFollower)printf("MUL ALR: Skipped late TX seq=%" PRIu32 "\r\n", pendingSequence);
     return false;
   }
   pendingRawTx = rawTx.full;
   flags.tx = true;
   dwStartTransmit(dev);
+  SLOT_TIME(5,readHardwareTime(dev));
   if (dwSpiRead16(dev, SYS_STATUS, 3) & MUL_TX_ERROR_STATUS) {
     dwIdle(dev);
     clearTxErrors(dev);
     flags.tx = false;
-    printf("MUL ALR: Delayed TX failed seq=%" PRIu32 "\r\n", pendingSequence);
+    slotReason=6;
+    if(alrRole!=mulAlrFollower)printf("MUL ALR: Delayed TX failed seq=%" PRIu32 "\r\n", pendingSequence);
     return false;
   }
   return true;
@@ -402,12 +441,14 @@ static bool scheduleFollowerTx(dwDevice_t *dev, uint64_t localRx)
   uint64_t rawTarget = mulTimestampMask(localRx + offset*MUL_DTU_PER_MS - antennaDelay);
   dwTime_t rawTx = {.full = mulTimestampMask(
     (rawTarget + MUL_TX_ALIGNMENT - 1) & ~(MUL_TX_ALIGNMENT - 1))};
-  int64_t lead = mulTimestampDifference(rawTx.full, readHardwareTime(dev));
+  uint64_t checked=readHardwareTime(dev);
+  SLOT_TIME(3,checked);SLOT_TIME(6,rawTx.full);SLOT_TIME(7,MUL_TX_MIN_LEAD_DTU);
+  int64_t lead = mulTimestampDifference(rawTx.full, checked);
   if (lead < (int64_t)MUL_TX_MIN_LEAD_DTU ||
       lead > (int64_t)(offset*MUL_DTU_PER_MS + MUL_TX_ALIGNMENT)) {
     // Never move a missed slot forward, retry its sequence, or extrapolate a frame.
-    printf("MUL ALR: SLOT skipped ref_seq=%" PRIu32 " reason=late_or_stale\r\n",
-           refSequence());
+    slotReason=lead<(int64_t)MUL_TX_MIN_LEAD_DTU?1:2;
+    // Report after RX rearming, never block before the radio decision.
     return false;
   }
   return startDelayedTx(dev, rawTx, antennaDelay);
@@ -461,11 +502,19 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     return followerWait(dev);
   }
 
-  bool selected=true;mulAlrRole_t exchangeRole=mulAlrFollower;
-  if(multiMode&&referenceAcquired) {
+  // Broadcasts cannot be TWR messages. Do not walk the previous cycle's
+  // generated reservations/map every AR window before arming the new slot.
+  bool broadcast=activePlan&&event==eventPacketReceived&&
+    (dwGetDataLength(dev)==40||dwGetDataLength(dev)==80);
+#if MUL_SLOT_TRACE
+  if(broadcast){memset(&slotTrace,0,sizeof(slotTrace));SLOT_TIME(1,readHardwareTime(dev));}
+#endif
+  slotReason=8;
+  if(broadcast&&ranging.active)mulTwrCancel(&ranging,dev,NULL,false);
+  bool selected=!broadcast;mulAlrRole_t exchangeRole=mulAlrFollower;
+  if(multiMode&&referenceAcquired&&!broadcast) {
     selected=false;
     if(activePlan) {
-      if(ranging.active&&event==eventPacketReceived&&(dwGetDataLength(dev)==40||dwGetDataLength(dev)==80))mulTwrCancel(&ranging,dev,NULL,false);
       selected=plannedFollowerOperation(dev,event,&exchangeRole);
       if(!selected&&ranging.active)mulTwrCancel(&ranging,dev,"reservation_end",false);
     }else for(unsigned window=0;window<MUL_SYNC_WINDOWS;window++)if(mulScheduleSyncOwner(schedule,refSequence(),window)==localSlot) {
@@ -487,6 +536,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
     valid=false;referenceAcquired=false;mulClockReset(&followerClock);
     mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"slot_mismatch",true);
   }
+  SLOT_TIME(2,readHardwareTime(dev));
   bool fresh = false;
   bool acquiredNow = false;
   bool armed = false;
@@ -508,7 +558,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       result=mulObservePacket(&followerReference,&packet,arrival);
     }
     if (result != mulSequenceDuplicate && result != mulSequenceOld) {
-      fresh = true;servedOperations=0;
+      slotReason=0;fresh = true;servedOperations=0;
       acquiredNow = !referenceAcquired;
       referenceAcquired = true;
       lastReferenceTick = now;
@@ -521,7 +571,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
         mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"clock_epoch",true); ranging.attempted=false;
       }
       armed = scheduleFollowerTx(dev, arrival);
-    }
+    }else slotReason=9;
   }
   // Turn directly from the completed RX into delayed TX. Enabling RX briefly
   // before dwNewTransmit() could leave a new RX IRQ racing the pending slot.
@@ -532,6 +582,10 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   if (!armed && (event != eventTimeout || lostNow || !activePlan)) {
     mulRxRearm(dev);
   }
+#if MUL_SLOT_TRACE
+  if(broadcast)slotPublish();
+#endif
+  if(fresh&&!armed)printf("MUL ALR: SLOT skipped ref_seq=%" PRIu32 " reason=%u\r\n",refSequence(),slotReason);
   if (lostNow) {
     printf("MUL ALR: REF_LOST src=0x%02X state=SEARCHING\r\n",alrNetwork->addresses[0][0]);
     printf("MUL ALR: CLOCK src=0x%02X samples=%u hold=%u state=SEARCHING\r\n",alrNetwork->addresses[0][0],followerClock.count,mulClockFitHoldover(&followerClock,&mulClockWorkspace()->fit,&mulClockWorkspace()->config,(uint32_t)now*portTICK_PERIOD_MS));

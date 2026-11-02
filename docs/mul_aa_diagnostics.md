@@ -722,3 +722,169 @@ a stale DFU after a failed build. No diagnostic code or stack reservation has be
 removed to hide this limit. Combined tracing needs additional size work before use.
 For each diagnostic variant, operator flashing must repeat its exact makefile and
 EXTRA_CFLAGS; plain make deliberately returns to ordinary strict settings.
+
+## First-follower broadcast deadlines (RF5)
+
+The Nov2 `2026-11-02_5ms_2000us_smoke` saved logs contain39
+`late_or_stale` skips on ALR133 and46 follower TX entries on ALR134 with no such
+skips. The ALR133 log starts with a truncated/mixed TX line, so that line is not
+proof of a successful5ms slot. The user also reports that swapping the roster
+moves the failure to the new first follower. These logs have no timing breakdown;
+they cannot establish SPI or RTOS latency numerically.
+
+The old `late_or_stale` message came from the **first**, pre-preparation lead
+check in `scheduleFollowerTx`, not from the post-SPI check or a radio warning.
+It combined `raw_target - SYS_TIME < required_lead` and an implausibly future
+target. For a received reference whose hardware RX age already passed the0..15ms
+check, normal monotonic local time makes the former the relevant failure:
+the first slot has less than the configured1000us lead left before setup starts.
+The slot target is RX plus roster offset, minus the live TX antenna delay, rounded
+up to512DTU; neither Kalman nor propagation mapping steers that hardware target.
+Increasing the processing *reservation* or moving AA windows does not move this
+broadcast deadline. A5ms slot requires the pre- and post-preparation checks to
+finish before approximately RX+4ms; a10ms offset permits approximately9ms.
+
+Two redundant costs were removed from the LPS path:
+
+- A generated-plan broadcast no longer scans the previous cycle's operations and
+  maps its AR windows before decoding the new reference. Frame length only skips
+  TWR maintenance; the unchanged full RF5 decoder still validates the packet,
+  plan hash, source, sequence and RX age. Active TWR cancellation on a broadcast
+  remains, as does maintenance for timeout/TWR/error events.
+- TX preparation no longer encodes a reference packet (including plan validation
+  and CRCs) before replacing it with the follower packet. The final packet still
+  uses the canonical encoder and the current reference's clock/relation state.
+
+Clock observation still happens before relation publication. No precomputed old
+relation, weakened lead threshold, reduced guard, catch-up TX, EEPROM change,
+protocol change, antenna change or TWR timing change is introduced. The real-driver
+regression counts two pre-DX hardware-time reads in the ordinary build; the old
+source takes three on a subsequent reference because of the reservation scan.
+The same test fails against the old source and passes against the new source.
+This demonstrates removed work, not a measured Cortex-M0 execution-time bound.
+
+### Deferred slot trace
+
+Build from the repository root, using the stationary channel5 profile:
+
+```sh
+make -f profiles/stationary-ch5.mk clean
+make -j4 -f profiles/stationary-ch5.mk EXTRA_CFLAGS=-DMUL_SLOT_TRACE=1
+```
+
+`MUL_SLOT_TRACE=1` adds bounded `SL1` records, printed by the main task through
+`usbcommTryWrite`, never by the measured TX path. There is one pending record;
+new records are dropped while USB is backpressured. `z` is the boot-cumulative
+16-bit dropped-record counter (wraps). Four lines share `c` (last accepted reference
+cycle), `l` (local address) and `w` (decision). For rejected/undecodable frames,
+`c` may be the preceding accepted cycle. Group by `c,l,k`; do not combine partial
+records across a reconnect. Each line is shorter than the128-byte nonblocking USB
+limit. Formatting uses a192-byte compiler-reported stack frame in the main task.
+
+All `a,b` values are hexadecimal **native40-bit DW1000 DTU**, not CPU ticks:
+
+| `k` | `a` | `b` |
+| --- | --- | --- |
+| 0 | Reference hardware RX marker | Entry before broadcast handling |
+| 1 | Decode/age-check completion | First deadline check, after clock update |
+| 2 | Post-payload/SPI deadline check | After delayed-TX start writes |
+| 3 | Raw aligned DX target | Required minimum lead (duration in DTU) |
+
+Zero means that a stage was not reached. Signed modular subtraction must use
+40bits: `((a-b+2**39) % 2**40)-2**39`; divide by63.8976 for microseconds.
+Entry minus RX includes frame completion, IRQ/task dispatch and driver handling;
+it is not solely RTOS latency. Decode minus entry, first-check minus decode, and
+post-check minus first-check separate decoding, clock work, and TX preparation.
+`target-first_check` and `target-post_check` are the corresponding remaining leads.
+Two additional SYS_TIME reads before preparation and one after start measure the
+trace; compare enabled/disabled runs because SPI instrumentation also costs time.
+
+| `w` / numeric `SLOT skipped reason` | Meaning |
+| --- | --- |
+| 0 | Delayed TX armed, no HPDWARN/TXPUTE detected |
+| 1 | Insufficient lead before TX preparation |
+| 2 | Target implausibly future/stale |
+| 3 | DX_TIME readback mismatch |
+| 4 | Canonical packet encoder rejected payload |
+| 5 | Insufficient lead after payload/SPI preparation |
+| 6 | Hardware delayed-TX warning; radio returned to RX |
+| 7 | RX timestamp future or more than15ms old |
+| 8 | Frame/source/plan rejected, no fresh reference |
+| 9 | Duplicate/old reference sequence |
+
+Fresh-reference skip summaries are printed only after radio rearming. Existing
+`REF_RX`, `MUL KF`, TX `delta`, abort/error and AA diagnostics retain their roles.
+An armed trace does not prove TX completion: require the matching TX line and
+`delta=0`. RX error/timeout events still take the existing recovery path and are
+covered by the existing driver/ALR/TWR regression suites.
+
+### Offline checks and hardware checkpoint
+
+```sh
+python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000 --slot-trace
+python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000
+python3 tools/test/mul_slots.py --slot 10 --prop-age 6000
+python3 -m unittest discover -s tools/test -p 'test_dfu_dependencies.py'
+```
+
+Run these sequentially: the Rake fixtures share `generated-test`. Tests include
+both identities in the first slot, the10ms baseline,5ms/10ms positions with a
+simulated4.5ms service delay,50us-per-SPI success cases,400us-per-SPI misses,
+post-buffer-write deadline misses, DX mismatch, hardware warnings, stale RX,
+wrap/drift/Kalman updates, fresh-reference recovery, USB backpressure and existing
+generated AA/AR exchanges. They do not simulate Cortex-M0 instruction timing.
+
+With process2000us,3ms spacing fails the existing lead+process+air+guard budget.
+An explicit process500us test admits3ms and succeeds only with enough simulated
+remaining lead; a2.5ms service delay still fails safely. No3ms support or reliable
+physical5ms performance is claimed. The existing10ms physical baseline remains
+the fallback until measurements establish5ms headroom.
+
+The ordinary stationary image uses130592/131072 bytes of Flash (480 free)
+and14236/16384 bytes of RAM (2148 free). The trace-enabled image uses
+131048/131072 bytes of Flash (24 free)
+and14396/16384 bytes of RAM (1988 free), including the unchanged2048-byte linker
+stack reservation and two1600-byte main/UWB static task stacks. Do not combine
+extra diagnostic build flags without checking the linker. GCC `-fstack-usage`
+reports272 bytes for `mulAlrOnEvent`,272 for `startDelayedTx`,216 for
+`readBroadcast`; nested codec/clock/library frames must also be counted. The
+receive/decode chain's reported frames total about1.2KB before deeper helpers;
+this is not a runtime watermark or proof of worst-case stack/interrupt depth.
+RAM values use the ELF RAM load segment; the size-tool data+bss total is8bytes
+higher because it also counts flash-resident init/fini arrays. No stack
+reservation was reduced. Hardware stack high-water and IRQ/task latency
+remain unmeasured. The linker enforces both physical regions and initialized-data
+load limits.
+
+Operator-only update, with saved RF OFF and robots stopped, after recording saved
+settings:
+
+```sh
+sudo make -f profiles/stationary-ch5.mk EXTRA_CFLAGS=-DMUL_SLOT_TRACE=1 dfu
+```
+
+That target builds the current artifact first. No mass erase/defaults/reset of
+EEPROM is required. Only LPS firmware changes; STM32/ESP32 remain compatible and
+need no update. Flash each ALR being compared; leave RLR firmware unchanged.
+The agent did not execute the programmer or operate hardware.
+
+For a subsequent operator-run comparison, retain the full saved plan and hash
+`6B11782D` where applicable; do not copy test fixtures into live configuration.
+While OFF, enter `:console` followed by newline, then issue `plan show`,
+`status`, and `cal show` on each node. Capture
+USB on both followers, then use the existing authorized RF-start/stop workflow
+for a3-minute recording. Inspect the saved files offline with:
+
+```sh
+rg 'SL1|SLOT|REF_RX|MUL KF|TX role=FOLLOWER' alr133.log alr134.log
+```
+
+Repeat at10ms baseline and with the two follower roster positions swapped, only
+as separately authorized physical experiments. Require matching plan hashes,
+no warnings/skips, matching reference/follower cycles, TX `delta=0`, stable
+Kalman state and replay-valid receiver output. Measure the maximum RX-to-entry,
+decode, clock and preparation durations, minimum remaining lead at both checks,
+and trace drops. If `w=1` persists, those measurements determine whether the
+remaining bottleneck is dispatch, decoding or clock processing; `w=5` localizes
+it to preparation/SPI. Compare without trace to bound instrumentation overhead.
+A3-minute run is a smoke test, not a hard real-time reliability guarantee.
