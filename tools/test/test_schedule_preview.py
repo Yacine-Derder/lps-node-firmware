@@ -93,3 +93,17 @@ class SchedulePreview(unittest.TestCase):
         self.assertEqual(actual,expected)
         for bad in (dict(slot_ms=3),dict(kalman_budget_ms=4),dict(twr_window_ms=87),dict(cycle_ms=100),dict(aa_target_millihz=1000)):
             with self.assertRaises(ValueError):planner.preview(c|bad)
+
+    def test_tdma_feasible_slots_budgets_windows_and_cycle_guards(self):
+        for period in (200,250,500,1000):
+            for slot in (5,10,17):
+                for budget in (5,10,20):
+                    for window in (88,90,120):
+                        c=dict(scheduling_policy='tdma',slot_ms=slot,kalman_budget_ms=budget,twr_window_ms=window,cycle_ms=period)
+                        start=2*slot*1000+3100+budget*1000+1000
+                        if start+window*1000>period*1000-20000:
+                            with self.assertRaises(ValueError):planner.preview(c)
+                        else:
+                            r=planner.preview(c,cycles=1)
+                            self.assertEqual(r['guard_us'],period*1000-start-window*1000)
+                            self.assertEqual(r['cycles'][0]['operations'][0]['start_us'],start)

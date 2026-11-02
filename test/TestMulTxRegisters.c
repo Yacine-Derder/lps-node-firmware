@@ -740,3 +740,27 @@ void test_timingRingOverflowPreservesFifoAndRadioState(void) {
  TEST_ASSERT_NULL(strstr(slotLines,"c=104 "));TEST_ASSERT_NULL(strstr(slotLines,"c=105 "));
 #endif
 }
+
+void test_tdmaRealDriverBothFollowerPositionsKeepFiveMsLeadAndRearmAt200ms(void) {
+ for(unsigned spacing=5;spacing<=10;spacing+=5)for(unsigned position=1;position<=2;position++) {
+  setUp();mulRangingPlan_t p;slotPlan(&p,spacing,134);mulRangingPlanTdma(&p);p.broadcast.periodMs=200;
+  nodeConfig.mulSchedule=p.broadcast;nodeConfig.address[0]=position==1?134:133;
+  TEST_ASSERT_NULL(mulRangingPlanValidate(&p,NULL));mulAlrAlgorithm.init(&nodeConfig,&radio);
+  spiCostDtu=50*638976/10;
+  for(unsigned cycle=0;cycle<15;cycle++) {
+   uint64_t rx=mulTimestampMask(MUL_TIMESTAMP_MASK-50*63897600ULL+(uint64_t)cycle*200*63897600ULL);
+   fakeTicks=cycle*200;slotReference(&p,cycle,rx,63897600);
+   TEST_ASSERT_TRUE(started);mulMultiBroadcast_t decoded;
+   TEST_ASSERT_TRUE(mulPlanBroadcastDecode(&p,transmitted,80,&decoded));
+   TEST_ASSERT_EQUAL(nodeConfig.address[0],decoded.packet.source[0]);TEST_ASSERT_EQUAL(cycle,decoded.packet.sequence);
+   TEST_ASSERT_TRUE(mulTimestampDifference(decoded.packet.txTimestamp,rx)>=(int64_t)position*spacing*63897600);
+   TEST_ASSERT_TRUE(mulTimestampDifference(mulDecodeTimestamp(registers[DX_TIME]),systemTime)>=63897600);
+   systemTime=mulTimestampMask(decoded.packet.txTimestamp+63897600);
+   registers[SYS_STATUS][0]=1<<TXFRS_BIT;dwHandleInterrupt(&radio);
+   TEST_ASSERT_EQUAL(RX_MODE,radio.deviceMode);
+#if MUL_SLOT_TRACE
+   slotLines[0]=0;slotDrain();TEST_ASSERT_TRUE(slotWhy(0));
+#endif
+  }
+ }
+}

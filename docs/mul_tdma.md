@@ -52,7 +52,9 @@ Admission reserves `kalman_budget_ms + 1ms`, accounts for rounded waits and time
 spent planning, and checks local active/pending TX/TWR, the global TWR start/end,
 and the next reference. No new estimator work is admitted inside the global TWR
 reservation, including on nonparticipants. Insufficient slack postpones rather
-than overwrites work. The existing one-record backlog fails the new observation
+than overwrites work. A worker held through TWR wakes immediately after the
+reservation end, so larger configured budgets can use the remaining guard instead
+of starving at the final20ms preparation boundary. The existing one-record backlog fails the new observation
 closed, preserving order and refusing to label an old origin current. Epoch/reset,
 reference loss and stale TX completion safeguards remain. Interrupts are not
 masked for Kalman mathematics. No tasks, radio ownership or RF timings are added.
@@ -137,6 +139,10 @@ Offline preview:
 cd ~/Documents/lps-node-firmware
 python3 tools/mul_schedule_preview.py tools/examples/mul_tdma_200ms.json --cycles 5
 ```
+
+Before either operator flashing command, issue OFF on every node with its current
+firmware, confirm it has stopped and persisted OFF, and retain configuration and
+`cal show` readback. Flashing must not restore an old RF-ON configuration.
 
 LPS production and essential diagnostic builds (both use the explicitly stationary
 channel5/6000ms, zero-relative-speed profile; this assumption is not for mobile
@@ -235,8 +241,11 @@ start event. Completion/failure and optional AA1 expose responder progress.
 python3 tools/analyze_mul_timing.py alr133.log alr134.log > timing.jsonl
 ```
 
-Operator physical validation: first retain the1000ms plan and verify independent
-post-own-TX worker execution (ALR134 before ALR133's broadcast). Then, with RF OFF
+Operator physical validation: first select **codec5 TDMA with cycle_ms1000** on
+all nodes (otherwise identical to the example; fingerprint436DB1FB), and verify independent
+post-own-TX worker execution (ALR134 before ALR133's broadcast). The retained
+legacy plan intentionally keeps its old worker admission and is not this test.
+Then, with RF OFF
 on all nodes, select the identical200ms example. Capture three minutes on all
 ALRs and RLR141. Check actual=intended TX, minimum lead>=1000us at both checks,
 worker duration<=configured budget and finish before24.1ms, no unexplained ring
@@ -255,14 +264,14 @@ The named stationary profile and actual linker map give:
 | Image | Flash /131072 | RAM including all reserved stacks /16384 |
 |---|---:|---:|
 |Previous ordinary (`c9bf6c5`)|130592|14332|
-|New ordinary|128880 (2192 free)|14324 (2060 free)|
+|New ordinary|128912 (2160 free)|14324 (2060 free)|
 |Previous SL1|131024|14484|
-|New essential SL1|130512 (560 free)|14828 (1556 free)|
+|New essential SL1|130536 (536 free)|14828 (1556 free)|
 
 Removing redundant ALR printf formatting and the large TWR timestamp/power dump
-pays for the planner/console changes: the combined ordinary image saves1712 bytes
-of Flash. Expanded essential tracing costs1632 Flash /504 RAM versus the new
-ordinary image; the complete diagnostic variant still saves512 Flash versus the
+pays for the planner/console changes: the combined ordinary image saves1680 bytes
+of Flash. Expanded essential tracing costs1624 Flash /504 RAM versus the new
+ordinary image; the complete diagnostic variant still saves488 Flash versus the
 old one. No estimator, calibration, safety branch, task stack or queue was removed.
 The optional AA1+RX extras are host-tested but are not promised to fit together
 with every diagnostic flag; build the essential variant above for timing work.
@@ -281,7 +290,34 @@ and interrupt latency on boards; no reservations were reduced to make this fit.
 The240000-observation sanitizer comparison against the original pre-deferral
 implementation remains bit-identical, including200/1000ms, both estimators,
 propagation changes, gaps/recovery, wrap and corrupt-state rejection. Actual
-Cortex-M0 instruction maxima for regular pre-TX processing are21462 at200ms and
+Cortex-M0 instruction maxima for regular pre-TX clock processing (excluding IRQ/SPI and
+plan framing) are21462 at200ms and
 20891 at1000ms, versus138101/137018 before deferral. Deferred full updates reach
 135348/135404 instructions respectively; final Cortex-M0 states are bit-identical.
 These are emulator instruction counts, not microseconds or board measurements.
+
+
+Verified offline commands and results:
+
+| Check | Result |
+|---|---|
+|`bash portable/mul_core/tests/run.sh`|Full ASan/UBSan suite, codec2/3/4 preservation, codec4->5 interrupted journal writes, canonical rosters/rotation/wrap and RF5 checks passed|
+|`python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000`|277 tests for each of three compile profiles; actual DW1000 driver simulations included|
+|Same command with `--slot-trace --slot 10`|277 tests passed, including bounded trace backpressure/overflow and post-TWR wakeup regression|
+|CI variants `--slot 10 --twr-trace --rx-diag` and `--slot 10 --rx-diag`|277 tests each passed|
+|`./tools/build/test`|302 legacy/USB tests passed; local environment supplies the `python`->Python3 alias installed by CI|
+|`python3 -m unittest discover -s tools/test`|53 tests passed; production-C preview timing matrix and SL1 reassembly included|
+|`python3 tools/test/compare_deferred_clock.py --sanitize`|240000 complete state comparisons bit-identical|
+|`tools/test/clock_cost.py --period 200` and `--period 1000` in the emulator environment|Cortex-M0 instruction/terminal-state checks passed|
+|STM32 `bash tests/runtime_config/run.sh`|Sanitizer configuration, actual radio responder, replay, queue pressure and new TDMA fixture passed|
+|STM32 Universal build + `check_elf.py`|170228 Flash /44168 RAM; load segments do not touch configuration sectors|
+|ESP32 `bash tests/run_host.sh`|119 tests passed; ESP32 firmware unchanged|
+|`python3 tools/verify_tdoa_replay.py --kalman --tdma` in ESP32|90/90 exact TDoA and vector comparisons, zero gaps/drops, complete replay|
+|`python3 tools/verify_tdoa_replay.py --paced --kalman` in ESP32|140/140 exact interior pairs, deliberate optional transport losses reported, no observed replay drops|
+
+Both committed Makefile CI images also build and pass the image gate: default
+128656 Flash and long-range128648 Flash, both14324 RAM including reservations.
+The local unrelated channel5 Makefile addition was excluded using a temporary
+copy of the committed Makefile for those two checks and remains untouched.
+The retained stationary diagnostic artifact is the last build. No generated
+binaries, stack reports, raw logs, EEPROM images or secrets are committed.

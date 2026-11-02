@@ -458,7 +458,12 @@ static uint32_t followerWait(dwDevice_t *dev)
       int64_t start=mulTimestampDifference(mulTimestampMask(refRx()+(uint64_t)op.startUs*MUL_DTU_PER_MS/1000),hw);
       int64_t end=mulTimestampDifference(mulTimestampMask(refRx()+(uint64_t)op.endUs*MUL_DTU_PER_MS/1000),hw);
       if(start>0&&start<next)next=start;
-      if(start<=0&&end>0)next=0; // No estimator work inside the global TWR phase.
+      if(start<=0&&end>0) {
+        next=0; // No estimator work inside the global TWR phase.
+        // Resume at its end, not just the20ms tail: larger budgets may not fit there.
+        uint32_t after=(uint32_t)((end+MUL_DTU_PER_MS-1)/MUL_DTU_PER_MS)+1;
+        if(after<wait)wait=after;
+      }
     }
     // The wait is rounded up and its planner may have consumed CPU time.
     // Remove that rounding and elapsed planning time before admitting work.

@@ -1604,9 +1604,10 @@ void test_deferredKalmanStaleCompletionAbortsHardwareBeforeReleasingObservation(
 
 void test_tdmaDeferredWorkerStartsAtOwnConfirmedTxOverlappingOtherFollower(void) {
  const unsigned periods[]={200,250,500,1000};
- for(unsigned k=0;k<4;k++)for(unsigned first=133;first<=134;first++) {
+ const unsigned budgets[]={5,10,20};
+ for(unsigned k=0;k<4;k++)for(unsigned first=133;first<=134;first++)for(unsigned b=0;b<3;b++) {
   setUp();mulRangingPlan_t p;deferredConfiguration(&p,1000,first);
-  mulRangingPlanTdma(&p);p.broadcast.periodMs=periods[k];multiConfiguration.mulSchedule=p.broadcast;TEST_ASSERT_NULL(mulRangingPlanValidate(&p,NULL));
+  mulRangingPlanTdma(&p);p.kalmanBudgetMs=budgets[b];p.broadcast.periodMs=periods[k];multiConfiguration.mulSchedule=p.broadcast;TEST_ASSERT_NULL(mulRangingPlanValidate(&p,NULL));
   mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
   for(unsigned cycle=0;cycle<30;cycle++) {
    unsigned before=mulClockWorkspace()->fit.accepted;deferredReference(&p,cycle);
@@ -1622,18 +1623,19 @@ void test_tdmaDeferredWorkerStartsAtOwnConfirmedTxOverlappingOtherFollower(void)
  }
 }
 void test_tdmaDeferredWorkerHonorsBudgetAndGlobalTwrEvenWhenNotInPair(void) {
- setUp();mulRangingPlan_t p;deferredConfiguration(&p,200,134);mulRangingPlanTdma(&p);
+ setUp();mulRangingPlan_t p;deferredConfiguration(&p,200,134);mulRangingPlanTdma(&p);p.kalmanBudgetMs=20;
  mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
  for(unsigned cycle=0;cycle<15;cycle++) {
   deferredReference(&p,cycle);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
  }
  deferredReference(&p,15);unsigned before=mulClockWorkspace()->fit.accepted;
- // Delay servicing completion until too close to the global24.1ms TWR start.
- advance((15*200+18)*MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ // Delay servicing completion until too close to the global34.1ms TWR start.
+ advance((15*200+30)*MS);radios[1].armed=false;dispatch(1,eventPacketSent);
  TEST_ASSERT_TRUE(deferredClock.fit.active);TEST_ASSERT_EQUAL(before,mulClockWorkspace()->fit.accepted);
- advance((15*200+30)*MS);(void)followerWait(&radios[1].device);
+ advance((15*200+40)*MS);unsigned wake=followerWait(&radios[1].device);
  TEST_ASSERT_TRUE(deferredClock.fit.active);TEST_ASSERT_EQUAL(before,mulClockWorkspace()->fit.accepted);
- advance((15*200+181)*MS);(void)followerWait(&radios[1].device);
+ TEST_ASSERT_TRUE(wake<=86); // Wake immediately after124.1ms reservation end, not180ms tail.
+ advance((15*200+40+wake)*MS);(void)followerWait(&radios[1].device);
  TEST_ASSERT_FALSE(deferredClock.fit.active);TEST_ASSERT_EQUAL(before+1,mulClockWorkspace()->fit.accepted);
 }
 
