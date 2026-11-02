@@ -21,12 +21,22 @@ def encode(config):
                     rx_budget_us=500, airtime_us=1000, guard_us=100,
                     reply_ms=20, max_utilization_percent=70, alrs=[132, 133, 134, 135], rlrs=[],
                     alr_alr=False, alr_rlr=False, aa_target_millihz=500, ar_target_millihz=2000,
-                    aa_start_delay_us=0, scheduling_policy="fair", aa_priority=0, ar_priority=0)
+                    aa_start_delay_us=0, scheduling_policy="fair", aa_priority=0, ar_priority=0,
+                    kalman_budget_ms=10, twr_window_ms=90)
     if not isinstance(config, dict) or set(config)-set(defaults):
         raise ValueError('unknown configuration fields')
+    tdma = config.get('scheduling_policy') == 'tdma'
+    obsolete = {'aa_start_delay_us','aa_priority','ar_priority','max_utilization_percent','aa_target_millihz','ar_target_millihz'}
+    if tdma:
+        if set(config) & obsolete:
+            raise ValueError('TDMA uses budgets, not legacy rates/priorities/delay/utilization')
+        defaults.update(slot_ms=5, cycle_ms=200, rx_budget_us=2000, alrs=[132,134,133], rlrs=[141],
+                        alr_alr=True, alr_rlr=True, max_utilization_percent=0)
+    elif set(config) & {'kalman_budget_ms','twr_window_ms'}:
+        raise ValueError('processing/TWR budgets require scheduling_policy tdma')
     c = defaults | config
-    if c['scheduling_policy'] not in ('fair', 'freshness'):
-        raise ValueError('scheduling_policy: fair/freshness')
+    if c['scheduling_policy'] not in ('fair', 'freshness', 'tdma'):
+        raise ValueError('scheduling_policy: fair/freshness/tdma')
     for key in ('aa_priority','ar_priority'):
         if type(c[key]) is not int or not 0 <= c[key] <= 255:
             raise ValueError('priority: integer0..255')
@@ -52,12 +62,12 @@ def encode(config):
     struct.pack_into('<HHHBB', schedule, 20, c['tx_lead_us'], c['rx_budget_us'], c['airtime_us'], c['guard_us']//100, 0)
     struct.pack_into('<I', schedule, 28, zlib.crc32(schedule[:28]))
     data = bytearray(64)
-    data[:4] = bytes((4 if c['aa_start_delay_us'] else 3 if c['scheduling_policy']=='freshness' else 2, int(c['alr_alr']) | (int(c['alr_rlr']) << 1), c['reply_ms'], c['max_utilization_percent']))
+    data[:4] = bytes((5 if tdma else 4 if c['aa_start_delay_us'] else 3 if c['scheduling_policy']=='freshness' else 2, int(c['alr_alr']) | (int(c['alr_rlr']) << 1), c['reply_ms'], c['max_utilization_percent']))
     data[4:36] = schedule
     data[36] = len(c['rlrs'])
     data[37:37+len(c['rlrs'])] = bytes(c['rlrs'])
-    struct.pack_into('<HH', data, 46, c['aa_target_millihz'], c['ar_target_millihz'])
-    data[50:53] = bytes((int(c['scheduling_policy']=='freshness'), c['aa_priority'], c['ar_priority']))
+    struct.pack_into('<HH', data, 46, c['kalman_budget_ms'] if tdma else c['aa_target_millihz'], c['twr_window_ms'] if tdma else c['ar_target_millihz'])
+    data[50:53] = bytes((2 if tdma else int(c['scheduling_policy']=='freshness'), c['aa_priority'], c['ar_priority']))
     struct.pack_into('<I', data, 53, c['aa_start_delay_us'])
     struct.pack_into('<I', data, 60, zlib.crc32(data[:60]))
     return bytes(data)

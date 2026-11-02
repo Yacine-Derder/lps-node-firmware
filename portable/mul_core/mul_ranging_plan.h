@@ -8,6 +8,8 @@
 #define MUL_PLAN_VERSION 2u
 #define MUL_PLAN_FRESHNESS_VERSION 3u
 #define MUL_PLAN_DELAY_VERSION 4u
+#define MUL_PLAN_TDMA_VERSION 5u
+#define MUL_PLAN_TDMA 2u
 #define MUL_PLAN_FAIR 0u
 #define MUL_PLAN_FRESHNESS 1u
 #define MUL_PLAN_SERVICE_MARGIN_US 1000u // One1ms service quantum before TX setup.
@@ -18,12 +20,13 @@
 typedef struct {
  mulSchedule_t broadcast;
  uint32_t aaStartDelayUs; // Shift AA windows only; zero preserves codec2/3 and timing.
- uint16_t aaMilliHz,arMilliHz;
+ union {uint16_t aaMilliHz,kalmanBudgetMs;};
+ union {uint16_t arMilliHz,twrWindowMs;};
  uint8_t rlrCount,rlrs[MUL_MAX_RLRS],enabled,replyMs,maxUtilization;
  uint8_t policy,aaPriority,arPriority; // EDF tie priorities; never inflate promised rates.
 } mulRangingPlan_t;
 typedef struct {
- uint32_t dataEndUs,reservationUs,prepareUs,usableEndUs,requestedMilliHz;
+ uint32_t dataEndUs,reservationUs,prepareUs,usableEndUs,requestedMilliHz,guardUs;
  uint16_t capacity,peakOperations;
  uint8_t aaPairs,arPairs;
 } mulRangingBudget_t;
@@ -31,6 +34,7 @@ typedef struct {
  uint32_t startUs,pollUs,endUs;
  uint8_t kind,initiator,responder;
 } mulRangingOperation_t;
+void mulRangingPlanTdma(mulRangingPlan_t *p);
 uint8_t mulRangingPlanVersion(const mulRangingPlan_t *p);
 const char *mulRangingPlanValidate(const mulRangingPlan_t *p,mulRangingBudget_t *budget);
 unsigned mulRangingPlanCount(const mulRangingPlan_t *p,uint32_t cycle);

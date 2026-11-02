@@ -60,6 +60,19 @@ int main(void) {
  memset(memory+MUL_PLAN_STORE_BASE+(loaded.slot^1u)*MUL_PLAN_STORE_STRIDE,255,MUL_PLAN_STORE_BYTES);
  assert(mulPlanStoreSave(&store,&p,false,&generation)&&generation==0);
  assert(mulPlanStoreLoad(&store,&loaded)==mulPlanStored&&loaded.generation==0&&!loaded.selected);
+ // Explicit codec4 -> codec5 conversion survives every interrupted byte.
+ p.aaStartDelayUs=1;
+ assert(mulPlanStoreSave(&store,&p,true,&generation));
+ memcpy(saved,memory,sizeof(memory));
+ mulRangingPlan_t tdma=p;tdma.broadcast.slotMs=5;mulRangingPlanTdma(&tdma);
+ for(int cut=0;cut<=100;cut++) {
+  memcpy(memory,saved,sizeof(memory));bytesLeft=cut;
+  bool ok=mulPlanStoreSave(&store,&tdma,true,&generation);bytesLeft=-1;
+  assert(mulPlanStoreLoad(&store,&loaded)==mulPlanStored&&loaded.selected);
+  assert(mulRangingPlanVersion(&loaded.plan)==(ok?5:4));
+  assert(mulRangingPlanFingerprint(&loaded.plan)==mulRangingPlanFingerprint(ok?&tdma:&p));
+  untouchedPrefix();
+ }
  // No valid committed copy: CRC damage is corruption, not blank defaults.
  memset(memory+MUL_PLAN_STORE_BASE+(loaded.slot^1u)*MUL_PLAN_STORE_STRIDE,255,MUL_PLAN_STORE_BYTES);
  memory[MUL_PLAN_STORE_BASE+loaded.slot*MUL_PLAN_STORE_STRIDE+12]^=1;

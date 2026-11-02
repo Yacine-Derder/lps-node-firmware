@@ -46,6 +46,22 @@ int main(void) {
   frame[13]^=1;assert(!mulPlanTwrDecode(&p,0,index,frame,90,&out));
  }
  assert(aa&&ar);
+ // Codec5 keeps RF5 framing and binds the exact shared cycle and canonical pair.
+ p=three;p.broadcast.periodMs=200;p.broadcast.slotMs=5;p.broadcast.rxBudgetUs=2000;
+ mulRangingPlanTdma(&p);assert(!mulRangingPlanValidate(&p,NULL));
+ mulRangingPlan_t remote;uint8_t saved[64];assert(mulRangingPlanEncode(saved,&p)&&mulRangingPlanDecode(saved,&remote));
+ for(uint32_t cycle=0;cycle<500;cycle++) {
+  assert(mulPlanBroadcastEncode(frame,sizeof(frame),&p,0,cycle,123,NULL)==40);
+  assert(mulPlanBroadcastDecode(&remote,frame,40,&decoded));
+  mulTwrPacket_t poll={.type=mulTwrPoll,.id=cycle,.stamps={123},.txTimestamp=123},out;
+  assert(mulPlanTwrEncode(frame,&p,0,&poll));
+  assert(mulPlanTwrDecode(&remote,cycle,0,frame,90,&out));
+  assert(!mulPlanTwrDecode(&remote,cycle+1,0,frame,90,&out));
+  assert(!mulPlanTwrDecode(&remote,cycle,1,frame,90,&out));
+ }
+ remote.kalmanBudgetMs++;
+ mulTwrPacket_t poll={.type=mulTwrPoll,.id=0};assert(mulPlanTwrEncode(frame,&p,0,&poll));
+ assert(!mulPlanTwrDecode(&remote,0,0,frame,90,&poll));
  puts("Plan radio v5: full-plan/RLR-roster binding, strict legacy rejection, broadcast40/80, TWR90, all32 operation indices, generic AA/AR identities and cycle/source/index/length rejection passed");
  return 0;
 }

@@ -1,0 +1,16 @@
+{
+  "scheduling_policy": "tdma",
+  "alrs": [132, 134, 133],
+  "rlrs": [141],
+  "slot_ms": 5,
+  "kalman_budget_ms": 10,
+  "twr_window_ms": 90,
+  "cycle_ms": 200,
+  "tx_lead_us": 1000,
+  "rx_budget_us": 2000,
+  "airtime_us": 1000,
+  "guard_us": 100,
+  "reply_ms": 20,
+  "alr_alr": true,
+  "alr_rlr": true
+}

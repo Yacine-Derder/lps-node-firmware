@@ -76,3 +76,20 @@ class SchedulePreview(unittest.TestCase):
         for delay in (-1,388851,2**32-1,2**32):
             with self.assertRaises(ValueError):
                 planner.preview(c|dict(aa_start_delay_us=delay))
+
+    def test_tdma_four_controls_one_pair_guard_and_version(self):
+        c=dict(scheduling_policy='tdma')
+        r=planner.preview(c,cycles=10)
+        self.assertEqual(r['planner_version'],5)
+        self.assertEqual(r['fingerprint'],'55ADA235')
+        self.assertEqual(r['guard_us'],85900)
+        expected=[(132,133),(132,134),(132,141),(133,141),(134,141)]*2
+        actual=[]
+        for row in r['cycles']:
+            self.assertEqual(len(row['operations']),1)
+            op=row['operations'][0]
+            actual.append((op['initiator'],op['responder']))
+            self.assertEqual((op['start_us'],op['poll_us'],op['end_us']),(24100,28100,114100))
+        self.assertEqual(actual,expected)
+        for bad in (dict(slot_ms=3),dict(kalman_budget_ms=4),dict(twr_window_ms=87),dict(cycle_ms=100),dict(aa_target_millihz=1000)):
+            with self.assertRaises(ValueError):planner.preview(c|bad)
