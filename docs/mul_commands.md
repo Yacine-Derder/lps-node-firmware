@@ -870,3 +870,58 @@ finished. No new calibration experiment or physical range claim is required.
 The stationary image after this interface change uses flash129760/131072 B
 (1312 B free), RAM14236/16384 B (2148 B free), versus flash128568 and the same RAM
 before. No optional diagnostics were enabled and no stack reservation changed.
+
+## RF5 plan-fingerprint correction
+
+Current generated-plan firmware uses **RF5**, replacing RF4's nested-CRC identity.
+The fingerprint is CRC32 over plan bytes0..59 with the derived inner schedule CRC
+(bytes32..35) zeroed. Schedule IDs/count, revision, timing and all plan fields
+therefore affect identity. This32-bit error/configuration fingerprint is not an
+authentication or collision-free guarantee.
+
+EEPROM plan codecs2/3/4, the64-byte payload and both stored CRCs are unchanged.
+Existing selected plans load without migration writes or erase. `826414CC` remains
+the old storage CRC for the reproduced fixtures; it is no longer their live hash.
+Calibration, RF enable/mode/address storage, generated placements and rates do not
+change. Frozen pre-RF5 bytes are tested through save/reboot without rewriting.
+
+Golden full configuration: ALRs132/133 or132/133/134, RLR141,10ms slots,1000ms cycle,
+AA1000mHz,AR50mHz,reply20ms,util70%,lead1000us,process5000us,air1000us,guard100us,
+fair policy,AA start delay0. Other fields/revisions produce different hashes.
+
+| Schedule revision | ALRs132/133 | ALRs132/133/134 |
+|---:|---:|---:|
+|23 (November2 capture)|65321A17|8D53EE37|
+|1 (factory planner fixture)|856AB19D|6D0B45BD|
+
+Operator update requirements; **not performed by the assistant**:
+
+1. Record saved plan/calibration dumps, stop RF and the robots using the existing
+   operator workflow. Preserve all EEPROM/configuration sectors. No `defaults`,
+   `cal reset`, plan reinitialization or storage erase is needed for this upgrade.
+2. Reflash **every participating ALR and RLR** to RF5 before resuming generated
+   ranging. This includes ALR134 when used. RF4/RF5 broadcasts and TWR deliberately
+   fail closed across versions; partial deployment does not interoperate.
+3. Reflash each attached ESP32 bridge and update host collector/replay tools. Old
+   ESP firmware rejects RF5 raw diagnostics even if other rows still forward.
+   Updated tools retain historical RF4 and replay schema1/2 decoding. New snapshots
+   use schema3 to distinguish semantic fingerprints from stored CRCs.
+4. With RF still OFF, compare full plans and `plan show` hashes on all participants.
+   Hashes must match only when the **full** configuration matches. Differing saved
+   rosters now correctly stop matching; do not mask this by copying a hash or
+   resetting calibration. Change a live plan only as a separate operator action.
+5. Resume only after the group is consistent. Verify frame version5 in collected
+   planned raw broadcasts/TWR and schema3 replay rows, matching hashes and exact
+   replay. A legacy payload's trailing CRC may still read826414CC; this is expected.
+
+Build and operator-only LPS programming, repeated on each participating LPS node:
+
+```sh
+cd ~/Documents/lps-node-firmware
+make -f profiles/stationary-ch5.mk -j4
+sudo make -f profiles/stationary-ch5.mk dfu
+```
+
+Follow the established DFU-entry procedure. The stationary image still uses
+flash130424/131072 B (648 B free), RAM14236/16384 B; no stack reservation changed.
+See the sibling STM32/ESP guides for exact configuration-preserving programming.

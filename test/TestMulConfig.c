@@ -558,3 +558,21 @@ void test_absoluteAntennaOffsetPersistsWithoutAccumulationOrLegacyWrites(void){
  send(":cal set offset_mm 0\n");mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(14498,tx);TEST_ASSERT_EQUAL(18453,rx);
  send(":cal set tx 14000 rx 18000\n");output[0]=0;send(":cal show\n");TEST_ASSERT_NOT_NULL(strstr(output,"equivalent_mm=MANUAL/CUSTOM"));
 }
+
+void test_rf4SavedPlanPayloadIsUnchangedAndBootDoesNotRewriteIt(void){
+ // Frozen64-byte codec2 payload from the November2 RF4 capture (revision23).
+ const uint8_t bytes[64]={
+  0x02,0x03,0x14,0x46,0x02,0x03,0x02,0x00,0x0a,0x00,0xe8,0x03,0x17,0x00,0x00,0x00,
+  0x84,0x85,0,0,0,0,0,0,0xe8,0x03,0x88,0x13,0xe8,0x03,0x01,0x00,
+  0x72,0x14,0x34,0xa9,0x01,0x8d,0,0,0,0,0,0,0,0,0xe8,0x03,
+  0x32,0,0,0,0,0,0,0,0,0,0,0,0xcc,0x14,0x64,0x82};
+ mulRangingPlan_t p;TEST_ASSERT_TRUE(mulRangingPlanDecode(bytes,&p));
+ TEST_ASSERT_EQUAL_HEX32(0x65321a17,mulRangingPlanFingerprint(&p));
+ send(":off\n");apply();uint32_t generation;TEST_ASSERT_TRUE(cfgMulPlanSave(&p,true,&generation));
+ uint8_t encoded[64];TEST_ASSERT_TRUE(mulRangingPlanEncode(encoded,&p));TEST_ASSERT_EQUAL_MEMORY(bytes,encoded,64);
+ uint8_t image[8192];memcpy(image,memory,sizeof(image));unsigned before=writes;
+ cfgInit();const mulStoredPlan_t *cached=NULL;TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));
+ TEST_ASSERT_TRUE(cached->selected);TEST_ASSERT_EQUAL(23,cached->plan.broadcast.revision);
+ TEST_ASSERT_EQUAL_HEX32(0x65321a17,mulRangingPlanFingerprint(&cached->plan));
+ TEST_ASSERT_EQUAL(before,writes);TEST_ASSERT_EQUAL_MEMORY(image,memory,sizeof(image));
+}
