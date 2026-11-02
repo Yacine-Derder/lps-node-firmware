@@ -591,4 +591,9 @@ void test_tdmaConsoleExplicitConversionPersistsBudgetsRejectsUnsafeAndRfOnEdits(
  cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_EQUAL(hash,mulRangingPlanFingerprint(&stored->plan));
  send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());before=writes;
  send(":plan set kalman_budget_ms 20\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":off\n");apply();send(":plan use off\n:plan set policy fair\n");
+ TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_FALSE(stored->selected);
+ TEST_ASSERT_EQUAL(2,mulRangingPlanVersion(&stored->plan));TEST_ASSERT_EQUAL(0,stored->plan.aaMilliHz);
+ TEST_ASSERT_EQUAL(0,stored->plan.arMilliHz);TEST_ASSERT_EQUAL(70,stored->plan.maxUtilization);
+ cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_EQUAL(2,mulRangingPlanVersion(&stored->plan));
 }

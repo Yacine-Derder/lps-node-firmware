@@ -1,5 +1,6 @@
 {
   "scheduling_policy": "tdma",
+  "revision": 1,
   "alrs": [132, 134, 133],
   "rlrs": [141],
   "slot_ms": 5,

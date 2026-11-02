@@ -96,9 +96,13 @@ cycle/index checks and40/80-byte broadcasts /90-byte TWR frames. A different cod
 budget, roster, revision or timing produces a different fingerprint; mixed plans
 fail closed. Both LPS ALRs and the STM32 RLR require the new firmware and matching
 plan. Older firmware cannot safely participate in codec5. There is no automatic
-fallback to a legacy rate schedule. Reverting firmware requires first deselecting
-codec5 with the current firmware while RF is OFF, or restoring a known old plan
-using current software; do not erase calibration/configuration storage.
+fallback to a legacy rate schedule. For a rollback, keep RF OFF, issue `plan use off`, then `plan set policy fair`
+using the new firmware. This explicitly writes codec2 with zero AA/AR rates
+and utilization70, retaining roster/timing and all unrelated configuration. A
+budget is never reinterpreted as a rate. Restore desired legacy values from the
+saved readback, inspect/save and reboot before considering RF5-capable older
+firmware. Deselecting codec5 alone does not make its stored bytes readable by an
+old decoder. Do not erase calibration/configuration storage or downgrade to RF4.
 
 ESP32 firmware requires no change: it forwards existing UWB3/RF5 data. Host tests
 exercise codec5 snapshots through the actual STM32 encoder, ESP32 bridge, TCP,
@@ -257,6 +261,25 @@ on complete captured snapshots. Confirm UART diagnostics can sustain the selecte
 capture settings. Repeat at1000ms as a control. Do not claim5Hz validated until
 these board timing, throughput and RF checks pass. Do not try3ms in this iteration.
 
+
+Operator capture/replay commands after every node's plan/firmware has been checked:
+issue `:on` on each LPS and `on` on RLR141, then capture (adjust only the endpoint
+if the operator's network changed):
+
+```sh
+cd ~/Documents/epuck-esp32
+# Operator ONLY: connects to the already-enabled RLR, records180s, then stops.
+timeout -s INT 180s python3 tools/uwb_collect.py --robot 192.168.1.141:3333 --output ../uwb_logs/tdma-200ms --no-live
+# Set CAPTURE to the exact file path printed by the collector, then:
+python3 tools/validate_tdoa_replay.py "$CAPTURE" --stm32 ../epuck-stm32 --sanitize
+```
+
+Retain ALR USB terminal logs concurrently and analyze them with the SL1 command
+above. The timeout deliberately ends a capture; retain and inspect its boundary
+records rather than hiding an incomplete final snapshot. Check `mismatches`,
+`replay_complete`, `transport_complete`, missing vectors and observed diagnostic
+drops independently. After recording, issue `:off` / `off` and confirm stopped.
+
 ## Offline engineering results
 
 The named stationary profile and actual linker map give:
@@ -264,14 +287,14 @@ The named stationary profile and actual linker map give:
 | Image | Flash /131072 | RAM including all reserved stacks /16384 |
 |---|---:|---:|
 |Previous ordinary (`c9bf6c5`)|130592|14332|
-|New ordinary|128912 (2160 free)|14324 (2060 free)|
+|New ordinary|128928 (2144 free)|14324 (2060 free)|
 |Previous SL1|131024|14484|
-|New essential SL1|130536 (536 free)|14828 (1556 free)|
+|New essential SL1|130552 (520 free)|14828 (1556 free)|
 
 Removing redundant ALR printf formatting and the large TWR timestamp/power dump
-pays for the planner/console changes: the combined ordinary image saves1680 bytes
+pays for the planner/console changes: the combined ordinary image saves1664 bytes
 of Flash. Expanded essential tracing costs1624 Flash /504 RAM versus the new
-ordinary image; the complete diagnostic variant still saves488 Flash versus the
+ordinary image; the complete diagnostic variant still saves472 Flash versus the
 old one. No estimator, calibration, safety branch, task stack or queue was removed.
 The optional AA1+RX extras are host-tested but are not promised to fit together
 with every diagnostic flag; build the essential variant above for timing work.
@@ -310,13 +333,13 @@ Verified offline commands and results:
 |`python3 tools/test/compare_deferred_clock.py --sanitize`|240000 complete state comparisons bit-identical|
 |`tools/test/clock_cost.py --period 200` and `--period 1000` in the emulator environment|Cortex-M0 instruction/terminal-state checks passed|
 |STM32 `bash tests/runtime_config/run.sh`|Sanitizer configuration, actual radio responder, replay, queue pressure and new TDMA fixture passed|
-|STM32 Universal build + `check_elf.py`|170228 Flash /44168 RAM; load segments do not touch configuration sectors|
+|STM32 Universal build + `check_elf.py`|170244 Flash /44168 RAM; load segments do not touch configuration sectors|
 |ESP32 `bash tests/run_host.sh`|119 tests passed; ESP32 firmware unchanged|
 |`python3 tools/verify_tdoa_replay.py --kalman --tdma` in ESP32|90/90 exact TDoA and vector comparisons, zero gaps/drops, complete replay|
 |`python3 tools/verify_tdoa_replay.py --paced --kalman` in ESP32|140/140 exact interior pairs, deliberate optional transport losses reported, no observed replay drops|
 
 Both committed Makefile CI images also build and pass the image gate: default
-128656 Flash and long-range128648 Flash, both14324 RAM including reservations.
+128672 Flash and long-range128664 Flash, both14324 RAM including reservations.
 The local unrelated channel5 Makefile addition was excluded using a temporary
 copy of the committed Makefile for those two checks and remains untouched.
 The retained stationary diagnostic artifact is the last build. No generated
