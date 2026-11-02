@@ -21,7 +21,8 @@ def inspect(path):
     assert not any(name.startswith('mulEkf') for name in symbols), 'optional EKF must stay outside LPS radio image'
     for name in ('mulAlrAlgorithm', 'mulRlrAlgorithm', 'mulTwrOnEvent', 'mulClockObserveFitted'):
         assert name in symbols, f'missing MUL function: {name}'
-    assert symbols.get('workspace') == 344, 'missing explicit bounded MUL clock workspace'
+    # Cortex-M0 ABI: mulClockFit_t160 + mulClockFitConfig_t8.
+    assert symbols.get('workspace') == 168, 'missing explicit bounded MUL clock workspace'
     # Preserve radio task/console/idle stack and USB queue allocations.
     for prefix, size in (('uwbStaticStack.', 1600), ('ucMainStack', 1600),
                          ('uxIdleTaskStack.', 800), ('txqStorage', 512)):
@@ -32,6 +33,7 @@ def inspect(path):
         fields = line.split()
         if len(fields) == 3 and fields[0].startswith('.'):
             sections[fields[0]] = (int(fields[1]), int(fields[2]))
+    assert sections.get('._stack', (0,))[0] == 2048, 'linker stack reservation changed'
     flash = sum(size for name, (size, _) in sections.items()
                 if name in ('.isr_vector', '.text', '.ARM.exidx', '.init_array', '.fini_array', '.data'))
     ram = sum(size for name, (size, _) in sections.items() if name in ('.data', '.bss', '._heap', '._stack'))
