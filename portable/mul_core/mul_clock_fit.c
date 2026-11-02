@@ -30,7 +30,7 @@ void mulClockFitReset(mulClockFit_t *s) {
  * roundoff tolerance scales with the corresponding diagonal. Nonpositive
  * leading pivots fail closed (initialized/Q/R covariance is positive definite).
  */
-static bool healthy(const double x[3], double p[3][3]) {
+static bool healthy(const double x[3], const double p[3][3]) {
   for (unsigned i = 0; i < 3; i++) {
     if (!isfinite(x[i]) || !isfinite(p[i][i]) || p[i][i] <= 0)
       return false;
@@ -153,12 +153,13 @@ static bool recover(mulClock_t *clock,const mulClockFit_t *s,const mulClockFitCo
  clock->referenceTx=mulTimestampMask(p->txTimestamp);clock->localRx=mulTimestampMask(rx);
  clock->sequence=p->sequence;clock->observedMs=now;return true;
 }
-mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
+mulClockResult_t mulClockFitBegin(const mulNetwork_t *network,
                                        mulClock_t *clock, mulClockFit_t *s,
                                        const mulClockFitConfig_t *c,
                                        const mulTestPacket_t *p, uint64_t rx,
                                        uint32_t now, bool valid,
-                                       const mulClockDelay_t *delay) {
+                                       const mulClockDelay_t *delay, mulClockFitPending_t *pending) {
+  memset(pending,0,sizeof(*pending));
   if (!clock || !s || !mulClockFitConfigValid(c))
     return mulClockIgnored;
   int32_t previous = clock->skewPpb;
@@ -214,10 +215,22 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
     return result;
   }
   int64_t phase = s->phase + dr - dt;
+  *pending=(mulClockFitPending_t){.dt=dt,.phase=phase,.fittedRx=fittedRx,
+    .resumed=resumed,.corrected=corrected,.result=result,.active=true};
+  return result;
+}
+void mulClockFitFinish(const mulNetwork_t *network,mulClock_t *clock,mulClockFit_t *s,
+                      const mulClockFitConfig_t *c,const mulTestPacket_t *p,
+                      uint64_t rx,uint32_t now,mulClockFitPending_t *pending) {
+  if(!pending->active)return;
+  pending->active=false;
+  int64_t dt=pending->dt,phase=pending->phase;
+  uint64_t fittedRx=pending->fittedRx;
+  bool resumed=pending->resumed,corrected=pending->corrected;
   if (!update(s, (double)dt / 63897600000., phase)) {
     seed(s, clock->epoch, p->txTimestamp, fittedRx, corrected, mulClockResetNumerical);
     s->fallback = mulClockFitNumerical;
-    return result;
+    return;
   }
   s->phase = phase;
   s->lastTx = p->txTimestamp;
@@ -254,12 +267,12 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
       mulClockReset(clock);
       (void)mulClockObservePeriodNetwork(network,clock,p,rx,now,true,c->periodMs);
       seed(s,clock->epoch,p->txTimestamp,rx,false,mulClockResetDiscontinuity);
-      return mulClockDiscontinuity;
+      pending->result=mulClockDiscontinuity;return;
     }
     clock->status = mulClockWarmup;
     s->ready = 0;
     s->fallback = mulClockFitUncertain;
-    return result;
+    return;
   }
   if (s->ready) {
     clock->skewPpb = s->skewPpb;
@@ -268,7 +281,34 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
     s->fallback = mulClockFitUsed;
   } else
     s->fallback = mature ? mulClockFitUncertain : mulClockFitWarmup;
-  return result;
+  return;
+}
+mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,mulClock_t *clock,
+ mulClockFit_t *s,const mulClockFitConfig_t *c,const mulTestPacket_t *p,uint64_t rx,
+ uint32_t now,bool valid,const mulClockDelay_t *delay) {
+ mulClockFitPending_t pending;
+ mulClockResult_t result=mulClockFitBegin(network,clock,s,c,p,rx,now,valid,delay,&pending);
+ if(pending.active){mulClockFitFinish(network,clock,s,c,p,rx,now,&pending);result=pending.result;}
+ return result;
+}
+/* Current-time prior, not a measurement-updated posterior. Only the completed
+ * fit's covariance is used; the raw observation/compensation/epoch were already
+ * checked by Begin. The current raw origin must also pass the original gross
+ * innovation gate. Failure means unavailable metadata, never stale valid data. */
+bool mulClockFitPrior(const mulClock_t *clock,const mulClockFit_t *s,
+ const mulClockFitPending_t *pending,uint16_t slotMs,int32_t *skew) {
+ if(!pending->active||!s->ready||!clock->epoch||s->epoch!=clock->epoch||
+    !healthy(s->state,s->covariance))return false;
+ double d=(double)pending->dt/63897600000.,h=slotMs/2000.,t=d+h;
+ double innovation=(double)pending->phase-(s->state[0]+K*d*s->state[1]+K*d*d/2*s->state[2]);
+ double magnitude=fabs(innovation);
+ if(!isfinite(magnitude)||magnitude>=UINT32_MAX||ceiling(magnitude)>K*d*MUL_CLOCK_STABILITY_PPB)return false;
+ double rate=s->state[1]+t*s->state[2];
+ double variance=s->covariance[1][1]+2*t*s->covariance[1][2]+t*t*s->covariance[2][2]+
+   Q*d*(d*d/3+h*d+h*h);
+ if(!isfinite(rate)||fabs(rate)>MUL_CLOCK_MAX_PPB||!isfinite(variance)||variance<0||
+    variance>(double)MUL_CLOCK_STABILITY_PPB*MUL_CLOCK_STABILITY_PPB)return false;
+ *skew=(int32_t)(rate+(rate<0?-.5:.5));return true;
 }
 bool mulClockFitConfigEncode(uint8_t out[MUL_CLOCK_CONFIG_BYTES],
                              const mulClockFitConfig_t *c) {

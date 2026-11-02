@@ -182,7 +182,38 @@ static void invalid_recovery_sequence(void){
  observation(&clock,&fit,&c,UINT32_C(0x40000000),100+14*DT,200+14*DT,age+3000);
  assert(clock.epoch!=epoch&&!fit.applied);
 }
+static void staged_prior_gates(void) {
+ mulClock_t clock;mulClockReset(&clock);mulClockFit_t fit;mulClockFitReset(&fit);
+ mulClockFitConfig_t cfg;mulClockFitDefaults(&cfg);cfg.estimator=2;cfg.periodMs=200;
+ mulNetwork_t network;assert(mulNetworkInit(&network,132,133));network.slotMs=5;
+ for(unsigned i=0;i<30;i++){
+  mulTestPacket_t packet={.sequence=i,.txTimestamp=mulTimestampMask(i*DT/5)};
+  memcpy(packet.source,network.addresses[0],8);
+  mulClockObserveFitted(&network,&clock,&fit,&cfg,&packet,mulTimestampMask(i*DT/5+i*191693),i*200,true,NULL);
+ }
+ assert(fit.ready);
+ mulTestPacket_t packet={.sequence=30,.txTimestamp=mulTimestampMask(30*DT/5)};
+ memcpy(packet.source,network.addresses[0],8);uint64_t rx=mulTimestampMask(30*DT/5+30*191693);
+ mulClockFitPending_t pending;unsigned accepted=fit.accepted;
+ mulClockFitBegin(&network,&clock,&fit,&cfg,&packet,rx,6000,true,NULL,&pending);
+ int32_t prior;assert(pending.active&&fit.accepted==accepted&&clock.sequence==30&&clock.localRx==rx);
+ assert(mulClockFitPrior(&clock,&fit,&pending,5,&prior)&&abs(prior-15000)<=1);
+ mulClockFit_t good=fit;mulClockFitPending_t queued=pending;
+ clock.epoch++;assert(!mulClockFitPrior(&clock,&fit,&pending,5,&prior));clock.epoch--;
+ fit.state[0]=NAN;assert(!mulClockFitPrior(&clock,&fit,&pending,5,&prior));fit=good;
+ fit.covariance[2][0]=NAN;assert(!mulClockFitPrior(&clock,&fit,&pending,5,&prior));fit=good;
+ fit.covariance[1][1]=1e10;assert(!mulClockFitPrior(&clock,&fit,&pending,5,&prior));fit=good;
+ fit.state[1]=MUL_CLOCK_MAX_PPB+1;assert(!mulClockFitPrior(&clock,&fit,&pending,5,&prior));fit=good;
+ pending.phase+=100000000;assert(!mulClockFitPrior(&clock,&fit,&pending,5,&prior));pending=queued;
+ pending.active=false;assert(!mulClockFitPrior(&clock,&fit,&pending,5,&prior));pending=queued;
+ mulClockFitFinish(&network,&clock,&fit,&cfg,&packet,rx,6000,&pending);
+ assert(!pending.active&&fit.accepted==accepted+1&&fit.applied);
+ good=fit;mulClockFitFinish(&network,&clock,&fit,&cfg,&packet,rx,6000,&pending);
+ assert(!memcmp(&fit,&good,sizeof(fit)));
+ puts("Deferred KF: current origin, bounded read-only prior, epoch/NaN/variance/rate/outlier gates and exactly-once finish passed");
+}
 int main(void) {
+  staged_prior_gates();
   invalid_recovery_sequence();
   for(unsigned gap=1;gap<=6;gap++)loss_recovery(gap,false,false);
   loss_recovery(3,true,false);loss_recovery(3,false,true);

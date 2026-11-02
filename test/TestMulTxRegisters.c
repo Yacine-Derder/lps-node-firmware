@@ -647,6 +647,8 @@ void test_generatedFirstFollowerShortSlotsKeepGuardsAcrossRosterAndWrap(void) {
    TEST_ASSERT_TRUE(mulTimestampDifference(mulDecodeTimestamp(registers[DX_TIME]),systemTime)>=63897600);
    systemTime=mulTimestampMask(decoded.packet.txTimestamp+63897600);
    registers[SYS_STATUS][0]=1<<TXFRS_BIT;dwHandleInterrupt(&radio);
+   systemTime=mulTimestampMask(rx+40*63897600ULL);fakeTicks=cycle*1000+40;
+   mulAlrAlgorithm.onEvent(&radio,eventTimeout); // Missing other broadcast still permits deferred service.
 #if MUL_SLOT_TRACE
    slotLines[0]=0;slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,"w=0"));
 #endif
@@ -681,6 +683,7 @@ void test_generatedShortSlotMissedDeadlinesAndHardwareFailuresStayFailClosed(voi
   TEST_ASSERT_NOT_NULL(strstr(slotLines,reason));
 #endif
   badDx=txWarning=false;spiCostDtu=frameCostDtu=0;
+  systemTime=140*63897600ULL;mulAlrAlgorithm.onEvent(&radio,eventTimeout);
   // A missed slot is never moved/retried; a subsequent fresh reference recovers.
   slotReference(&p,1,1100*63897600ULL,63897600);TEST_ASSERT_TRUE(started);
 #if MUL_SLOT_TRACE
@@ -698,6 +701,7 @@ void test_threeMsExperimentalSlotRequiresFeasibleBudgetAndEnoughActualLead(void)
  slotLines[0]=0;slotDrain();
 #endif
  systemTime=4*63897600ULL;registers[SYS_STATUS][0]=1<<TXFRS_BIT;dwHandleInterrupt(&radio);
+ systemTime=40*63897600ULL;mulAlrAlgorithm.onEvent(&radio,eventTimeout);
  slotReference(&p,1,1000*63897600ULL,2500*63897600ULL/1000);TEST_ASSERT_FALSE(started);
 #if MUL_SLOT_TRACE
  slotLines[0]=0;slotDrain();TEST_ASSERT_NOT_NULL(strstr(slotLines,"w=1"));

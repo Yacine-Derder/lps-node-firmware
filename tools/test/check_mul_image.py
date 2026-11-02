@@ -19,9 +19,11 @@ def inspect(path):
     assert not set(removed) & symbols.keys(), 'removed mode/factory state linked'
     assert not any(name.startswith(('lps25h', 'lppHandle')) for name in symbols), 'unused peripheral/LPP linked'
     assert not any(name.startswith('mulEkf') for name in symbols), 'optional EKF must stay outside LPS radio image'
-    for name in ('mulAlrAlgorithm', 'mulRlrAlgorithm', 'mulTwrOnEvent', 'mulClockObserveFitted'):
+    for name in ('mulAlrAlgorithm', 'mulRlrAlgorithm', 'mulTwrOnEvent', 'mulClockObserveFitted',
+                 'mulClockFitBegin', 'mulClockFitFinish', 'mulClockFitPrior'):
         assert name in symbols, f'missing MUL function: {name}'
-    # Cortex-M0 ABI: mulClockFit_t160 + mulClockFitConfig_t8.
+    # Cortex-M0 ABI: mulClockFit_t160 + mulClockFitConfig_t8, not the retired
+    # regression workspace344. Deferred observation storage is separate.
     assert symbols.get('workspace') == 168, 'missing explicit bounded MUL clock workspace'
     # Preserve radio task/console/idle stack and USB queue allocations.
     for prefix, size in (('uwbStaticStack.', 1600), ('ucMainStack', 1600),

@@ -198,9 +198,22 @@ The reference's embedded TX time is stored/logged, never used as a local TX targ
 Follower packet sequences are independent of reference sequences and survive reacquisition.
 
 RX turns directly into delayed TX through `startDelayedTx()`, shared with the reference.
-The just-received reference updates the bounded clock estimator before metadata
-encoding; estimation does not steer the hardware target. All logging remains
-after radio programming.
+The just-received reference updates current-cycle clock bookkeeping before
+metadata encoding; estimation does not steer the hardware target. Median-5 is
+immediate. In Kalman mode, a bounded, validated prior from the last completed fit
+is anchored to the new observation, and full double-precision estimation waits
+for confirmed TX completion (or safe abort/skip) and a quiet radio interval.
+The matrix mathematics is unchanged. Unavailable priors are not transmitted as
+valid relations. One pending observation is immutable until completion; epoch
+loss cancels it and unexpected backlog rejects a newer clock observation with
+unavailable metadata rather than replacing accepted work. The worker reserves
+10ms plus1ms margin before local TWR/broadcast deadlines, removes planner elapsed
+time and wait rounding from its slack estimate, and arranges a wakeup in the
+existing20ms end-of-cycle quiet interval. This supports offline200ms-cycle tests
+without changing live plans; it is not a hardware WCET guarantee. See
+[clock contract](../portable/mul_core/CLOCK.md#optional-deferred-observation-on-the-lps-follower)
+and [validation guide](mul_aa_diagnostics.md#deferred-kalman-at-5ms).
+All logging remains after radio programming.
 No RX is enabled while the delayed TX waits in idle. Completion captures TX_STAMP,
 re-arms RX, and logs role, scheduled, packet, actual, and signed packet delta.
 RX errors/unexpected radio events cancel a pending slot, except stale TWR RX IRQs,

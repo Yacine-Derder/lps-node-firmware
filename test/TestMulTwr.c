@@ -925,6 +925,8 @@ void test_mulMultiFollowerKalmanAndOutlierNeverSuppressScheduledBroadcast(void) 
   TEST_ASSERT_EQUAL_UINT32(100+i,decoded.packet.sequence);
   if(i==35){TEST_ASSERT_FALSE(decoded.relation.available);}
   advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+  advance(at+40*MS);dispatch(1,eventTimeout); // Service deferred work after the other broadcast slots.
+  TEST_ASSERT_FALSE(deferredClock.fit.active);
  }
  TEST_ASSERT_TRUE(mulClockWorkspace()->fit.ready);TEST_ASSERT_EQUAL(5,mulClockWorkspace()->fit.count);
  TEST_ASSERT_TRUE(mulClockWorkspace()->fit.rejected>=1);TEST_ASSERT_INT_WITHIN(1,15000,followerClock.skewPpb);
@@ -1470,4 +1472,132 @@ void test_rxDiagnosticsBoundsBackpressureWindowCorrelationAndPreclearStatus(void
  unsigned sideEffects=0;mulRxDiagEvent(sideEffects++,sideEffects++);mulRxDiagPoll(sideEffects++);
  TEST_ASSERT_EQUAL(0,sideEffects);
 #endif
+}
+
+static void deferredConfiguration(mulRangingPlan_t *p,unsigned period,unsigned first) {
+ multiConfig(3,1,10);mulScheduleExperimental(&multiConfiguration.mulSchedule);
+ multiConfiguration.mulSchedule.slotMs=5;
+ *p=(mulRangingPlan_t){.broadcast=multiConfiguration.mulSchedule,.replyMs=20,
+   .maxUtilization=70,.enabled=3,.aaMilliHz=1000,.arMilliHz=1000,
+   .rlrCount=1,.rlrs={141},.aaStartDelayUs=50000};
+ p->broadcast.ids[0]=132;p->broadcast.ids[1]=first;p->broadcast.ids[2]=first==133?134:133;
+ p->broadcast.periodMs=period;p->broadcast.txLeadUs=1000;p->broadcast.rxBudgetUs=2000;p->broadcast.rangingFlags=0;
+ TEST_ASSERT_NULL(mulRangingPlanValidate(p,NULL));
+ multiConfiguration.mulSchedule=p->broadcast;multiConfiguration.mulPlan=p;
+ TEST_ASSERT_TRUE(mulSchedulePair(&p->broadcast,1,&multiConfiguration.mulNetwork));
+ memcpy(multiConfiguration.address,multiConfiguration.mulNetwork.addresses[1],8);
+ mulClockFitDefaults(&multiConfiguration.mulClockConfig);multiConfiguration.mulClockConfig.estimator=2;
+ multiConfiguration.mulClockConfig.compensate=1;
+ simulationSchedule=&multiConfiguration.mulSchedule;simulationPlan=p;useAlr[1]=true;skew=15000;flight=400;
+ advance(MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+}
+static void deferredReference(const mulRangingPlan_t *p,unsigned cycle) {
+ int64_t at=(int64_t)cycle*p->broadcast.periodMs*MS;
+ advance(at+flight+MS);
+ // Synthetic committed propagation observation, not a fabricated RF exchange.
+ ranging.delayValid=true;ranging.epoch=followerClock.epoch;ranging.tof=flight;
+ ranging.measuredMs=ticks-80;ranging.estimateId=cycle?cycle-1:0;
+ ranging.aa=(mulTwrAa_t){.epoch=followerClock.epoch,.measuredMs=ticks-80,
+   .sequence=cycle?cycle-1:0,.tof=flight,.reference=132,.follower=p->broadcast.ids[1],.valid=true};
+ injectMulti(1,0,cycle,clockAt(0,at),clockAt(1,at+flight));
+ TEST_ASSERT_TRUE(flags.tx);
+}
+static void deferredQuiet(const mulRangingPlan_t *p,unsigned cycle) {
+ advance(((int64_t)cycle*p->broadcast.periodMs+p->broadcast.periodMs-19)*MS);
+ dispatch(1,eventTimeout);
+ TEST_ASSERT_FALSE(deferredClock.fit.active);
+}
+void test_deferredKalmanWaitsForConfirmedTxAndPreservesCurrentOriginsAt200And1000ms(void) {
+ for(unsigned period=200;period<=1000;period+=800)for(unsigned first=133;first<=134;first++) {
+  setUp();mulRangingPlan_t p;deferredConfiguration(&p,period,first);
+  for(unsigned cycle=0;cycle<60;cycle++) {
+   mulClockFit_t *fit=&mulClockWorkspace()->fit;unsigned before=fit->accepted;
+   deferredReference(&p,cycle);
+   TEST_ASSERT_EQUAL(before,fit->accepted); // Merely arming cannot run the update.
+   if(cycle>10) {
+    TEST_ASSERT_TRUE(deferredClock.fit.active);
+    mulMultiBroadcast_t packet;TEST_ASSERT_TRUE(mulPlanBroadcastDecode(&p,radios[1].tx,80,&packet));
+    TEST_ASSERT_TRUE(packet.relation.available);TEST_ASSERT_EQUAL(cycle,packet.relation.referenceSequence);
+    TEST_ASSERT_EQUAL_UINT64(followerClock.referenceTx,packet.relation.referenceOrigin);
+    TEST_ASSERT_INT32_WITHIN(2,15000,packet.relation.skewPpb);
+    TEST_ASSERT_TRUE(packet.relation.originAgeMs<10); // Fresh origin, not the previous cycle.
+   }
+   uint32_t observed=followerClock.observedMs;
+   advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+   if(cycle>10){TEST_ASSERT_TRUE(deferredClock.fit.active);TEST_ASSERT_EQUAL(before,fit->accepted);}
+   // The other follower's imminent10ms slot postpones computation even after TX.
+   deferredQuiet(&p,cycle);
+   if(cycle>10){TEST_ASSERT_EQUAL(before+1,fit->accepted);TEST_ASSERT_TRUE(fit->applied);}
+   TEST_ASSERT_EQUAL(observed,followerClock.observedMs); // Saved RX time, never worker time.
+   unsigned completed=fit->accepted;
+   advance(((int64_t)cycle*period+period-18)*MS);dispatch(1,eventTimeout);
+   TEST_ASSERT_EQUAL(completed,fit->accepted); // No duplicate drain.
+  }
+ }
+}
+void test_deferredKalmanAdmissionRespectsActiveTwrAndTwelveMsDeadlineMargin(void) {
+ setUp();mulRangingPlan_t p;deferredConfiguration(&p,200,133);
+ for(unsigned cycle=0;cycle<15;cycle++) {
+  deferredReference(&p,cycle);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);deferredQuiet(&p,cycle);
+ }
+ deferredReference(&p,15);unsigned accepted=mulClockWorkspace()->fit.accepted;
+ advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ TEST_ASSERT_TRUE(deferredClock.fit.active);
+ advance((15*200+11)*MS);
+ ranging.active=true;ranging.deadline=clockAt(1,physical+5*MS);ranging.windowEnd=clockAt(1,physical+40*MS);
+ (void)followerWait(&radios[1].device);
+ TEST_ASSERT_TRUE(deferredClock.fit.active);TEST_ASSERT_EQUAL(accepted,mulClockWorkspace()->fit.accepted);
+ ranging.active=false;
+ // Last10ms before the next reference is too short for the10ms+margin budget.
+ advance((15*200+190)*MS);(void)followerWait(&radios[1].device);
+ TEST_ASSERT_TRUE(deferredClock.fit.active);TEST_ASSERT_EQUAL(accepted,mulClockWorkspace()->fit.accepted);
+ // Starvation has consumed this cycle; retain the work until the next safe interval.
+ deferredReference(&p,16);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ deferredQuiet(&p,16);
+ TEST_ASSERT_FALSE(deferredClock.fit.active);TEST_ASSERT_EQUAL(accepted+1,mulClockWorkspace()->fit.accepted);
+}
+void test_deferredKalmanBacklogNeverOverwritesAcceptedObservationOrLabelsOldOriginCurrent(void) {
+ setUp();mulRangingPlan_t p;deferredConfiguration(&p,200,134);
+ for(unsigned cycle=0;cycle<15;cycle++) {
+  deferredReference(&p,cycle);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);deferredQuiet(&p,cycle);
+ }
+ deferredReference(&p,15);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ TEST_ASSERT_TRUE(deferredClock.fit.active);uint32_t queued=deferredClock.packet.sequence;
+ // Deliberately omit all worker wakeups until the next reference (scheduler fault).
+ deferredReference(&p,16);TEST_ASSERT_EQUAL(queued,deferredClock.packet.sequence);TEST_ASSERT_EQUAL(10,slotReason);
+ mulMultiBroadcast_t packet;TEST_ASSERT_TRUE(mulPlanBroadcastDecode(&p,radios[1].tx,80,&packet));
+ TEST_ASSERT_FALSE(packet.relation.available);TEST_ASSERT_EQUAL(16,packet.relation.referenceSequence);
+ advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);deferredQuiet(&p,16);
+ TEST_ASSERT_EQUAL_UINT64(clockAt(0,15*200*MS),mulClockWorkspace()->fit.lastTx);
+ TEST_ASSERT_EQUAL_INT(mulClockWarmup,followerClock.status);
+ deferredReference(&p,17);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);deferredQuiet(&p,17);
+ TEST_ASSERT_EQUAL_UINT64(clockAt(0,17*200*MS),mulClockWorkspace()->fit.lastTx);
+}
+void test_deferredKalmanEpochLossAndReinitializationCancelQueuedWorkSafely(void) {
+ setUp();mulRangingPlan_t p;deferredConfiguration(&p,200,133);
+ for(unsigned cycle=0;cycle<15;cycle++) {
+  deferredReference(&p,cycle);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);deferredQuiet(&p,cycle);
+ }
+ deferredReference(&p,15);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ TEST_ASSERT_TRUE(deferredClock.fit.active);uint64_t epoch=followerClock.epoch;
+ advance((15*200+7000)*MS);dispatch(1,eventTimeout);
+ TEST_ASSERT_FALSE(deferredClock.fit.active);TEST_ASSERT_NOT_EQUAL(epoch,followerClock.epoch);
+ TEST_ASSERT_FALSE(referenceAcquired);
+ deferredReference(&p,51);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);deferredQuiet(&p,51);
+ deferredReference(&p,52);TEST_ASSERT_TRUE(flags.tx);
+ mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+ TEST_ASSERT_FALSE(flags.tx);TEST_ASSERT_FALSE(deferredClock.fit.active);TEST_ASSERT_FALSE(mulClockWorkspace()->fit.ready);
+}
+void test_deferredKalmanStaleCompletionAbortsHardwareBeforeReleasingObservation(void) {
+ setUp();mulRangingPlan_t p;deferredConfiguration(&p,200,133);
+ for(unsigned cycle=0;cycle<15;cycle++) {
+  deferredReference(&p,cycle);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);deferredQuiet(&p,cycle);
+ }
+ deferredReference(&p,15);TEST_ASSERT_TRUE(deferredClock.fit.active);
+ unsigned accepted=mulClockWorkspace()->fit.accepted;
+ radios[1].actual=clockAt(1,14*200*MS); // A stale TX marker while the new slot is still armed.
+ advance((15*200+2)*MS);dispatch(1,eventPacketSent);
+ TEST_ASSERT_FALSE(flags.tx);TEST_ASSERT_FALSE(radios[1].armed);TEST_ASSERT_TRUE(radios[1].receiving);
+ TEST_ASSERT_TRUE(deferredClock.fit.active);TEST_ASSERT_EQUAL(accepted,mulClockWorkspace()->fit.accepted);
+ deferredQuiet(&p,15);TEST_ASSERT_EQUAL(accepted+1,mulClockWorkspace()->fit.accepted);
 }

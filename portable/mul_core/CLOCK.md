@@ -117,3 +117,52 @@ new C estimators on identical captured snapshots, keeping original follower
 relations fixed and explicitly cold-starting at capture entry. Follower log replay
 uses real TX/RX but inferred1Hz coarse age and no propagation compensation; it is
 not physical accuracy validation. Missing packets/relations remain missing.
+
+## Optional deferred observation on the LPS follower
+
+The synchronous `mulClockObserveFitted` API retains its numerical behavior. Its
+work is split into `mulClockFitBegin` and `mulClockFitFinish`; the prediction,
+Joseph update, R/q, Huber rule, finite/LDL checks, rounding and recovery equations
+are unchanged. Callers must retain the same packet, raw RX marker and reception
+uptime until Finish, and must not interleave another Begin on that state. Finish
+consumes the pending flag before work, so a second Finish is a no-op. A reset or
+epoch invalidation cancels obsolete pending work. The LPS owns one88-byte pending
+observation; no queue or clock field is persisted or added to the RF protocol.
+
+For a scheduled follower broadcast, Begin performs current-cycle integer clock
+bookkeeping, continuity/epoch checks and compensation selection. Seed/reset cases
+finish immediately. A regular matrix update is queued. The LPS may publish a
+**current-time prior** using `mulClockFitPrior`: a forecast from the last completed
+fit, anchored to the newly accepted raw observation. It is not the old origin or
+an uncomputed posterior. For measured reference interval d and half-slot h:
+
+- Frequency is `state[1] + (d+h)*state[2]`.
+- Its prior variance is `P11 + 2*(d+h)*P12 + (d+h)^2*P22 +
+  q*d*(d*d/3 + h*d + h*h)`.
+- The completed fit must be ready, finite/PSD and in the same nonzero epoch.
+  The forecast retains the200000ppb rate gate and1000ppb conditional sigma gate.
+- The current compensated phase must pass the existing one-ppm gross-innovation
+  gate against the prior phase prediction. A newly observed timestamp cannot be
+  trusted solely because the previous frequency fit was good.
+
+Compensation changes or discontinuities seed the filter before any forecast;
+missing/expired propagation still makes relation correction unavailable through
+the unchanged propagation checks. Forecast failure makes the pending broadcast's
+relation unavailable; the explicitly selected Median-5 mode remains immediate.
+No covariance is advertised as a physical bound. Mapping/propagation age fields
+continue to refer to the current real origin and actual delay acquisition.
+
+After confirmed hardware TX completion, or a safely aborted/skipped transmission,
+Finish is eligible only when the radio owner has enough slack. It restores the
+saved raw median status/rate before running the unchanged posterior calculation.
+Thus post-completion state is bit-identical to synchronous processing of the same
+observation. Publication can differ because the broadcast intentionally uses the
+prior, not a posterior calculated before TX. Startup may require one additional
+broadcast before a completed mature fit can authorize the prior. Synthetic
+outlier trajectories show the expected higher forecast error; see the LPS
+[diagnostic guide](../../docs/mul_aa_diagnostics.md#deferred-kalman-at-5ms) for
+measurements, limitations and deployment commands.
+
+Only the LPS opts into this two-phase API. Existing vendored STM32/ESP32 cores and
+synchronous receiver replay remain compatible; no consumer firmware change is
+required. Neither a saved plan nor its RF5 fingerprint changes.

@@ -840,7 +840,7 @@ remaining lead; a2.5ms service delay still fails safely. No3ms support or reliab
 physical5ms performance is claimed. The existing10ms physical baseline remains
 the fallback until measurements establish5ms headroom.
 
-The ordinary stationary image uses130592/131072 bytes of Flash (480 free)
+Before deferral, the `de20a76` ordinary stationary image used130592/131072 bytes of Flash (480 free)
 and14236/16384 bytes of RAM (2148 free). The trace-enabled image uses
 131048/131072 bytes of Flash (24 free)
 and14396/16384 bytes of RAM (1988 free), including the unchanged2048-byte linker
@@ -888,3 +888,205 @@ and trace drops. If `w=1` persists, those measurements determine whether the
 remaining bottleneck is dispatch, decoding or clock processing; `w=5` localizes
 it to preparation/SPI. Compare without trace to bound instrumentation overhead.
 A3-minute run is a smoke test, not a hard real-time reliability guarantee.
+
+## Deferred Kalman at 5ms
+
+The operator's SL1 measurements after `de20a76` localize the recurring failure:
+ALR134 cycle42 took273us from RX to entry,928us to decode, then4403us to the first
+lead check. ALR133 cycle35 spent4412us in the same segment and succeeded at10ms.
+ALR134 cycle39 spent203us after a clock reset and succeeded at5ms. These are
+operator measurements, not measurements made by the agent.
+
+Between the decode marker and first lead check, the regular path performed delay
+selection, integer raw-clock observation, compensation, dense Kalman prediction,
+measurement/Joseph covariance update, numerical checks, state publication and a
+live TX antenna/system-time read. Relation encoding occurs **after** this check.
+There is no regular-path printf or sleep in the measured segment. The expensive
+regular kernels are bypassed when seeding. Cortex-M0 execution of the actual
+production C confirms the dominant cost: at1000ms, an old regular observation
+executes about137000 Thumb instructions:55300 in prediction,55000 in measurement
+update,17000 in numerical checks and9700 in bookkeeping/publication. It executes
+about394 software-double multiplies and202 additions. Small wrapper/SPI costs
+outside the observation function are not included in these instruction counts;
+the supplied4.4ms is not assumed to belong exclusively to matrix arithmetic.
+
+### Chosen architecture and metadata
+
+The full matrix update is deferred, not approximated or converted to float. The
+original prediction, Joseph update, numerical-check, seeding and recovery function
+bodies are preserved and checked against the frozen `de20a76` source. Only their
+invocation is split. Current-cycle raw origins, epoch, compensation selection and
+continuity checks run before TX. A regular observation is held in one immutable
+88-byte record until it is eligible for completion.
+
+A broadcast uses a current-time **prior forecast**, not the previous cycle's
+origin and not a falsely labelled posterior. The previous completed fit is
+propagated to the current interval/base-slot rate with a scalar covariance bound
+and the original gross-phase innovation gate. See the
+[exact contract](../portable/mul_core/CLOCK.md#optional-deferred-observation-on-the-lps-follower).
+If warmup, uncertainty, epoch, compensation or the new timestamp prevents this,
+the relation is explicitly unavailable. Full Kalman equations and variable-dt
+behavior are unchanged; Median-5 remains a selectable immediate baseline.
+
+The queued update cannot run merely because delayed TX was armed. After the
+hardware TX completion callback verifies the marker, the radio is returned to RX
+and the worker checks scheduling slack. A mismatched completion marker is treated
+as a safe radio abort. A skipped/failed/watchdog-aborted slot also releases the
+work only after radio recovery. The queued raw RX timestamp and original uptime
+are used for estimation; worker execution time never becomes measurement time.
+
+`MUL KF use=3` identifies a valid pending prior; `use=2` still denotes a completed
+Kalman rate,0 median and255 unavailable. `f`, covariance-derived diagnostics and
+`n` belong to the last completed fit until the worker runs; `b` is the rate used
+by the current mapping. SL1 phase markers retain their original meaning, but the
+decode-to-first-check segment now contains only Begin/prior work. `w=10` reports
+an unexpected estimator backlog: a newer clock observation was rejected, its
+broadcast relation is unavailable, and the queued observation was not replaced.
+
+### Scheduling and the200ms target
+
+The worker is part of the single radio-owner task. It does not run during a
+pending broadcast or active TWR exchange. Admission reserves10ms computation
+budget plus1ms margin before the next local TWR action, remaining follower
+broadcast, or reference. The planner's own elapsed time and ceil-to-ms rounding
+are subtracted before admitting work. This10ms budget is deliberately above the
+operator's observed4.4ms, but remains an assumption to verify on hardware, not a
+proved WCET. A nonpreemptible full update already started within admitted slack
+cannot service an unexpected IRQ until it finishes.
+
+If a near deadline prevents work, the existing IRQ/timeout loop wakes again;
+missing broadcasts cannot suppress the fallback wakeup in the generated plan's
+last20ms preparation interval. At1000ms this tail starts at980ms; at200ms,180ms.
+With the tested three-ALR plan (5ms spacing, process2000us, reply20ms,
+AA1000/AR1000mHz, AA delay50000us), a200ms cycle can place an AR reservation near
+13.1..100.2ms or an AA reservation near63.1..150.2ms. There remains a nominal
+20ms tail in either case. The worker can finish earlier where local deadlines
+allow, or use that tail, preserving its10ms+margin admission reserve. Actual
+callback/planner jitter and any extended hardware recovery must stay within the
+remaining slack. More links/rates can fail the existing plan budget; none of
+these checks were weakened.
+
+Under that bounded service/execution assumption, each accepted clock observation
+finishes once, in order, before the next normal cycle needs its result. The code
+does not claim an unconditional guarantee under arbitrary RTOS stalls. If all
+worker opportunities are starved past a new reference, the one queued record is
+retained; the newer **clock observation is rejected**, not silently coalesced or
+processed out of order. Its RF beacon can still carry unavailable metadata. A
+later safe interval completes the accepted record; subsequent samples recover
+through the original variable-dt/continuity rules. RF reinitialization or epoch
+loss explicitly cancels obsolete work. No result crosses a reset/epoch boundary.
+This is the fail-closed limitation of a bounded one-record queue, not a claim that
+all RF receptions survive unbounded overload.
+
+The current live1000ms cycle is unchanged. The200ms configurations exist only in
+offline tests. First validate1000ms physically;5Hz admission, RF losses, processor
+jitter and estimation quality require a later operator-run experiment.
+
+### Offline evidence and resource gates
+
+`compare_deferred_clock.py --sanitize` checks240000 observations against the
+frozen old implementation: complete clock and Kalman state after completion is
+bit-identical across200/1000ms, Median-5/Kalman, compensation changes, timestamp
+wrap, gaps/recovery, drift, step/outlier trajectories and corrupt state. It also
+checks the current origin, prior covariance bound and idempotent second Finish.
+The forecast transmitted before completion is intentionally different from the
+posterior. In the synthetic outlier/ramp/step suite, worst scenario forecast RMSE
+was about15.3ppb at200ms and12.8ppb at1000ms, versus13.0/8.3ppb for the posterior;
+maximum forecast errors were386/280ppb. These conditional synthetic results are
+not physical accuracy bounds or a claim of unchanged per-packet errors.
+
+The optional Unicorn fixture executes Cortex-M0 `-Os` production code with5ms
+base spacing. Typical worst regular pre-TX counts in its deterministic fixture
+fall from about137000 to21000 at1000ms and138000 to21500 at200ms. Current prior
+checks account for the remaining work. The unchanged full update runs separately
+as deferred work (about135000 instructions). Terminal ARM clock/filter state is
+bit-identical to baseline. Instruction counts are neither cycles nor elapsed
+microseconds; flash wait states, interrupts, SPI and RTOS effects still require
+board measurements. Do not scale the4.4ms observation and present it as a
+measured new execution time.
+
+The image checker now verifies the current168-byte Kalman workspace (160-byte fit
+plus8-byte config), replacing the obsolete344-byte regression assertion. It also
+protects the2048-byte linker stack,1600-byte radio/main stacks,800-byte idle
+stack and512-byte USB queue. Driver C compilation uses `-Os` to fit the staged
+implementation; register operations, SPI speed, delayed-TX checks and mathematical
+precision are unchanged. A few failure-message suffixes were shortened, retaining
+their identifying fields and failure meaning. No functional diagnostic was
+removed. The final stationary channel5 builds use:
+
+| Build | Flash /131072 B | RAM including reserved stacks /16384 B |
+| --- | --- | --- |
+| Ordinary |130592 (480 free)|14332 (2052 free)|
+| `MUL_SLOT_TRACE=1` |131024 (48 free)|14484 (1900 free)|
+
+The88-byte pending record is included. `-fstack-usage` reports136 bytes for the
+radio wait/worker frame,272 for the ALR event frame,96 for Begin,80 for prior
+validation and112 for Finish. The unchanged full update/prediction frames are
+368/224 bytes. A representative deferred call chain totals about1.3KB before
+library/interrupt/context overhead, against the unchanged1600-byte UWB task
+stack. This static audit does not establish a runtime high-water mark. The linker
+and image checker enforce physical regions and reserved stacks. Do not add
+diagnostic flags without checking the physical Flash limit.
+
+Run offline checks **sequentially** for Rake suites sharing `generated-test`:
+
+```sh
+python3 tools/test/compare_deferred_clock.py --sanitize
+bash portable/mul_core/tests/run.sh
+python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000 --slot-trace
+python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000
+python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000 --slot 10 --twr-trace --rx-diag
+python3 tools/test/mul_slots.py --mul-only --sanitize --prop-age 6000 --slot 10 --rx-diag
+python3 -m unittest discover -s tools/test -p 'test_*.py'
+./tools/build/test
+```
+
+Optional instruction profile, using a temporary tool environment (no firmware
+dependency changes):
+
+```sh
+python3 -m venv /tmp/mul-clock-cost-env
+/tmp/mul-clock-cost-env/bin/pip install unicorn==2.1.4 capstone==5.0.9 pyelftools==0.33
+/tmp/mul-clock-cost-env/bin/python tools/test/clock_cost.py
+/tmp/mul-clock-cost-env/bin/python tools/test/clock_cost.py --period 200
+```
+
+### Operator-only build, flash and1000ms validation
+
+Do not change saved plan, addresses, calibration, estimator or cycle duration for
+this update. Keep radios OFF/robots stopped, record settings, and build:
+
+```sh
+cd ~/Documents/lps-node-firmware
+make -f profiles/stationary-ch5.mk clean
+make -j4 -f profiles/stationary-ch5.mk EXTRA_CFLAGS=-DMUL_SLOT_TRACE=1
+python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
+```
+
+Only the operator subsequently runs:
+
+```sh
+sudo make -f profiles/stationary-ch5.mk EXTRA_CFLAGS=-DMUL_SLOT_TRACE=1 dfu
+```
+
+No EEPROM erase, defaults or resave is required. Update the LPS ALRs being
+compared; STM32 and ESP32 need no update. RF5 and the saved plan hash6B11782D are
+unchanged. In a USB terminal enter `:console`, then inspect `status`, `plan show`,
+`clock show`, `cal show`; confirm the saved1000ms cycle and full-plan agreement.
+The programmer resets the MCU, so saved RF must already be OFF.
+
+Using the existing authorized capture/start/stop workflow, record3minutes at the
+current1000ms/5ms configuration. Inspect saved logs offline:
+
+```sh
+rg 'SL1|SLOT|REF_RX|MUL KF|TX role=FOLLOWER' alr133.log alr134.log
+```
+
+Require regular Kalman updates and stable recovery counters, no steady-state
+`w=1/5/6/10`, at least1000us remaining at both SL1 lead checks, current-cycle
+relation identifiers, and matching TX `delta=0`. Compare receiver availability,
+TDoA distribution and production-C replay with the10ms baseline. Recheck the
+initialization/recovery cases and USB trace drops. Measure update/service jitter
+and task stack watermarks before treating the10ms admission budget as established.
+A later200ms experiment needs a separately consistent full plan on all nodes;
+this campaign does not configure or physically validate5Hz operation.

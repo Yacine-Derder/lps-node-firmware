@@ -86,8 +86,11 @@ endif
 # Remove un-used functions and global variables from output file
 CFLAGS += -ffunction-sections -fdata-sections
 # Size-optimize application code for the 128KB/16KB LPS target. Stock radio
-# engines/HAL retain source behavior. Port assembly and radio driver retain-O3.
+# engines/HAL retain source behavior. Port assembly retains-O3.
 $(filter src/%.o hal/%.o Middlewares/%.o,$(OBJS)) $(filter-out lib/freertos/src/port.o,$(foreach mod,$(FREERTOS_OBJS),lib/freertos/src/$(mod).o)): CFLAGS += -Os
+# Keep the deferred-Kalman/SL1 production image within physical Flash. The
+# driver C operations/protocol are unchanged; only code-size optimization differs.
+$(filter vendor/libdw1000/src/%.o,$(OBJS)): CFLAGS += -Os
 LDFLAGS+=-Wl,-Map=bin/$(PROG).map,--cref,--gc-sections
 
 

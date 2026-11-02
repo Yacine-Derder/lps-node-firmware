@@ -47,6 +47,20 @@ void mulClockFitReset(mulClockFit_t *s);
  * covariance or beyond the6s latent recovery horizon. Mapping still expires at2s. */
 bool mulClockFitPredict(const mulClockFit_t *s, double seconds, double state[3],
                         double covariance[3][3]);
+/* Optional two-phase observation. No other observation may intervene between
+ * Begin and Finish. Finish uses the SAME packet, raw RX and observation time.
+ * Current-origin publication may use only the bounded prior, not the old origin.
+ * If the caller applies that prior to the clock view, restore Begin's raw
+ * skew/status before Finish; origins/sequence/age must not be changed. */
+typedef struct {int64_t dt,phase;uint64_t fittedRx;mulClockResult_t result;
+ bool resumed,corrected,active;} mulClockFitPending_t;
+mulClockResult_t mulClockFitBegin(const mulNetwork_t *,mulClock_t *,mulClockFit_t *,
+ const mulClockFitConfig_t *,const mulTestPacket_t *,uint64_t,uint32_t,bool,
+ const mulClockDelay_t *,mulClockFitPending_t *);
+void mulClockFitFinish(const mulNetwork_t *,mulClock_t *,mulClockFit_t *,
+ const mulClockFitConfig_t *,const mulTestPacket_t *,uint64_t,uint32_t,mulClockFitPending_t *);
+bool mulClockFitPrior(const mulClock_t *,const mulClockFit_t *,
+ const mulClockFitPending_t *,uint16_t,int32_t *);
 mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
                                        mulClock_t *clock, mulClockFit_t *fit,
                                        const mulClockFitConfig_t *config,

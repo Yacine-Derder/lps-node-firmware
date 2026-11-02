@@ -1080,6 +1080,7 @@ void test_followerKalmanRecoversAfterTwoMissedReferencesWithoutRewarming(void){
  uint64_t tx=mulTimestampMask(14*PERIOD_DTU),rx=mulTimestampMask(tx+14*PERIOD_DTU*1000/1000000000);
  hardwareNow=mulTimestampMask(rx+DTU_PER_MS);receiveReference(114,tx,rx);
  TEST_ASSERT_EQUAL_UINT64(epoch,followerClock.epoch);TEST_ASSERT_EQUAL(resets,mulClockWorkspace()->fit.resets);
- TEST_ASSERT_TRUE(mulClockWorkspace()->fit.recovered);TEST_ASSERT_TRUE(mulClockWorkspace()->fit.applied);
+ TEST_ASSERT_TRUE(mulClockWorkspace()->fit.recovered);TEST_ASSERT_FALSE(mulClockWorkspace()->fit.applied);
  TEST_ASSERT_EQUAL_INT(mulClockValid,followerClock.status);finishFollowerSlot();
+ TEST_ASSERT_TRUE(mulClockWorkspace()->fit.applied);
 }

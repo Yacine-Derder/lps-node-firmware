@@ -61,7 +61,8 @@ class SchedulePreview(unittest.TestCase):
                alr_alr=True,alr_rlr=True,aa_target_millihz=1000,ar_target_millihz=50)
         baseline=planner.preview(c,first=1,cycles=20)
         delayed=planner.preview(c|dict(aa_start_delay_us=50000),first=1,cycles=20)
-        self.assertEqual(baseline['fingerprint'],'826414CC')
+        # RF5 hashes semantic fields;826414CC remains the stored outer CRC.
+        self.assertEqual(baseline['fingerprint'],'856AB19D')
         self.assertEqual(delayed['planner_version'],4)
         self.assertEqual(delayed['aa_start_delay_us'],50000)
         self.assertNotEqual(baseline['fingerprint'],delayed['fingerprint'])
