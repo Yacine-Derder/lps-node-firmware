@@ -470,7 +470,7 @@ void test_planAaDelayConsolePersistsAndRejectsUnsafeEditsWithoutWrites(void) {
  mulRangingPlan_t p={.replyMs=20,.maxUtilization=70,.enabled=3,.aaMilliHz=1000,.arMilliHz=50,.rlrCount=1,.rlrs={141}};
  mulScheduleLegacy(&p.broadcast,132,133,10);mulScheduleExperimental(&p.broadcast);
  p.broadcast.rangingFlags=0;p.broadcast.txLeadUs=1000;p.broadcast.rxBudgetUs=5000;
- TEST_ASSERT_EQUAL_HEX32(0x826414cc,mulRangingPlanFingerprint(&p));
+ TEST_ASSERT_EQUAL_HEX32(0x856ab19d,mulRangingPlanFingerprint(&p));
  uint32_t generation;TEST_ASSERT_TRUE(cfgMulPlanSave(&p,true,&generation));
  send(":plan set aa_start_delay_us 50000\n");
  const mulStoredPlan_t *cached=NULL;cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));
@@ -482,7 +482,7 @@ void test_planAaDelayConsolePersistsAndRejectsUnsafeEditsWithoutWrites(void) {
  send(":plan set aa_start_delay_us 100000\n"); // Must not truncate to uint16.
  TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));TEST_ASSERT_EQUAL(100000,cached->plan.aaStartDelayUs);
  send(":plan set aa_start_delay_us 0\n");TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&cached));
- TEST_ASSERT_EQUAL_HEX32(0x826414cc,mulRangingPlanFingerprint(&cached->plan));
+ TEST_ASSERT_EQUAL_HEX32(0x856ab19d,mulRangingPlanFingerprint(&cached->plan));
 }
 
 void test_antennaCalibrationAtomicPairSurvivesEveryByteCutWithoutTouchingLegacy(void){

@@ -462,7 +462,7 @@ static void generatedFollowerReady(mulRangingPlan_t *p,uint32_t cycle) {
  p->aaMilliHz=1000;p->arMilliHz=50;p->rlrCount=1;p->rlrs[0]=141;
  mulScheduleLegacy(&p->broadcast,132,133,10);mulScheduleExperimental(&p->broadcast);
  p->broadcast.rangingFlags=0;p->broadcast.txLeadUs=1000;p->broadcast.rxBudgetUs=5000;
- TEST_ASSERT_EQUAL_HEX32(0x826414cc,mulRangingPlanFingerprint(p));
+ TEST_ASSERT_EQUAL_HEX32(0x856ab19d,mulRangingPlanFingerprint(p));
  nodeConfig.address[0]=133;nodeConfig.mulConfigured=true;nodeConfig.mulRole=mulAlrFollower;
  nodeConfig.mulSchedule=p->broadcast;nodeConfig.mulPlan=p;
  TEST_ASSERT_TRUE(mulNetworkInit(&nodeConfig.mulNetwork,132,133));

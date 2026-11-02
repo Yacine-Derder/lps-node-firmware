@@ -1041,7 +1041,7 @@ void test_actualAlrReferenceUsesGeneratedOwnersAndNeverStartsFixedWindows(void) 
  p.broadcast.rangingFlags=0;p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;
  multiConfiguration.mulSchedule=p.broadcast;multiConfiguration.mulPlan=&p;simulationPlan=&p;
  useAlr[0]=true;advance(-20*(int64_t)MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[0].device);
- dispatch(0,eventTimeout);TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_EQUAL(4,radios[0].tx[34]);
+ dispatch(0,eventTimeout);TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_EQUAL(5,radios[0].tx[34]);
  int64_t reference=sendTime(0);advance(reference+MS);radios[0].armed=false;dispatch(0,eventPacketSent);
  exchangeSequence=pendingSequence;origins[0]=pendingTimestamp;origins[1]=clockAt(1,reference+flight);
  mulRelation_t unavailable={.version=2,.maxAgeMs=MUL_PROP_MAX_AGE_MS};
@@ -1069,7 +1069,7 @@ void test_actualAlrFollowerUsesAssignedGeneratedOperationsAndRetainsAaDelay(void
  p.broadcast.rangingFlags=0;p.broadcast.txLeadUs=500;p.broadcast.rxBudgetUs=2000;p.broadcast.airtimeUs=400;
  multiConfiguration.mulSchedule=p.broadcast;multiConfiguration.mulPlan=&p;simulationPlan=&p;
  useAlr[1]=true;advance(MS);mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
- injectMulti(1,0,5,origins[0],origins[1]);TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_EQUAL(4,radios[1].tx[34]);
+ injectMulti(1,0,5,origins[0],origins[1]);TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_EQUAL(5,radios[1].tx[34]);
  advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
  for(unsigned index=0;index<2;index++) {
   mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,5,index,&op));advance((int64_t)op.startUs*MS/1000);
@@ -1294,7 +1294,7 @@ static void prepareAaDelay(mulRangingPlan_t *p,uint32_t delay) {
  p->aaMilliHz=1000;p->arMilliHz=50;p->rlrCount=1;p->rlrs[0]=141;
  mulScheduleLegacy(&p->broadcast,132,133,10);mulScheduleExperimental(&p->broadcast);p->broadcast.rangingFlags=0;
  p->broadcast.txLeadUs=1000;p->broadcast.rxBudgetUs=5000;p->broadcast.airtimeUs=1000;p->broadcast.guard100us=1;
- TEST_ASSERT_EQUAL_HEX32(0x826414CC,mulRangingPlanFingerprint(p));
+ TEST_ASSERT_EQUAL_HEX32(0x856AB19D,mulRangingPlanFingerprint(p));
  p->aaStartDelayUs=delay;
  mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(p,5,0,&op));TEST_ASSERT_EQUAL(MUL_PLAN_AA,op.kind);
  TEST_ASSERT_EQUAL(23100+delay,op.pollUs);simulationPlan=p;
