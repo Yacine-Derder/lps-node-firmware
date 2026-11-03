@@ -52,7 +52,7 @@ bool mulClockFitPredict(const mulClockFit_t *s, double seconds, double state[3],
  * Current-origin publication may use only the bounded prior, not the old origin.
  * If the caller applies that prior to the clock view, restore Begin's raw
  * skew/status before Finish; origins/sequence/age must not be changed. */
-typedef struct {int64_t dt,phase;uint64_t fittedRx;mulClockResult_t result;
+typedef struct {int64_t dt,phase;uint64_t fittedRx,epoch;mulClockResult_t result;
  bool resumed,corrected,active;} mulClockFitPending_t;
 mulClockResult_t mulClockFitBegin(const mulNetwork_t *,mulClock_t *,mulClockFit_t *,
  const mulClockFitConfig_t *,const mulTestPacket_t *,uint64_t,uint32_t,bool,

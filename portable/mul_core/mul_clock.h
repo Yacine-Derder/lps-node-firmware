@@ -38,10 +38,21 @@ typedef struct {
   uint64_t epoch; // Process-local binding, replaced by every reset/discontinuity.
 } mulClock_t;
 
+/* Local restart evidence; never serialized or sent on air. Two observations
+ * must agree in sequence, remote DTU, local DTU and monotonic elapsed time. */
+typedef struct {
+  uint64_t tx, rx;
+  uint32_t sequence, ms;
+  bool valid;
+} mulReferenceEvidence_t;
+bool mulReferenceRestartObserve(mulReferenceEvidence_t *candidate,
+ const mulTestPacket_t *packet,uint64_t rx,uint32_t now,uint16_t periodMs);
+
 void mulClockReset(mulClock_t *clock);
 // observedMs is wrap-safe coarse monotonic uptime, used only to reject long gaps.
 // valid means the packet passed wire validation and local RX capture succeeded.
-// Caller must reset on reference loss/reacquisition; no epoch exists on wire.
+// Caller owns restart detection/reset; fitted Kalman holdover may span loss.
+// No reference epoch exists on wire.
 mulClockResult_t mulClockObserve(mulClock_t *clock, const mulTestPacket_t *packet,
                                 uint64_t localRx, uint32_t observedMs, bool valid);
 mulClockResult_t mulClockObserveNetwork(const mulNetwork_t *network,mulClock_t *clock, const mulTestPacket_t *packet,

@@ -30,10 +30,11 @@ typedef struct {
   mulObservation_t observations[MUL_ALR_COUNT];
   mulAssociation_t association;mulClock_t rate;mulRelation_t relation;
   mulClockFit_t fit;mulClockFitConfig_t clockConfig;
+  mulReferenceEvidence_t restartEvidence;
   mulTwrPacket_t twr;
   uint32_t twrStartedMs,twrGeneration,lastTwrId;
   uint32_t received,rejected,pairs,twrCompleted,twrRejected,twrTimeouts;
-  bool stationary,twrActive,twrSeen;
+  bool stationary,twrActive,twrSeen,awaitFollowerEpoch;
 } mulHybrid_t;
 typedef struct {
   mulTestPacket_t packet;mulRelation_t relation;mulLocalization_t observation;

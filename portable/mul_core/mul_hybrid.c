@@ -95,12 +95,37 @@ bool mulHybridReceive(mulHybrid_t *s,const uint8_t *f,size_t n,uint64_t rx,uint3
    if(n==MUL_RELATION_FRAME_LENGTH){s->diagnostics.relations++;if(r.available)s->diagnostics.availableRelations++;}
    s->received++;out->packet=p;out->relation=r;out->broadcast=true;
    mulAlrRole_t role=mulNetworkRole(network,p.source);
+   if(role==mulAlrReference&&s->observations[0].source.hasSequence) {
+     const mulSourceState_t *ref=&s->observations[0].source;
+     uint32_t delta=p.sequence-ref->sequence;
+     if(!delta||delta>=UINT32_C(0x80000000)) {
+       if(age>15||(p.sequence==ref->sequence&&p.txTimestamp==ref->txTimestamp)||
+          !mulReferenceRestartObserve(&s->restartEvidence,&p,rx,now,s->clockConfig.periodMs)) {
+         out->order=!delta?mulSequenceDuplicate:mulSequenceOld;return true;
+       }
+       mulClockReset(&s->rate);mulClockFitReset(&s->fit);
+       s->association.pending=false;s->twrActive=s->twrSeen=false;
+       uint64_t retiredEpoch=s->relation.epoch;
+       memset(&s->relation,0,sizeof(s->relation));s->relation.epoch=retiredEpoch;
+       s->awaitFollowerEpoch=retiredEpoch!=0;
+       for(unsigned i=0;i<MUL_ALR_COUNT;i++){
+         s->observations[i].valid=false;s->observations[i].source.hasSequence=false;
+       }
+     }else s->restartEvidence.valid=false;
+   }
+
+   if(role==mulAlrFollower&&s->awaitFollowerEpoch&&(!r.epoch||r.epoch==s->relation.epoch)) {
+     out->relation.available=false;out->order=mulSequenceOld;return true;
+   }
    mulPowerRx_t capture={.raw=rx,.corrected=rx,.power={.powerCentiDbm=INT16_MIN,.status=mulPowerUnsupported}};
    mulPair_t pair;bool hadFollower=s->observations[1].source.hasSequence;
    bool associated=mulAssociateNetwork(network,&s->association,s->observations,&p,&capture,now,&out->order,&pair);
    if(out->order==mulSequenceDuplicate||out->order==mulSequenceOld)
      mulHybridDiagnostic(&s->diagnostics,mulHybridSourceOrder,f[24],p.sequence,0);
    mulObservation_t *o=&s->observations[role];
+   if(role==mulAlrFollower&&s->awaitFollowerEpoch&&out->order!=mulSequenceDuplicate&&out->order!=mulSequenceOld) {
+     s->awaitFollowerEpoch=false;
+   }
    if(role==mulAlrFollower&&out->order!=mulSequenceDuplicate&&out->order!=mulSequenceOld) {
      if(hadFollower&&r.epoch!=s->relation.epoch) {
        mulHybridDiagnostic(&s->diagnostics,mulHybridEpoch,f[24],p.sequence,0);

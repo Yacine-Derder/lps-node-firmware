@@ -502,9 +502,11 @@ void test_mulTwrFollowerNewBroadcastPreemptsExchangeAndReacquiresAfterLoss(void)
   advance(4*SEC+MS); dispatch(1,eventTimeout); TEST_ASSERT_FALSE(referenceAcquired);
   uint64_t oldEpoch=followerClock.epoch;
   advance(5*SEC+flight+MS); injectBroadcast(1,0,0,clockAt(0,5*SEC),clockAt(1,5*SEC+flight));
+  TEST_ASSERT_FALSE(referenceAcquired);TEST_ASSERT_FALSE(flags.tx);
+  advance(6*SEC+flight+MS);injectBroadcast(1,0,1,clockAt(0,6*SEC),clockAt(1,6*SEC+flight));
   TEST_ASSERT_TRUE(referenceAcquired); TEST_ASSERT_TRUE(flags.tx);
   TEST_ASSERT_EQUAL_INT(mulClockWarmup,followerClock.status);
-  TEST_ASSERT_TRUE(followerClock.epoch == oldEpoch); // Loss already issued the clean epoch.
+  TEST_ASSERT_TRUE(followerClock.epoch != oldEpoch); // Confirmed restart owns a new epoch.
   TEST_ASSERT_FALSE(ranging.delayValid);
 }
 
@@ -1829,5 +1831,100 @@ void test_liveVerbosityPreservesDelayedBroadcastBytesAndKalmanEvolution(void) {
   if(level){TEST_ASSERT_EQUAL_MEMORY(&expectedClock,&followerClock,sizeof(expectedClock));
    TEST_ASSERT_EQUAL_MEMORY(&expectedFit,&mulClockWorkspace()->fit,sizeof(expectedFit));}
   else {expectedClock=followerClock;expectedFit=mulClockWorkspace()->fit;}
+ }
+}
+
+static void restartConfiguration(mulRangingPlan_t *p,unsigned node,unsigned method) {
+ deferredConfiguration(p,1000,134);mulRangingPlanTdma(p);
+ p->broadcast.revision=1;p->broadcast.periodMs=100;p->replyMs=10;p->twrWindowMs=50;
+ TEST_ASSERT_NULL(mulRangingPlanValidate(p,NULL));
+ TEST_ASSERT_EQUAL_HEX32(0x2359421F,mulRangingPlanFingerprint(p));
+ multiConfiguration.mulSchedule=p->broadcast;
+ TEST_ASSERT_TRUE(mulSchedulePair(&p->broadcast,node==134?1:2,&multiConfiguration.mulNetwork));
+ memcpy(multiConfiguration.address,multiConfiguration.mulNetwork.addresses[1],8);
+ multiConfiguration.mulClockConfig.estimator=method;multiConfiguration.mulClockConfig.compensate=0;
+ mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+}
+static bool restartReference(const mulRangingPlan_t *p,uint32_t cycle,int64_t at,uint64_t remote) {
+ advance(at+flight+MS);injectMulti(1,0,cycle,remote,clockAt(1,at+flight));
+ if(!flags.tx)return false;
+ mulMultiBroadcast_t out;TEST_ASSERT_TRUE(mulPlanBroadcastDecode(p,radios[1].tx,80,&out));
+ int64_t slot=mulTimestampDifference(out.packet.txTimestamp,clockAt(1,at+flight));
+ TEST_ASSERT_TRUE(slot>=(int64_t)localSlot*5*MS&&slot<(int64_t)localSlot*5*MS+512);
+ advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ advance(at+81*MS);dispatch(1,eventTimeout);TEST_ASSERT_FALSE(deferredClock.fit.active);
+ return true;
+}
+void test_tdma100msReferenceRestartsAndContinuousLossRecoverBothFollowersAndEstimators(void) {
+ const unsigned gaps[]={1000,4000,10000},methods[]={0,2};
+ for(unsigned node=133;node<=134;node++)for(unsigned method=0;method<2;method++)
+ for(unsigned gap=0;gap<3;gap++)for(unsigned kind=0;kind<3;kind++) {
+  setUp();mulRangingPlan_t p;restartConfiguration(&p,node,methods[method]);
+  for(unsigned i=0;i<40;i++)TEST_ASSERT_TRUE(restartReference(&p,100+i,(int64_t)i*100*MS,clockAt(0,(int64_t)i*100*MS)));
+  TEST_ASSERT_EQUAL_INT(mulClockMapValid,mulClockMapStatus(&followerClock,ticks));
+  uint64_t epoch=followerClock.epoch;unsigned accepted=mulClockWorkspace()->fit.accepted;
+  int64_t start=(3900+gaps[gap])*MS;
+  for(unsigned repeat=0;repeat<(kind?3u:1u);repeat++) {
+   for(unsigned i=0;i<35;i++) {
+    int64_t at=start+(int64_t)i*100*MS;
+    uint32_t seq=kind?i:139+gaps[gap]/100+i;
+    uint64_t remote=clockAt(0,kind==2?(int64_t)i*100*MS:at);
+    bool sent=restartReference(&p,seq,at,remote);
+    TEST_ASSERT_TRUE(sent||i==0); // Only the unconfirmed restart candidate may be withheld.
+    if(kind&&i==1) {
+     TEST_ASSERT_NOT_EQUAL(epoch,followerClock.epoch);
+     TEST_ASSERT_FALSE(ranging.delayValid);TEST_ASSERT_FALSE(ranging.aa.valid);
+     TEST_ASSERT_FALSE(followerPrep.ready);TEST_ASSERT_FALSE(ranging.active);
+    }
+    if(i>10) {
+     TEST_ASSERT_EQUAL_INT(mulClockMapValid,mulClockMapStatus(&followerClock,ticks));
+     mulRangingOperation_t op;TEST_ASSERT_EQUAL(1,mulRangingPlanCount(&p,seq));
+     TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,seq,0,&op));
+     const unsigned initiators[]={132,132,132,133,134},responders[]={133,134,141,141,141};
+     TEST_ASSERT_EQUAL(initiators[seq%5],op.initiator);TEST_ASSERT_EQUAL(responders[seq%5],op.responder);
+     if(op.initiator==node) {
+      mulLocalReservation_t mapped;TEST_ASSERT_TRUE(mapReservation(&op,ticks,&mapped,NULL));
+     }
+    }
+   }
+   if(kind){TEST_ASSERT_NOT_EQUAL(epoch,followerClock.epoch);epoch=followerClock.epoch;}
+   start+=4500*MS;
+  }
+  if(!kind&&(gaps[gap]<3000||(methods[method]==2&&gaps[gap]<=6000))) {
+   TEST_ASSERT_EQUAL_UINT64(epoch,followerClock.epoch);
+   if(methods[method]==2){TEST_ASSERT_TRUE(mulClockWorkspace()->fit.accepted>accepted);}
+  }
+ }
+}
+void test_tdmaReferenceRestartCancelsPendingWorkerArmedSlotAndOldReservation(void) {
+ for(unsigned fault=0;fault<3;fault++) {
+  setUp();mulRangingPlan_t p;restartConfiguration(&p,134,2);
+  for(unsigned i=0;i<40;i++)TEST_ASSERT_TRUE(restartReference(&p,100+i,(int64_t)i*100*MS,clockAt(0,(int64_t)i*100*MS)));
+  // Leave accepted work deliberately undrained, with no intervening worker wake.
+  advance(4000*MS+flight+MS);injectMulti(1,0,140,clockAt(0,4000*MS),clockAt(1,4000*MS+flight));
+  TEST_ASSERT_TRUE(flags.tx);TEST_ASSERT_TRUE(deferredClock.fit.active);
+  mulClockFitPending_t stale=deferredClock.fit;mulTestPacket_t old=deferredClock.packet;
+  uint64_t oldRx=deferredClock.rx;uint32_t oldMs=deferredClock.now;
+  uint64_t epoch=followerClock.epoch;
+  if(fault!=0){advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);}
+  if(fault==1){followerPrep.ready=true;followerPrep.epoch=epoch;}
+  if(fault==2){ranging.active=true;ranging.delayValid=true;ranging.aa.valid=true;ranging.aa.epoch=epoch;}
+  for(unsigned i=0;i<12;i++) {
+   int64_t at=(4100+(int64_t)i*100)*MS;
+   (void)restartReference(&p,i,at,clockAt(0,at));
+  }
+  TEST_ASSERT_NOT_EQUAL(epoch,followerClock.epoch);TEST_ASSERT_FALSE(deferredClock.fit.active);
+  TEST_ASSERT_FALSE(ranging.delayValid);TEST_ASSERT_FALSE(ranging.aa.valid);
+  TEST_ASSERT_EQUAL_INT(mulClockMapValid,mulClockMapStatus(&followerClock,ticks));
+  mulClock_t before=followerClock;mulClockFit_t saved=mulClockWorkspace()->fit;
+  deferredClock.fit=stale;deferredClock.packet=old;deferredClock.rx=oldRx;deferredClock.now=oldMs;
+  deferredClock.rawSkew=12345;deferredClock.rawStatus=mulClockValid;
+  finishClock(&radios[1].device,readHardwareTime(&radios[1].device));
+  TEST_ASSERT_FALSE(deferredClock.fit.active);
+  TEST_ASSERT_EQUAL_MEMORY(&before,&followerClock,sizeof(before));
+  mulClockFitFinish(alrNetwork,&followerClock,&mulClockWorkspace()->fit,&mulClockWorkspace()->config,
+    &old,oldRx,oldMs,&stale);
+  TEST_ASSERT_EQUAL_MEMORY(&before,&followerClock,sizeof(before));
+  TEST_ASSERT_EQUAL_MEMORY(&saved,&mulClockWorkspace()->fit,sizeof(saved));
  }
 }

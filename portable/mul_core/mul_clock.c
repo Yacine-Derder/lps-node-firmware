@@ -10,6 +10,63 @@
 // UWB-task owned; no wire epoch exists. Never reuse a token within this boot.
 static uint64_t lastEpoch;
 
+/* Shared integer plausibility gate for median intervals and restart evidence.
+ * Keeping the same arithmetic also keeps recovery within the M0 Flash budget. */
+static bool intervalPlausible(uint32_t advance,int64_t remote,int64_t local,
+ uint32_t elapsed,uint16_t periodMs)
+{
+  // Bound the elapsed *real* time as well as modular differences, to reject an
+  // apparently small interval after one or more complete hardware-counter wraps.
+  // The existing 1 Hz reference advances sequence once per TX attempt. Missing
+  // packets use their measured multi-period intervals, never an assumed second.
+  uint64_t periodDtu=periodMs*DTU_PER_MS;
+  uint64_t tolerance=(periodMs/10)*DTU_PER_MS;
+  bool plausible = elapsed > 0 && elapsed < MUL_SOURCE_TIMEOUT_MS &&
+    advance <= (MUL_SOURCE_TIMEOUT_MS-1u)/periodMs+1u && remote > 0 && local > 0 &&
+    remote <= (int64_t)(MUL_SOURCE_TIMEOUT_MS * DTU_PER_MS + tolerance) &&
+    local <= (int64_t)(MUL_SOURCE_TIMEOUT_MS * DTU_PER_MS + tolerance);
+  if (plausible) {
+    int64_t expected = (int64_t)advance * periodDtu;
+    plausible = remote >= expected - (int64_t)tolerance &&
+                remote <= expected + (int64_t)tolerance;
+  }
+  if (plausible) {
+    int64_t difference = local - remote;
+    // Gate before multiplication: bounds ensure difference * 1e9 fits int64.
+    int64_t limit = remote * MUL_CLOCK_MAX_PPB / INT64_C(1000000000);
+    plausible = difference >= -limit && difference <= limit;
+  }
+  return plausible;
+}
+
+static bool referenceContinuous(const mulReferenceEvidence_t *a,const mulTestPacket_t *p,
+ uint64_t rx,uint32_t now,uint16_t periodMs)
+{
+  if(!a->valid||periodMs<10||periodMs>2000)return false;
+  uint32_t advance=p->sequence-a->sequence,elapsed=now-a->ms;
+  // Stay below the 40-bit half-wrap, even for missed broadcasts. Uptime gates
+  // prevent whole-counter-wrap aliases; coarse time never schedules the radio.
+  if(!advance)return false;
+  int64_t dt=mulTimestampDifference(p->txTimestamp,a->tx);
+  int64_t dr=mulTimestampDifference(rx,a->rx);
+  int64_t host=(int64_t)elapsed*DTU_PER_MS;
+  return (uint64_t)(dr-host+20*(int64_t)DTU_PER_MS)<=40*DTU_PER_MS&&
+    intervalPlausible(advance,dt,dr,elapsed,periodMs);
+}
+
+bool mulReferenceRestartObserve(mulReferenceEvidence_t *a,const mulTestPacket_t *p,
+ uint64_t rx,uint32_t now,uint16_t periodMs)
+{
+  bool confirmed=referenceContinuous(a,p,rx,now,periodMs);
+  // Repeated copies cannot refresh evidence or turn a replay into a restart.
+  if(!a->valid||p->sequence!=a->sequence) {
+    *a=(mulReferenceEvidence_t){.tx=p->txTimestamp,.rx=rx,
+      .sequence=p->sequence,.ms=now,.valid=true};
+  }
+  if(confirmed)a->valid=false;
+  return confirmed;
+}
+
 void mulClockReset(mulClock_t *clock)
 {
   memset(clock, 0, sizeof(*clock));
@@ -51,39 +108,16 @@ mulClockResult_t mulClockObservePeriodNetwork(const mulNetwork_t *network,mulClo
   int64_t remote = mulTimestampDifference(packet->txTimestamp, clock->referenceTx);
   int64_t local = mulTimestampDifference(localRx, clock->localRx);
   uint32_t elapsed = observedMs - clock->observedMs;
-  // Bound the elapsed *real* time as well as modular differences, to reject an
-  // apparently small interval after one or more complete hardware-counter wraps.
-  // The existing 1 Hz reference advances sequence once per TX attempt. Missing
-  // packets use their measured multi-period intervals, never an assumed second.
-  uint64_t periodDtu=periodMs*DTU_PER_MS;
-  uint64_t tolerance=(periodMs/10)*DTU_PER_MS;
-  bool plausible = elapsed > 0 && elapsed < MUL_SOURCE_TIMEOUT_MS &&
-    advance <= (MUL_SOURCE_TIMEOUT_MS-1u)/periodMs+1u && remote > 0 && local > 0 &&
-    remote <= (int64_t)(MUL_SOURCE_TIMEOUT_MS * DTU_PER_MS + tolerance) &&
-    local <= (int64_t)(MUL_SOURCE_TIMEOUT_MS * DTU_PER_MS + tolerance);
-  if (plausible) {
-    int64_t expected = (int64_t)advance * periodDtu;
-    plausible = remote >= expected - (int64_t)tolerance &&
-                remote <= expected + (int64_t)tolerance;
-  }
-  int32_t skew = 0;
-  if (plausible) {
-    int64_t difference = local - remote;
-    // Gate before multiplication: bounds ensure difference * 1e9 fits int64.
-    int64_t limit = remote * MUL_CLOCK_MAX_PPB / INT64_C(1000000000);
-    plausible = difference >= -limit && difference <= limit;
-    if (plausible) {
-      // Round to nearest ppb; avoid subtracting nearly equal floats near ratio=1.
-      int64_t scaled = difference * INT64_C(1000000000);
-      skew = (int32_t)((scaled + (scaled < 0 ? -remote/2 : remote/2)) / remote);
-    }
-  }
+  bool plausible=intervalPlausible(advance,remote,local,elapsed,periodMs);
   if (!plausible) {
     mulClockReset(clock);
     baseline(clock, packet, localRx, observedMs,periodMs);
     return mulClockDiscontinuity;
   }
 
+  // Round to nearest ppb only after the shared integer gate has bounded it.
+  int64_t scaled=(local-remote)*INT64_C(1000000000);
+  int32_t skew=(int32_t)((scaled+(scaled<0?-remote/2:remote/2))/remote);
   clock->history[clock->next] = skew;
   clock->next = (clock->next + 1) % MUL_CLOCK_HISTORY;
   if (clock->count < MUL_CLOCK_HISTORY) {

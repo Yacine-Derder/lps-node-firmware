@@ -94,6 +94,9 @@ $(filter vendor/libdw1000/src/%.o,$(OBJS)): CFLAGS += -Os
 # Share console/logging helpers across their callers without changing the
 # clock-estimator object compilation (no LTO or math flag changes there).
 src/main.o src/cfg.o src/mul_console.o src/mul_log.o src/mul_alr.o src/mul_twr.o src/uwb.o src/uwb_control.o src/mul_rx.o src/mul_geometry.o src/mul_antenna.o src/usbcomm.o src/usbd_cdc_if.o vendor/libdw1000/src/libdw1000.o vendor/libdw1000/src/libdw1000Spi.o: CFLAGS += -flto
+# Share plan validation/epoch consumers to fit reference recovery in 128KB.
+# Clock-estimator compilation and arithmetic remain unchanged.
+src/mul_schedule.o src/mul_ranging_plan.o src/mul_plan_protocol.o src/mul_multi_protocol.o src/mul_plan_store.o: CFLAGS += -flto
 LDFLAGS+=-Wl,-Map=bin/$(PROG).map,--cref,--gc-sections
 
 

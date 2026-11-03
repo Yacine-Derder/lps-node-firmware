@@ -5,16 +5,19 @@
 #define MS INT64_C(63897600)
 static int64_t scale(int64_t n,int32_t ppb){int64_t product=n*ppb;return n+(product>=0?(product+500000000)/1000000000:-((-product+500000000)/1000000000));}
 static const mulRangingPlan_t *activePlan;
+static int64_t referenceShift;
+static uint64_t epochOffset;
+static bool zeroEpoch;
 static const int32_t differences[]={-477,0,477,2000,-2000,1,-1};
 static size_t packet(const mulSchedule_t *s,unsigned slot,unsigned step,uint32_t cycle,bool available,uint8_t frame[90],uint64_t *rx) {
  int32_t folPpb=slot%2?35000:-45000,receiverPpb=15000;
- int64_t at=step*1000*MS,offset=slot*s->slotMs*MS;
- uint64_t reference=mulTimestampMask(MUL_TIMESTAMP_MASK-2000*MS+at);
+ int64_t at=step*s->periodMs*MS,offset=slot*s->slotMs*MS;
+ uint64_t reference=mulTimestampMask(MUL_TIMESTAMP_MASK-2000*MS+at-referenceShift);
  uint64_t followerOrigin=mulTimestampMask(500000+scale(at,folPpb));
  int32_t path=4000+(slot?differences[slot-1]:0);
  *rx=mulTimestampMask(MUL_TIMESTAMP_MASK-100000+scale(at+(slot?offset+120+path:path),receiverPpb));
- mulRelation_t r={.version=2,.epoch=slot+10,.referenceSequence=cycle,.maxAgeMs=6000};
- if(slot&&available)r=(mulRelation_t){.version=2,.epoch=slot+10,.available=true,.referenceSequence=cycle,.twrSequence=cycle-3,
+ mulRelation_t r={.version=2,.epoch=zeroEpoch?0:slot+10+epochOffset,.referenceSequence=cycle,.maxAgeMs=6000};
+ if(slot&&available)r=(mulRelation_t){.version=2,.epoch=zeroEpoch?0:slot+10+epochOffset,.available=true,.referenceSequence=cycle,.twrSequence=cycle-3,
   .referenceOrigin=reference,.followerOrigin=followerOrigin,.skewPpb=folPpb,.originAgeMs=slot*s->slotMs+1,
   .delayAgeMs=3000+slot*s->slotMs,.delayDtu=120,.delayState=mulPropagationReused,.maxAgeMs=6000};
  uint64_t tx=slot?mulTimestampMask(followerOrigin+scale(offset+120,folPpb)):reference;
@@ -100,9 +103,68 @@ static void reordering_and_recovery(bool planned) {
  }
  uint8_t frame[90];uint64_t rx;size_t n=packet(&schedule,0,18,1,true,frame,&rx);mulMultiReceiveOutput_t out;
  assert(!mulMultiReceiverReceive(&s,frame,n,rx,1,s.lastCycleMs+100,&out));
- assert(mulMultiReceiverReceive(&s,frame,n,rx,1,s.lastCycleMs+3100,&out));assert(s.rate.status!=mulClockValid);
+ uint32_t now=s.lastCycleMs+3100;
+ assert(!mulMultiReceiverReceive(&s,frame,n,rx,1,now,&out));
+ n=packet(&schedule,0,19,2,true,frame,&rx);
+ assert(!mulMultiReceiverReceive(&s,frame,n,rx,1,now+1000,&out));
+ n=packet(&schedule,0,20,3,true,frame,&rx);
+ assert(mulMultiReceiverReceive(&s,frame,n,rx,1,now+2000,&out));assert(s.rate.status!=mulClockValid);
+}
+static void restart_with_running_followers(unsigned method,unsigned gap,bool reboot) {
+ mulSchedule_t schedule;mulScheduleLegacy(&schedule,132,134,5);mulScheduleExperimental(&schedule);
+ schedule.count=3;schedule.ids[2]=133;schedule.periodMs=100;schedule.revision=1;
+ schedule.txLeadUs=1000;schedule.rxBudgetUs=2000;schedule.rangingFlags=0;
+ mulRangingPlan_t plan={.broadcast=schedule,.replyMs=10,.rlrCount=1,.rlrs={141}};
+ mulRangingPlanTdma(&plan);plan.twrWindowMs=50;
+ assert(!mulRangingPlanValidate(&plan,NULL)&&mulRangingPlanFingerprint(&plan)==0x2359421F);
+ activePlan=&plan;referenceShift=0;epochOffset=0;
+ mulMultiReceiver_t s;const uint8_t receiver[8]={141,0,0,0,0,0,0xcf,0xbc};
+ assert(mulMultiReceiverInitPlan(&s,&plan,receiver,true));s.clockConfig.estimator=method;
+ uint64_t epoch=0;unsigned good=0;
+ for(unsigned step=0;step<90;step++) {
+  unsigned physicalStep=step+(step>=40?gap/100-1:0);
+  if(step==40){assert(s.rate.status==mulClockValid);epoch=s.rate.epoch;if(reboot)referenceShift=(int64_t)physicalStep*100*MS;}
+  // Keep sending the old follower epochs until the KF has warmed up. They must
+  // still be rejected even when the local receiver rate has become valid again.
+  if(step==65){epochOffset=100;}zeroEpoch=step==60;
+  for(unsigned slot=0;slot<3;slot++) {
+   uint32_t cycle=step<40?100+step:step-40;
+   if(step>=40&&s.rate.sequence>=100&&slot)cycle=100+step;
+   uint8_t frame[90];uint64_t rx;size_t n=packet(&schedule,slot,physicalStep,cycle,step!=60,frame,&rx);
+   mulMultiReceiveOutput_t out;(void)mulMultiReceiverReceive(&s,frame,n,rx,1,10000+physicalStep*100+slot*5,&out);
+  }
+  mulMultiCycle_t out;
+  if(mulMultiReceiverPoll(&s,10000+physicalStep*100+40,&out)) {
+   if(step>=40&&step<65)assert(!out.validMask);
+   if(step>75){assert(out.validMask==6);good++;}
+   if(!out.validMask)for(unsigned i=0;i<2;i++)assert(out.values[i].tdoaDtu==INT32_MIN&&out.values[i].rangeDifferenceMm==INT32_MIN);
+  }
+ }
+ assert(good&&s.rate.epoch!=epoch&&s.rate.sequence==49&&s.fit.ready);
+ assert(mulClockMapStatus(&s.rate,s.rate.observedMs)==mulClockMapValid);
+ referenceShift=0;epochOffset=0;zeroEpoch=false;activePlan=NULL;
+}
+static void reference_order_is_independent_of_follower_cycles(void) {
+ activePlan=NULL;referenceShift=0;epochOffset=0;zeroEpoch=false;
+ mulSchedule_t schedule={.profile=MUL_PROFILE_MULTI,.count=3,.slotMs=10,.periodMs=1000,.revision=1,.ids={132,133,134}};
+ mulMultiReceiver_t s;const uint8_t receiver[8]={141,0,0,0,0,0,0xcf,0xbc};
+ assert(mulMultiReceiverInit(&s,&schedule,receiver,true));
+ uint8_t frame[90];uint64_t rx;mulMultiReceiveOutput_t out;
+ size_t n=packet(&schedule,1,0,100,false,frame,&rx);
+ assert(mulMultiReceiverReceive(&s,frame,n,rx,1,10010,&out));
+ n=packet(&schedule,0,0,100,true,frame,&rx);
+ assert(mulMultiReceiverReceive(&s,frame,n,rx,12,10012,&out));
+ assert(s.rate.hasBaseline&&s.rate.sequence==100);
+ n=packet(&schedule,1,1,200,false,frame,&rx);
+ assert(mulMultiReceiverReceive(&s,frame,n,rx,1,11010,&out));
+ n=packet(&schedule,0,1,101,true,frame,&rx);
+ assert(mulMultiReceiverReceive(&s,frame,n,rx,12,11012,&out));
+ assert(s.rate.sequence==101&&s.rate.samples==1&&s.cycle==101);
 }
 int main(void) {
+ reference_order_is_independent_of_follower_cycles();
+ for(unsigned method=0;method<=2;method+=2)for(unsigned gap=1000;gap<=10000;gap+=3000)
+  for(unsigned reboot=0;reboot<2;reboot++)restart_with_running_followers(method,gap,reboot!=0);
  const unsigned counts[]={2,3,4,8};
  for(unsigned n=0;n<4;n++)for(unsigned spacing=10;spacing<=50;spacing+=40)for(unsigned policy=0;policy<2;policy++)for(unsigned planned=0;planned<2;planned++)scenario(counts[n],spacing,policy!=0,planned!=0);
  scenario(2,500,true,false);reordering_and_recovery(false);reordering_and_recovery(true);

@@ -435,3 +435,80 @@ and final deployment validation are documented separately below.
 Runtime verbosity, final image limits and the operator-only four-robot30second
 procedure are documented in [mul_logging.md](mul_logging.md). SL1 capability is
 now included in the default production image, gated at runtime by debug.
+
+## Reference OFF/ON recovery validation (operator only)
+
+The recovery fix addresses scheduler/clock sequence disagreement, including the
+3s-loss/6s-Kalman holdover interaction. See the
+[verified mechanism and compatibility limits](../portable/mul_core/CLOCK.md#reference-restart-evidence-and-epoch-ownership).
+Deploy the corrected ALR image to ALR132/133/134 and the matching vendored-core
+Universal STM32 image to RLR141. With all RF stopped, update RLR141, both followers,
+then the reference; keep every device's saved calibration/plan. No ESP32 update is
+needed. Use the existing build/ELF checks above; do not mass erase configuration.
+The following commands are instructions for the operator, not actions performed
+by the coding agent.
+
+Use the existing serial console, or run `python3 send_uwb_config.py` from
+`~/Documents` and select the intended node. Before startup inspect:
+
+|Node|Read-only commands|
+|---|---|
+|Each ALR|`:status`, `:plan show`, `:clock show`, `:diag`|
+|RLR141|`status`, `plan show`, `clock show`, `hybrid status`, `hybrid ar`, `hybrid diag`, `tlm status`|
+
+Require codec5/hash **2359421F**, period100ms, slots5ms, Kalman budget10ms,
+reply10ms and TWR window50ms on all four. Preserve the established roster order
+(the fingerprint checks it). Do not copy the older 200ms/reply20 example above.
+Enable RF with `on` on RLR141, `:on` on each follower, then `:on` on ALR132.
+Use the existing collector/logging workflow without changing live settings.
+
+1. **A — startup:** wait at least10s, then observe30s of normal operation.
+2. **B — short restart:** on ALR132 only send `:off`, confirm `:status` says
+   requested=0/running=0, wait approximately1s, send `:on`. Leave followers and
+   RLR running; observe at least30s after restart.
+3. **C — medium restart:** repeat B with approximately5s OFF.
+4. **D — long restart:** repeat B with approximately10s OFF.
+
+For each test save before/after `:diag` on both followers and the RLR diagnostics
+above. Two coherent post-restart reference packets establish the new session;
+then allow estimator warmup and a complete five-cycle TWR rotation. Require:
+
+- Both follower `tx_ok` and `kalman` counters resume increasing; no sustained
+  five-cycle `prep_fail` growth after warmup. The first warmup opportunities may
+  be unavailable. `slot_miss`, `backlog` and `overrun` must not grow persistently.
+- With debug `SL1` capture already enabled, `e=1,w=0` arms the assigned slot,
+  `e=2,w=0` confirms the exact target, and `e=3,w=0` completes fitting. Decode
+  local timestamps only within their own clock domain. Warmup followed by fresh
+  valid mappings must be visible in RLR `clock show` (`ready/applied`, map/age).
+- `twr_ok` resumes, and RLR `hybrid ar` completed increases. Over five cycles the
+  opportunities remain 132→133, 132→134, 132→141, 133→141, 134→141, irrespective
+  of missed opportunities. Require fresh calibration, not old retained values.
+- RLR vector valid masks/TDoA become available again after fresh follower epochs
+  and synchronization. During loss/warmup, measurements must be invalid/NA rather
+  than frozen numerical distances. Check `hybrid diag` and `tlm status` to
+  distinguish RF/model unavailability from transport drops.
+
+At normal verbosity the counters remain available through `:diag`; detailed
+`SL1` records require debug verbosity (`:cfg set verbosity debug`) and can increase
+capture load. Restore the previous verbosity after detailed timing capture.
+Archive the raw outputs with the OFF/ON times. Run the existing timing/replay
+analysis on complete captures, and report any unavailable intervals and transport
+loss separately. Offline tests are not evidence that these physical tests passed.
+
+Offline verification of this recovery change: `tools/test/mul_slots.py --sanitize`
+passes316 native tests and291 MUL ASan/UBSan tests for each500/50/10ms compile
+profile; the explicit production trace profile passes291 tests plus sanitizers.
+The canonical core sanitizer suite and54 host Python tests pass. The existing
+`compare_deferred_clock.py --sanitize` reports240000 bit-identical observations
+against its frozen baseline. The stationary CH5 production/SL1 image passes
+`check_mul_image.py`:131008/131072 Flash and14924/16384 RAM, with168-byte clock
+workspace and all original stack/queue reservations. Flash headroom is only64 B
+with GCC13.2.1; additional diagnostics/build flags need their own linked image
+check. Plan/codec modules join the existing LTO group solely to fit recovery;
+clock-fit flags and all wire codecs/math are unchanged. Board stack watermark,
+radio WCET and physical OFF/ON validation remain operator work.
+
+The production compiler frame audit reports296 B for mapping,120 B for
+preparation,328 B for worker/wait and256 B for the ALR handler. Begin/Finish use
+96/104 B; restart evidence uses80 B plus the40 B shared interval gate. These are
+individual static frames, not a whole-program stack proof or board watermark.

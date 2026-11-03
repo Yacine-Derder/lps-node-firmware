@@ -12,7 +12,7 @@ LPP/pressure/factory-test paths. Their source remains for reference/native tests
 revision `fd44002` preserves the original combined image. Mode IDs5/6 and MUL
 protocol compatibility remain stable. Existing EEPROM is read without migration
 writes; unsupported stored modes remain idle. See [build/verification](mul_commands.md).
-Clock-fit state is an explicit MUL-owned344-byte object; stock TDoA3 has its own
+Clock-fit state uses an explicit MUL-owned168-byte workspace (160-byte fit plus8-byte configuration); stock TDoA3 has its own
 original context and is not linked into production. Shared radio/console/kernel
 tasks remain; no stack or USB queue reductions were used to obtain the savings.
 
@@ -186,8 +186,9 @@ operation and independently bounded synchronization accuracy remain future work.
 The follower starts in RX and accepts only the full reference identity. A first
 valid packet acquires; three seconds without forward sequence progress loses acquisition.
 RTOS ticks provide only this wrap-safe coarse watchdog.
-A stale stream may restart from a different sequence; replaying the last sequence
-alone cannot reacquire. Duplicate, old, unknown, or malformed packets never arm TX.
+A backward reference stream requires two coherent sequence/TX/RX/uptime
+observations before scheduler and clock enter a new epoch together. Isolated
+old/duplicate frames never arm TX. See [reference recovery](../portable/mul_core/CLOCK.md#reference-restart-evidence-and-epoch-ownership).
 
 Each fresh reference sequence permits one attempt in the follower's local clock:
 `antenna target = local reference RX + MUL_FOLLOWER_SLOT_MS`; `raw DX_TIME = align_up(target -
@@ -336,9 +337,11 @@ below the 40-bit half period and rejects long-gap full-wrap aliases. Coarse upti
 only rejects stale data; it never supplies the ratio. A ±200 ppm plausibility gate
 is deliberately generous for initial hardware investigation, not a device guarantee.
 Invalid intervals/rates clear history and seed a new baseline. Initialization,
-reference loss, and subsequent reacquisition start cleanly; five new valid intervals
-are required. Without an epoch field, restart/replay ambiguity remains: backward
-sequences are ignored until existing liveness declares loss and permits rebasing.
+median reference loss and a confirmed restart require five new valid intervals.
+A ready Kalman model may survive a continuous gap up to6s, subject to the existing
+continuity and innovation checks; a confirmed restart invalidates it. Backward
+restart detection also operates before the liveness watchdog, using two coherent
+observations rather than a single stale frame.
 
 The follower logs CLOCK after arming TX or rearming RX, at most once per
 fresh reference plus loss transitions, in the UWB task. Only skew is printed,
@@ -435,7 +438,8 @@ correction. Tokens are scoped to this firmware boot/UWB task, never persisted;
 producers must discard records on reboot and acquire fresh data, never retag old
 measurements. Token exhaustion fails closed. Reference broadcasts still lack an
 epoch; Stage 3D transports only the follower acquisition token. Undetected remote
-restart remains subject to existing sequence/loss policy.
+restart uses the bounded two-observation evidence policy; paced replay and
+coincidentally continuous restarts remain ambiguous without a reference session token.
 
 Results keep affine uncertainty separate from supplied delay uncertainty.
 Motion uncertainty grows as declared `motionBoundDtuPerMs * applicationAgeMs`;

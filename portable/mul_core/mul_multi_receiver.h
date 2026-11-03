@@ -22,6 +22,7 @@ typedef struct {
  const mulRangingPlan_t *plan; // Optional immutable caller-owned configuration.
  mulSchedule_t schedule;mulClock_t rate;
  mulClockFit_t fit;mulClockFitConfig_t clockConfig;
+ mulReferenceEvidence_t restartEvidence;
  mulObservation_t sources[MUL_MAX_ALRS];
  mulRelation_t relations[MUL_MAX_ALRS-1];
  uint64_t followerEpoch[MUL_MAX_ALRS-1];
@@ -29,7 +30,7 @@ typedef struct {
  uint16_t captureAge[MUL_MAX_ALRS];
  uint32_t cycle,cycleStartMs,lastCycleMs;
  uint32_t received,rejected,duplicates,old,late,mismatches,cycles;
- uint8_t seenMask;
+ uint8_t seenMask,awaitEpochMask;
  bool stationary,hasCycle,active;
 } mulMultiReceiver_t;
 typedef struct {mulMultiBroadcast_t broadcast;mulMultiCycle_t completed;bool cycleReady;} mulMultiReceiveOutput_t;

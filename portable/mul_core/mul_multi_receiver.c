@@ -74,6 +74,14 @@ static mulSequenceResult_t record(mulMultiReceiver_t *s,unsigned slot,const mulT
  memcpy(o->sourceClock,p->source,8);o->power=(mulPower_t){.powerCentiDbm=INT16_MIN,.status=mulPowerUnsupported};
  return result;
 }
+static void invalidateReference(mulMultiReceiver_t *s) {
+ mulClockReset(&s->rate);mulClockFitReset(&s->fit);
+ for(unsigned i=0;i<s->schedule.count;i++) {
+  s->sources[i].source.hasSequence=false;s->sources[i].valid=false;
+  if(i){if(s->followerEpoch[i-1])s->awaitEpochMask|=(uint8_t)(1u<<i);memset(&s->relations[i-1],0,sizeof(s->relations[0]));s->values[i-1]=invalid(mulMultiClockUnavailable);}
+ }
+ s->seenMask=0;s->active=false;s->hasCycle=false;
+}
 bool mulMultiReceiverReceive(mulMultiReceiver_t *s,const uint8_t *frame,size_t n,uint64_t rx,uint32_t age,uint32_t now,mulMultiReceiveOutput_t *out) {
  if(!s||!frame||!out||rx>MUL_TIMESTAMP_MASK)return false;
  memset(out,0,sizeof(*out));
@@ -89,13 +97,33 @@ bool mulMultiReceiverReceive(mulMultiReceiver_t *s,const uint8_t *frame,size_t n
   return false;
  }
  unsigned slot=out->broadcast.slot;uint32_t cycle=out->broadcast.packet.sequence;
+ // Only reference observations may establish a restarted reference session.
+ // Follower traffic must not refresh the reference's liveness/evidence.
+ if(!slot&&(s->sources[0].source.hasSequence||(s->hasCycle&&cycle!=s->cycle))) {
+  const mulSourceState_t *ref=&s->sources[0].source;
+  uint32_t previous=ref->hasSequence?ref->sequence:s->cycle;
+  uint32_t delta=cycle-previous;
+  if(!delta||delta>=UINT32_C(0x80000000)) {
+   if(age>15||(ref->hasSequence&&cycle==ref->sequence&&out->broadcast.packet.txTimestamp==ref->txTimestamp)||
+      !mulReferenceRestartObserve(&s->restartEvidence,&out->broadcast.packet,rx,now,s->schedule.periodMs)) {
+    s->old++;return false;
+   }
+   // No old vector/relation is completed under the new reference epoch.
+   invalidateReference(s);
+  }else s->restartEvidence.valid=false;
+ }
+
+ // A retired follower model cannot move the cycle back into the old session.
+ if(slot&&(s->awaitEpochMask&(1u<<slot))&&(!out->broadcast.relation.epoch||out->broadcast.relation.epoch==s->followerEpoch[slot-1])) {
+  s->old++;return false;
+ }
  if(s->hasCycle&&cycle!=s->cycle) {
   uint32_t delta=cycle-s->cycle;
-  if(delta>=UINT32_C(0x80000000)) {
-   if((uint32_t)(now-s->lastCycleMs)<MUL_SOURCE_TIMEOUT_MS){s->old++;return false;}
-   // Explicit liveness rebase after reference restart; never retain an old rate.
-   mulClockReset(&s->rate);for(unsigned i=0;i<s->schedule.count;i++){s->sources[i].source.hasSequence=false;s->sources[i].valid=false;}
+  if(delta>=UINT32_C(0x80000000)&&slot) {
+   s->old++;return false; // A follower cannot rebase the reference session.
   }
+  // Reference order was checked against its own baseline above. Followers
+  // from an obsolete/future cycle must not block that accepted reference.
   if(s->active){finish(s,&out->completed);out->cycleReady=true;}
   begin(s,cycle,slot,now);
  } else if(!s->hasCycle)begin(s,cycle,slot,now);
@@ -108,11 +136,20 @@ bool mulMultiReceiverReceive(mulMultiReceiver_t *s,const uint8_t *frame,size_t n
   s->cycleStartMs=now;
   mulNetwork_t pair;(void)mulSchedulePair(&s->schedule,1,&pair);
   if(order==mulSequenceFirst&&!mulClockFitHoldover(&s->rate,&s->fit,&s->clockConfig,now))mulClockReset(&s->rate);
+  uint64_t previousEpoch=s->rate.epoch;
   if(age<=15)mulClockObserveFitted(&pair,&s->rate,&s->fit,&s->clockConfig,&out->broadcast.packet,rx,now,true,NULL);
   else mulClockReset(&s->rate);
+  if(s->rate.epoch!=previousEpoch) {
+   s->seenMask&=1u;
+   for(unsigned i=1;i<s->schedule.count;i++) {
+    s->sources[i].valid=false;s->sources[i].source.hasSequence=false;
+    memset(&s->relations[i-1],0,sizeof(s->relations[0]));s->values[i-1]=invalid(mulMultiClockUnavailable);
+   }
+  }
   for(unsigned i=1;i<s->schedule.count;i++)evaluate(s,i,now);
  } else {
   const mulRelation_t *r=&out->broadcast.relation;
+  s->awaitEpochMask&=(uint8_t)~(1u<<slot);
   if(s->followerEpoch[slot-1]&&s->followerEpoch[slot-1]!=r->epoch) {
    if(s->sources[slot].generation==UINT32_MAX){s->sources[slot].valid=false;s->values[slot-1]=invalid(mulMultiSequence);return true;}
    s->sources[slot].generation++;

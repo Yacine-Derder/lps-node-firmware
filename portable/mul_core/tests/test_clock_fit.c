@@ -212,7 +212,36 @@ static void staged_prior_gates(void) {
  assert(!memcmp(&fit,&good,sizeof(fit)));
  puts("Deferred KF: current origin, bounded read-only prior, epoch/NaN/variance/rate/outlier gates and exactly-once finish passed");
 }
+static void stale_pending_cannot_publish(void) {
+ mulClock_t clock;mulClockReset(&clock);mulClockFit_t fit;mulClockFitReset(&fit);
+ mulClockFitConfig_t c;mulClockFitDefaults(&c);c.estimator=2;
+ for(unsigned i=0;i<20;i++)observation(&clock,&fit,&c,i,mulTimestampMask(i*DT),mulTimestampMask(i*DT),i*1000);
+ mulTestPacket_t p={.sequence=20,.txTimestamp=mulTimestampMask(20*DT)};
+ memcpy(p.source,mulDefaultNetwork.addresses[0],8);mulClockFitPending_t pending;
+ mulClockFitBegin(NULL,&clock,&fit,&c,&p,p.txTimestamp,20000,true,NULL,&pending);assert(pending.active);
+ mulClockReset(&clock);mulClockFitReset(&fit);
+ observation(&clock,&fit,&c,0,0,0,21000);
+ mulClock_t before=clock;mulClockFit_t saved=fit;
+ mulClockFitFinish(NULL,&clock,&fit,&c,&p,p.txTimestamp,20000,&pending);
+ assert(!pending.active&&!memcmp(&before,&clock,sizeof(clock))&&!memcmp(&saved,&fit,sizeof(fit)));
+}
+static void restart_evidence_guards(void) {
+ mulReferenceEvidence_t e={0};mulTestPacket_t p={.sequence=UINT32_MAX,.txTimestamp=MUL_TIMESTAMP_MASK-5000000};
+ uint64_t rx=MUL_TIMESTAMP_MASK-1000000;uint32_t now=UINT32_MAX-20;
+ assert(!mulReferenceRestartObserve(&e,&p,rx,now,100));
+ assert(!mulReferenceRestartObserve(&e,&p,rx,now+1,100)); // Duplicate cannot refresh evidence.
+ assert(e.ms==now);
+ p.sequence=0;p.txTimestamp=mulTimestampMask(p.txTimestamp+DT/10);rx=mulTimestampMask(rx+DT/10);
+ assert(mulReferenceRestartObserve(&e,&p,rx,now+100,100)); // Both counter wraps and uptime wrap.
+ assert(!e.valid);
+ assert(!mulReferenceRestartObserve(&e,&p,rx,now+200,100));
+ p.sequence++;p.txTimestamp=mulTimestampMask(p.txTimestamp+DT/10);
+ assert(!mulReferenceRestartObserve(&e,&p,rx,now+300,100)); // Remote advances, local does not.
+ p.sequence++;rx=mulTimestampMask(rx+DT/10);p.txTimestamp=mulTimestampMask(p.txTimestamp+DT/10);
+ assert(!mulReferenceRestartObserve(&e,&p,rx,now+6400,100)); // Coarse time rejects wrap aliases/delayed stream.
+}
 int main(void) {
+ stale_pending_cannot_publish();restart_evidence_guards();
   staged_prior_gates();
   invalid_recovery_sequence();
   for(unsigned gap=1;gap<=6;gap++)loss_recovery(gap,false,false);

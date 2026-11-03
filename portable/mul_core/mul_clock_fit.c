@@ -216,7 +216,7 @@ mulClockResult_t mulClockFitBegin(const mulNetwork_t *network,
   }
   int64_t phase = s->phase + dr - dt;
   *pending=(mulClockFitPending_t){.dt=dt,.phase=phase,.fittedRx=fittedRx,
-    .resumed=resumed,.corrected=corrected,.result=result,.active=true};
+    .epoch=clock->epoch,.resumed=resumed,.corrected=corrected,.result=result,.active=true};
   return result;
 }
 void mulClockFitFinish(const mulNetwork_t *network,mulClock_t *clock,mulClockFit_t *s,
@@ -224,6 +224,9 @@ void mulClockFitFinish(const mulNetwork_t *network,mulClock_t *clock,mulClockFit
                       uint64_t rx,uint32_t now,mulClockFitPending_t *pending) {
   if(!pending->active)return;
   pending->active=false;
+  // A stale owner/worker cannot publish into a reset or superseded origin.
+  if(pending->epoch!=clock->epoch||s->epoch!=clock->epoch||
+     clock->sequence!=p->sequence)return;
   int64_t dt=pending->dt,phase=pending->phase;
   uint64_t fittedRx=pending->fittedRx;
   bool resumed=pending->resumed,corrected=pending->corrected;
@@ -297,7 +300,7 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,mulClock_t *c
  * innovation gate. Failure means unavailable metadata, never stale valid data. */
 bool mulClockFitPrior(const mulClock_t *clock,const mulClockFit_t *s,
  const mulClockFitPending_t *pending,uint16_t slotMs,int32_t *skew) {
- if(!pending->active||!s->ready||!clock->epoch||s->epoch!=clock->epoch||
+ if(!pending->active||pending->epoch!=clock->epoch||!s->ready||!clock->epoch||s->epoch!=clock->epoch||
     !healthy(s->state,s->covariance))return false;
  double d=(double)pending->dt/63897600000.,h=slotMs/2000.,t=d+h;
  double innovation=(double)pending->phase-(s->state[0]+K*d*s->state[1]+K*d*d/2*s->state[2]);

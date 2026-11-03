@@ -492,9 +492,11 @@ void test_mulFollowerLosesReferenceDespiteTrafficAndReacquiresAfterRestart(void)
   TEST_ASSERT_FALSE(referenceAcquired);
   TEST_ASSERT_EQUAL_UINT(1, txCount); // Replaying a reference cannot create a slot.
   testTick = 4000;
-  receiveReference(0, 1, 4000 * DTU_PER_MS);
+  receiveReference(0, 1, 3000 * DTU_PER_MS);
+  TEST_ASSERT_FALSE(referenceAcquired);
+  testTick=5000;receiveReference(1,1+PERIOD_DTU,4000*DTU_PER_MS);
   TEST_ASSERT_TRUE(referenceAcquired);
-  TEST_ASSERT_EQUAL_UINT32(0, followerReference.sequence);
+  TEST_ASSERT_EQUAL_UINT32(1, followerReference.sequence);
   TEST_ASSERT_EQUAL_UINT32(0, followerReference.gaps);
   finishFollowerSlot();
   TEST_ASSERT_EQUAL_UINT(2, txCount);
@@ -801,6 +803,8 @@ void test_mulFollowerLossAbortsPendingTxAndRequiresFreshReacquisition(void) {
   TEST_ASSERT_EQUAL_UINT(1, txCount);
   TEST_ASSERT_FALSE(referenceAcquired);
   receiveReference(0, 1, 9000 * DTU_PER_MS);
+  TEST_ASSERT_FALSE(flags.tx);
+  testTick=10000;receiveReference(1,1+PERIOD_DTU,10000*DTU_PER_MS);
   finishFollowerSlot();
   TEST_ASSERT_TRUE(referenceAcquired);
   TEST_ASSERT_EQUAL_UINT(2, txCount);
@@ -915,13 +919,13 @@ void test_mulFollowerClockConvergesWithoutChangingTdmaAndResetsOnLoss(void) {
   TEST_ASSERT_EQUAL_INT(mulClockSearching, followerClock.status);
   TEST_ASSERT_EQUAL_UINT32(0, followerClock.samples);
   TEST_ASSERT_EQUAL_INT(mulClockMapInvalid, mulClockMapStatus(&followerClock, testTick));
-  for (uint32_t frame = 0; frame < 6; frame++) {
+  for (uint32_t frame = 0; frame < 7; frame++) {
     testTick = 10000 + frame*1000;
     uint64_t local = mulTimestampMask(localStart + (10+frame)*PERIOD_DTU - frame*(PERIOD_DTU/100000));
     receiveReference(frame, frame*PERIOD_DTU, local); // Reference restarted at seq/TX zero.
-    TEST_ASSERT_EQUAL_INT(frame < 5 ? mulClockMapWarmup : mulClockMapValid,
+    TEST_ASSERT_EQUAL_INT(frame==0?mulClockMapInvalid:frame < 6 ? mulClockMapWarmup : mulClockMapValid,
       mulClockMapStatus(&followerClock, testTick));
-    finishFollowerSlot();
+    if(flags.tx)finishFollowerSlot();
   }
   TEST_ASSERT_EQUAL_INT(mulClockValid, followerClock.status);
   TEST_ASSERT_EQUAL_INT32(-10000, followerClock.skewPpb);
@@ -1084,4 +1088,29 @@ void test_followerKalmanRecoversAfterTwoMissedReferencesWithoutRewarming(void){
  TEST_ASSERT_TRUE(mulClockWorkspace()->fit.recovered);TEST_ASSERT_FALSE(mulClockWorkspace()->fit.applied);
  TEST_ASSERT_EQUAL_INT(mulClockValid,followerClock.status);finishFollowerSlot();
  TEST_ASSERT_TRUE(mulClockWorkspace()->fit.applied);
+}
+
+/* Real follower events: scheduler and estimator must enter the same new epoch. */
+void test_followerReferenceRestartResumesKalmanBeforeAndAfterLossWatchdog(void) {
+ for(unsigned gap=1000;gap<=10000;gap+=3000)for(unsigned reboot=0;reboot<2;reboot++) {
+  setUp();mulClockFitDefaults(&config.mulClockConfig);config.mulClockConfig.estimator=2;
+  initFollower();
+  for(unsigned i=0;i<12;i++) {
+   testTick=i*1000;receiveReference(100+i,i*PERIOD_DTU,i*PERIOD_DTU);finishFollowerSlot();
+  }
+  TEST_ASSERT_TRUE(mulClockWorkspace()->fit.ready);
+  uint64_t oldEpoch=followerClock.epoch;uint32_t start=testTick+gap;
+  for(unsigned i=0;i<10;i++) {
+   testTick=start+i*1000;
+   uint64_t tx=reboot?i*PERIOD_DTU:(uint64_t)testTick*DTU_PER_MS;
+   receiveReference(i,mulTimestampMask(tx),mulTimestampMask((uint64_t)testTick*DTU_PER_MS));
+   if(flags.tx)finishFollowerSlot();
+  }
+  TEST_ASSERT_TRUE(referenceAcquired);
+  TEST_ASSERT_TRUE(followerClock.epoch!=oldEpoch);
+  TEST_ASSERT_EQUAL_UINT32(9,followerClock.sequence);
+  TEST_ASSERT_TRUE(mulClockWorkspace()->fit.ready);
+  TEST_ASSERT_TRUE(mulClockWorkspace()->fit.applied);
+  TEST_ASSERT_EQUAL_INT(mulClockMapValid,mulClockMapStatus(&followerClock,testTick));
+ }
 }

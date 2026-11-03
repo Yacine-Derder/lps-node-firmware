@@ -105,8 +105,9 @@ are still canceled on reference loss. RF scheduling and packet formats are uncha
 
 `recovered` occupies the last padding byte (fit state remains160 B). It marks a
 retained gap history, not guaranteed validity; inspect ready/applied, fallback,
-map status/age and reset reason together. LPS prints `hold` on loss and `rc` in KF
-records; STM32 CLOCK shows holdover/recovered. Existing raw sequence/TX/RX telemetry
+map status/age and reset reason together. STM32 `clock show` reports
+holdover/recovered and live mapping status; ALR `:diag` reports Kalman/TWR progress
+and optional debug SL1 records show worker execution. Existing raw sequence/TX/RX telemetry
 identifies observed gaps, without claiming they were antenna-level RF losses.
 No EEPROM/configuration field or telemetry schema changed.
 
@@ -118,6 +119,61 @@ relations fixed and explicitly cold-starting at capture entry. Follower log repl
 uses real TX/RX but inferred1Hz coarse age and no propagation compensation; it is
 not physical accuracy validation. Missing packets/relations remain missing.
 
+## Reference restart evidence and epoch ownership
+
+The ALR follower used to rebase its scheduler after the 3000ms watchdog while
+retaining a ready Kalman fit for 6000ms. The raw clock's sequence gate still
+rejected the restarted reference's lower sequence. Broadcast slots therefore
+continued from fresh RX timestamps while Kalman observations stayed ignored and
+AR preparation used an expired mapping. A restart before the watchdog could
+instead leave both sequence consumers rejecting the new stream.
+
+Reference owners now retain one bounded `mulReferenceEvidence_t` candidate.
+A backward sequence (or a changed timestamp at the same sequence) needs two
+coherent reference packets. The existing integer interval gate checks modular
+sequence advance, remote TX separation, positive local RX separation and the
+200ppm rate limit, with elapsed time below 3000ms. Local DTU separation must also
+agree with coarse monotonic elapsed time within 20ms; uptime never supplies a
+clock ratio or a TX target. Duplicate candidates cannot refresh their age.
+Normal forward packets discard tentative restart evidence. Both uint32 sequence
+and native 40-bit timestamp rollover retain their normal modular meaning.
+
+A confirmed restart resets the raw clock epoch, cancels queued fitting, replaces
+the scheduler baseline and invalidates prepared reservations, TWR exchanges,
+propagation and AA calibration. Begin reseeds Kalman against the new epoch before
+any prior can be published. Finish/Prior bind pending work to its original 64-bit
+epoch; Finish also rejects a superseded sequence. The ALR watchdog drops pending
+work rather than retaining an incompletely committed observation as holdover.
+Ordinary continuous gaps retain the existing 2s mapping/3s median/6s latent-Kalman
+limits and original covariance/innovation checks. No holdover broadcast is made.
+
+STM32 multi and legacy receivers use the same evidence gate. Followers cannot
+rebase the reference cycle or keep restart rejection alive by refreshing a
+cycle-level timestamp. Confirmation discards old vectors/associations and TWR
+state; transported follower models remain unavailable until their follower epoch
+changes. Retired follower models cannot advance the new cycle. New reference
+observations warm the local estimator; fresh follower models/calibration are
+also required before TDoA becomes available. Missing values remain invalid.
+
+No reference boot/session token exists in RF5. A paced replay of two coherent old
+packets is indistinguishable from a real restarted timeline. A restart that
+coincidentally satisfies all old timeline continuity gates is also ambiguous.
+Same-sequence/same-TX restarts are detected only once further observations expose
+a discontinuity; a lone packet cannot prove restart. Reused follower epoch tokens
+across a follower reboot can keep the receiver fail-closed until a distinct token
+is observed. These limits cannot be eliminated by a sequence heuristic. A future
+negotiated RF version could carry a reference boot/session token in reference
+broadcasts and bind follower relations/TWR to it; no such extension is implemented.
+Existing RF5 bytes, EEPROM codecs and plan fingerprints remain unchanged.
+
+Deterministic tests exercise production follower events and the portable STM32
+receiver with the 100ms/5ms/10ms-budget/reply10/window50 codec5 plan `2359421F`:
+1/4/10s interruptions, continuous loss, RF sequence restart and TX-clock reboot,
+both followers and estimators, repeated restarts, pending work/armed TX/reservations,
+retired TDoA models, invalid values and recovery. Existing suites cover reordered
+frames, duplicates, modular counter wraps and complete AA/AR exchanges. Software
+checks do not validate board timing, RF recovery or physical ranging accuracy.
+
 ## Optional deferred observation on the LPS follower
 
 The synchronous `mulClockObserveFitted` API retains its numerical behavior. Its
@@ -126,7 +182,7 @@ Joseph update, R/q, Huber rule, finite/LDL checks, rounding and recovery equatio
 are unchanged. Callers must retain the same packet, raw RX marker and reception
 uptime until Finish, and must not interleave another Begin on that state. Finish
 consumes the pending flag before work, so a second Finish is a no-op. A reset or
-epoch invalidation cancels obsolete pending work. The LPS owns one88-byte pending
+epoch invalidation cancels obsolete pending work. The LPS owns one96-byte pending
 observation; no queue or clock field is persisted or added to the RF protocol.
 
 For a scheduled follower broadcast, Begin performs current-cycle integer clock

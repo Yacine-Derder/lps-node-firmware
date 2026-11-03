@@ -87,16 +87,22 @@ static TickType_t lastReferenceTick;
 #define followerClock mulRoleIo.alr.clock
 #define ranging mulRoleScratch.twr
 static uint8_t followerSeen;
+static mulReferenceEvidence_t restartEvidence;
 // One observation owned by the UWB task until TX completes/aborts. The packet,
 // RX marker and observation time are immutable; no refit may intervene.
 static struct {
  mulClockFitPending_t fit;mulTestPacket_t packet;uint64_t rx;
  uint32_t now;int32_t rawSkew;uint8_t rawStatus;bool postponed;
 } deferredClock;
+static __attribute__((noinline)) void invalidateFollowerRanging(dwDevice_t *dev) {
+ followerPrep.ready=false;
+ mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"clock_epoch",true);ranging.attempted=false;
+}
 static uint64_t readHardwareTime(dwDevice_t *dev);
 static void finishClock(dwDevice_t *dev,uint64_t before) {
  (void)before;
  if(!deferredClock.fit.active)return;
+ if(deferredClock.fit.epoch!=followerClock.epoch){deferredClock.fit.active=false;return;}
  mulClockWorkspace_t *w=mulClockWorkspace();
  followerClock.skewPpb=deferredClock.rawSkew;followerClock.status=deferredClock.rawStatus;
  mulClockFitFinish(alrNetwork,&followerClock,&w->fit,&w->config,&deferredClock.packet,
@@ -108,7 +114,7 @@ static void finishClock(dwDevice_t *dev,uint64_t before) {
    before,after,deferredClock.packet.txTimestamp,deferredClock.rx);
  if(followerClock.sequence!=refSequence())followerClock.status=mulClockWarmup;
  if(deferredClock.fit.result==mulClockDiscontinuity) {
-  mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"clock_epoch",true);ranging.attempted=false;
+  invalidateFollowerRanging(dev);
  }
 }
 
@@ -159,7 +165,7 @@ static bool readBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *arri
 
 static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
 {
-  deferredClock.fit.active=false;followerPrep.ready=false;
+  deferredClock.fit.active=false;followerPrep.ready=false;restartEvidence.valid=false;
   activePlan=config->mulPlan;servedOperations=0;
   dwIdle(dev);
   mulAntennaConfigure(dev);
@@ -562,7 +568,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   if (lostNow) {
     referenceAcquired = false;followerPrep.ready=false;
     mulClockWorkspace_t *w=mulClockWorkspace();
-    if(!mulClockFitHoldover(&followerClock,&w->fit,&w->config,(uint32_t)now*portTICK_PERIOD_MS)){
+    if(deferredClock.fit.active||!mulClockFitHoldover(&followerClock,&w->fit,&w->config,(uint32_t)now*portTICK_PERIOD_MS)){
       deferredClock.fit.active=false; // Epoch loss invalidates queued work.
       mulClockReset(&followerClock);mulTwrInvalidateAa(&ranging);
     }
@@ -642,19 +648,28 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   bool armed = false;
   mulClockResult_t clockResult=mulClockIgnored;
   if (valid && mulNetworkRole(alrNetwork,packet.source) == mulAlrReference) {
-    // Preserve Stage 3A.1's restart policy after loss, without accepting replays
-    // of the last sequence. Epoch identification is deliberately not added here.
+    bool hasSequence=multiMode?referenceState.multi.hasSequence:followerReference.hasSequence;
+    uint32_t delta=packet.sequence-refSequence();
+    bool restart=false;
+    if(hasSequence&&(delta>=UINT32_C(0x80000000)||!delta)) {
+      if(packet.sequence!=refSequence()||packet.txTimestamp!=refTx())
+        restart=mulReferenceRestartObserve(&restartEvidence,&packet,arrival,
+          (uint32_t)now*portTICK_PERIOD_MS,multiMode?schedule->periodMs:1000);
+    }else restartEvidence.valid=false;
+    if(restart) {
+      deferredClock.fit.active=false;
+      mulClockReset(&followerClock); // Begin below reseeds the mismatched fit epoch.
+      if(multiMode)referenceState.multi.hasSequence=false;
+      else followerReference.hasSequence=false;
+    }
     mulSequenceResult_t result;
     if(multiMode) {
-      if(!referenceAcquired&&referenceState.multi.hasSequence&&packet.sequence!=refSequence())referenceState.multi.hasSequence=false;
-      uint32_t delta=packet.sequence-refSequence();
       result=!referenceState.multi.hasSequence?mulSequenceFirst:!delta?mulSequenceDuplicate:delta>=UINT32_C(0x80000000)?mulSequenceOld:mulSequenceForward;
       if(result!=mulSequenceDuplicate&&result!=mulSequenceOld) {
         referenceState.multi.hasSequence=true;referenceState.multi.sequence=packet.sequence;
         referenceState.multi.rxTimestamp=arrival;referenceState.multi.txTimestamp=packet.txTimestamp;
       }
     }else {
-      if(!referenceAcquired&&followerReference.hasSequence&&packet.sequence!=followerReference.sequence)followerReference.hasSequence=false;
       result=mulObservePacket(&followerReference,&packet,arrival);
     }
     if (result != mulSequenceDuplicate && result != mulSequenceOld) {
@@ -684,8 +699,8 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
         followerClock.status=prior?mulClockValid:mulClockWarmup;
         if(prior)followerClock.skewPpb=skew;
       }
-      if (clockResult==mulClockDiscontinuity || (acquiredNow&&!workspace->fit.recovered)) {
-        mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"clock_epoch",true); ranging.attempted=false;
+      if (restart || clockResult==mulClockDiscontinuity || (acquiredNow&&!workspace->fit.recovered)) {
+        invalidateFollowerRanging(dev);
       }
       }
       armed = scheduleFollowerTx(dev, arrival);
