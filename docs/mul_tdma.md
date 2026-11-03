@@ -512,3 +512,8 @@ The production compiler frame audit reports296 B for mapping,120 B for
 preparation,328 B for worker/wait and256 B for the ALR handler. Begin/Finish use
 96/104 B; restart evidence uses80 B plus the40 B shared interval gate. These are
 individual static frames, not a whole-program stack proof or board watermark.
+
+The exact100ms restart matrix also executes `prepareFollower` and the real AR
+initiator path after warmup: preparation succeeds on both followers, `prep_fail`
+stays unchanged, one POLL is armed and its target differs from the immutable
+mapped reservation only by the existing0..511-DTU alignment rounding.

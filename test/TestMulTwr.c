@@ -1852,6 +1852,20 @@ static bool restartReference(const mulRangingPlan_t *p,uint32_t cycle,int64_t at
  int64_t slot=mulTimestampDifference(out.packet.txTimestamp,clockAt(1,at+flight));
  TEST_ASSERT_TRUE(slot>=(int64_t)localSlot*5*MS&&slot<(int64_t)localSlot*5*MS+512);
  advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(p,cycle,0,&op));
+ if(op.kind==MUL_PLAN_AR&&op.initiator==multiConfiguration.address[0]&&
+    mulClockMapStatus(&followerClock,ticks)==mulClockMapValid&&!deferredClock.fit.active) {
+  unsigned failures=mulLogCounter(logPrepFail),sent=radios[1].sends;
+  TEST_ASSERT_TRUE(prepareFollower(&radios[1].device,&op,0));
+  TEST_ASSERT_EQUAL_UINT64(followerClock.epoch,followerPrep.epoch);
+  uint64_t poll=followerPrep.local.poll;
+  int64_t until=mulTimestampDifference(followerPrep.prepare,readHardwareTime(&radios[1].device));
+  TEST_ASSERT_TRUE(until>0);advance(physical+until+MS);dispatch(1,eventTimeout);
+  TEST_ASSERT_TRUE(ranging.active);TEST_ASSERT_TRUE(ranging.txPending);
+  TEST_ASSERT_EQUAL(sent+1,radios[1].sends);TEST_ASSERT_EQUAL(failures,mulLogCounter(logPrepFail));
+  int64_t rounding=mulTimestampDifference(ranging.expectedTx,poll);
+  TEST_ASSERT_TRUE(rounding>=0&&rounding<512); // Original mapped POLL, never a moved opportunity.
+ }
  advance(at+81*MS);dispatch(1,eventTimeout);TEST_ASSERT_FALSE(deferredClock.fit.active);
  return true;
 }
