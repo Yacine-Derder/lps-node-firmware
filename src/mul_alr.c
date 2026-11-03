@@ -66,38 +66,19 @@ static uint64_t refTx(void){return multiMode?referenceState.multi.txTimestamp:fo
 // 7 RX age,8 rejected frame,9 old/duplicate. No formatting in the measured path.
 static uint8_t slotReason;
 #if MUL_SLOT_TRACE
-typedef struct {uint64_t t[8];uint32_t cycle;uint8_t local,why,event,initiator,responder;} timingRecord_t;
-static timingRecord_t slotTrace,timingRing[4];
-static uint8_t timingHead,timingTail,timingCount;
-static uint16_t slotLost;
-#define SLOT_TIME(i,v) (slotTrace.t[i]=(v))
-static void timingPush(const timingRecord_t *r) {
- taskENTER_CRITICAL();
- if(timingCount==4)slotLost++;else {timingRing[timingHead]=*r;timingHead=(timingHead+1)%4;timingCount++;}
- taskEXIT_CRITICAL();
-}
+static mulLogRecord_t slotTrace;
+#define SLOT_TIME(i,v) do {if(mulLogLevel()==mulLogDebug)slotTrace.t[i]=(v);} while(0)
 static void slotPublish(void) {
+ if(mulLogLevel()!=mulLogDebug)return;
  slotTrace.cycle=refSequence();slotTrace.local=source[0];slotTrace.why=slotReason;slotTrace.event=1;
- timingPush(&slotTrace);
+ mulLogPush(&slotTrace);
 }
-void mulAlrTiming(unsigned event,uint32_t cycle,unsigned initiator,unsigned responder,unsigned why,
+void mulAlrTimingRecord(unsigned event,uint32_t cycle,unsigned initiator,unsigned responder,unsigned why,
  uint64_t a,uint64_t b,uint64_t c,uint64_t d) {
- timingRecord_t r={.t={a,b,c,d},.cycle=cycle,.local=source[0],.why=why,.event=event,
-   .initiator=initiator,.responder=responder};timingPush(&r);
+ mulLogRecord_t r={.t={a,b,c,d},.cycle=cycle,.local=source[0],.why=why,.event=event,
+   .initiator=initiator,.responder=responder};mulLogPush(&r);
 }
-void mulAlrSlotPoll(bool (*write)(const char *,unsigned)) {
- static unsigned part;static bool pending;static timingRecord_t r;char line[128];
- if(!pending) {
-  taskENTER_CRITICAL();
-  if(timingCount){r=timingRing[timingTail];timingTail=(timingTail+1)%4;timingCount--;pending=true;}
-  taskEXIT_CRITICAL();
- }
- if(!pending||!write)return;
- uint64_t a=r.t[2*part],b=r.t[2*part+1];
- int n=snprintf(line,sizeof(line),"SL1 c=%" PRIu32 " l=%02X e=%u i=%u j=%u k=%u a=%02X%08" PRIX32 " b=%02X%08" PRIX32 " w=%u z=%u\r\n",
-  r.cycle,r.local,r.event,r.initiator,r.responder,part,(unsigned)(a>>32),(uint32_t)a,(unsigned)(b>>32),(uint32_t)b,r.why,slotLost);
- if(n>0&&(unsigned)n<sizeof(line)&&write(line,(unsigned)n)&&++part==4){pending=false;part=0;}
-}
+void mulAlrSlotPoll(bool (*write)(const char *,unsigned)){mulLogPoll(write);}
 #else
 #define SLOT_TIME(i,v) ((void)0)
 #endif
@@ -120,8 +101,11 @@ static void finishClock(dwDevice_t *dev,uint64_t before) {
  followerClock.skewPpb=deferredClock.rawSkew;followerClock.status=deferredClock.rawStatus;
  mulClockFitFinish(alrNetwork,&followerClock,&w->fit,&w->config,&deferredClock.packet,
    deferredClock.rx,deferredClock.now,&deferredClock.fit);
+ uint64_t after=readHardwareTime(dev);
+ unsigned budget=activePlan&&activePlan->policy==MUL_PLAN_TDMA?activePlan->kalmanBudgetMs:10;
+ if(mulTimestampDifference(after,before)>(int64_t)(budget*MUL_DTU_PER_MS))mulLogCount(logOverrun);
  mulAlrTiming(3,deferredClock.packet.sequence,alrNetwork->addresses[0][0],source[0],0,
-   before,readHardwareTime(dev),deferredClock.packet.txTimestamp,deferredClock.rx);
+   before,after,deferredClock.packet.txTimestamp,deferredClock.rx);
  if(followerClock.sequence!=refSequence())followerClock.status=mulClockWarmup;
  if(deferredClock.fit.result==mulClockDiscontinuity) {
   mulTwrInvalidateAa(&ranging);mulTwrCancel(&ranging,dev,"clock_epoch",true);ranging.attempted=false;
@@ -374,11 +358,11 @@ static bool mapReservation(const mulRangingOperation_t *op,uint32_t now,mulLocal
 static bool prepareFollower(dwDevice_t *dev,const mulRangingOperation_t *op,unsigned index) {
  if(followerPrep.ready&&followerPrep.cycle==refSequence())return true;
  if(flags.tx||deferredClock.fit.active||ranging.active)return false;
- uint64_t began=readHardwareTime(dev);(void)began;
+ uint64_t began=mulLogLevel()==mulLogDebug?readHardwareTime(dev):0;(void)began;
  uint32_t context=mulGeometryContext(),now=(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS;
  mulDelaySource_t source=mulGeometrySource();mulLocalReservation_t local;
  bool mapped=mapReservation(op,now,&local,&followerPrep.prepare);
- uint64_t mappedAt=readHardwareTime(dev);(void)mappedAt;
+ uint64_t mappedAt=mulLogLevel()==mulLogDebug?readHardwareTime(dev):0;(void)mappedAt;
  if(!mapped||!mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index)||
     (source==mulDelayExternal&&context!=mulGeometryContext())) {
   servedOperations|=UINT32_C(1)<<index;
@@ -624,7 +608,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   bool broadcast=activePlan&&event==eventPacketReceived&&
     (dwGetDataLength(dev)==40||dwGetDataLength(dev)==80);
 #if MUL_SLOT_TRACE
-  if(broadcast){memset(&slotTrace,0,sizeof(slotTrace));SLOT_TIME(1,readHardwareTime(dev));}
+  if(broadcast&&mulLogLevel()==mulLogDebug){memset(&slotTrace,0,sizeof(slotTrace));SLOT_TIME(1,readHardwareTime(dev));}
 #endif
   slotReason=8;
   if(broadcast&&ranging.active)mulTwrCancel(&ranging,dev,NULL,false);
@@ -705,6 +689,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       }
       }
       armed = scheduleFollowerTx(dev, arrival);
+      if(!armed)mulLogCount(logMiss);
     }else slotReason=9;
   }
   // Turn directly from the completed RX into delayed TX. Enabling RX briefly

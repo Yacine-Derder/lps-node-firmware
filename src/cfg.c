@@ -29,6 +29,7 @@
 #include <string.h>
 #include "cfg.h"
 #include "mul_antenna.h"
+#include "mul_log.h"
 #include "eeprom.h"
 #include "uwb.h"
 #include "uwb_control.h"
@@ -63,6 +64,9 @@ static mulPlanStoreResult_t cachedPlanStatus=mulPlanAbsent;
 static void planBootLoad(void);
 static void antennaBootLoad(void);
 static volatile bool writing;
+static uint8_t savedVerbosity=mulLogNormal;
+bool cfgVerbosityPending(void){return mulLogLevel()!=savedVerbosity;}
+uint8_t cfgVerbositySaved(void){return savedVerbosity;}
 static bool mulStore(ConfigField field,const uint8_t *data,uint8_t length);
 bool cfgPendingRestart(void) {return pendingRestart||mulStorageUncertain||writing;}
 bool cfgStorageReady(void) {return !mulStorageUncertain&&!writing;}
@@ -512,10 +516,10 @@ bool cfgGeometrySourceWrite(mulDelaySource_t source) {
 #define CAL_MAGIC UINT32_C(0x314c4143)
 static uint32_t calGet(const uint8_t *b){return (uint32_t)b[0]|(uint32_t)b[1]<<8|(uint32_t)b[2]<<16|(uint32_t)b[3]<<24;}
 static void calPut(uint8_t *b,uint32_t n){for(unsigned i=0;i<4;i++)b[i]=n>>(8*i);}
-typedef struct {uint32_t generation;uint16_t tx,rx;uint8_t slot;} calRecord_t;
+typedef struct {uint32_t generation;uint16_t tx,rx;uint8_t slot,verbosity;} calRecord_t;
 static bool calDecode(const uint8_t *b,calRecord_t *c){
- if(calGet(b)!=CAL_MAGIC||b[4]!=1||b[5]||b[6]||b[7]||calGet(b+20)!=CAL_COMMIT||calGet(b+16)!=mulScheduleCrc(b,16))return false;
- c->generation=calGet(b+8);c->tx=b[12]|b[13]<<8;c->rx=b[14]|b[15]<<8;return true;
+ if(calGet(b)!=CAL_MAGIC||(b[4]!=1&&b[4]!=2)||(b[4]==1?b[5]!=0:b[5]>mulLogDebug)||b[6]||b[7]||calGet(b+20)!=CAL_COMMIT||calGet(b+16)!=mulScheduleCrc(b,16))return false;
+ c->verbosity=b[4]==1?mulLogNormal:b[5];c->generation=calGet(b+8);c->tx=b[12]|b[13]<<8;c->rx=b[14]|b[15]<<8;return true;
 }
 static mulPlanStoreResult_t calLoad(calRecord_t *out){
  bool found=false,committed=false;
@@ -525,7 +529,7 @@ static mulPlanStoreResult_t calLoad(calRecord_t *out){
   committed|=calGet(b+20)==CAL_COMMIT;
   calRecord_t c;if(!calDecode(b,&c))continue;c.slot=slot;
   if(found){uint32_t delta=c.generation-out->generation;
-   if(delta==UINT32_C(0x80000000)||(!delta&&(c.tx!=out->tx||c.rx!=out->rx)))return mulPlanCorrupt;
+   if(delta==UINT32_C(0x80000000)||(!delta&&(c.tx!=out->tx||c.rx!=out->rx||c.verbosity!=out->verbosity)))return mulPlanCorrupt;
    if(delta>=UINT32_C(0x80000000))continue;
   }
   *out=c;found=true;
@@ -533,19 +537,20 @@ static mulPlanStoreResult_t calLoad(calRecord_t *out){
  return found?mulPlanStored:committed?mulPlanCorrupt:mulPlanAbsent;
 }
 static void antennaBootLoad(void){
+ savedVerbosity=mulLogNormal;mulLogSetLevel(mulLogNormal);
  calRecord_t c;mulPlanStoreResult_t result=calLoad(&c);
- if(result==mulPlanStored)mulAntennaSelect(c.tx,c.rx);
+ if(result==mulPlanStored){mulAntennaSelect(c.tx,c.rx);savedVerbosity=c.verbosity;mulLogSetLevel(c.verbosity);}
  else if(result!=mulPlanAbsent)mulStorageUncertain=true;
 }
-bool cfgAntennaWrite(uint16_t tx,uint16_t rx){
+static bool calStore(uint16_t tx,uint16_t rx,uint8_t verbosity){
  if(uwbControlRequested()||uwbControlRunning())return false;
  taskENTER_CRITICAL();bool busy=writing||mulStorageUncertain;if(!busy)writing=true;taskEXIT_CRITICAL();
  if(busy)return false;
  calRecord_t old;mulPlanStoreResult_t status=calLoad(&old);bool ok=false;
- if(status==mulPlanStored&&old.tx==tx&&old.rx==rx){ok=true;goto done;}
+ if(status==mulPlanStored&&old.tx==tx&&old.rx==rx&&old.verbosity==verbosity){ok=true;goto done;}
  if(status==mulPlanIoError||status==mulPlanCorrupt)goto done;
  uint8_t *b=planWorkspace.bytes;memset(b,0,24);
- calPut(b,CAL_MAGIC);b[4]=1;calPut(b+8,status==mulPlanStored?old.generation+1:1);
+ calPut(b,CAL_MAGIC);b[4]=verbosity==mulLogNormal?1:2;b[5]=verbosity==mulLogNormal?0:verbosity;calPut(b+8,status==mulPlanStored?old.generation+1:1);
  b[12]=tx;b[13]=tx>>8;b[14]=rx;b[15]=rx>>8;
  calPut(b+16,mulScheduleCrc(b,16));calPut(b+20,CAL_COMMIT);
  unsigned at=CAL_BASE+(status==mulPlanStored?(old.slot^1u):0)*32;
@@ -553,6 +558,19 @@ bool cfgAntennaWrite(uint16_t tx,uint16_t rx){
  ok=eepromWrite(at+20,(void *)zero,4)&&eepromWrite(at,b,20)&&eepromWrite(at+20,b+20,4)&&
     eepromRead(at,planWorkspace.verify,24)&&!memcmp(b,planWorkspace.verify,24);
  done:
- if(ok)mulAntennaSelect(tx,rx);else mulStorageUncertain=true;
+ if(ok){mulAntennaSelect(tx,rx);savedVerbosity=verbosity;}else mulStorageUncertain=true;
  writing=false;return ok;
+}
+
+bool cfgAntennaWrite(uint16_t tx,uint16_t rx){return calStore(tx,rx,(uint8_t)mulLogLevel());}
+bool cfgVerbositySet(uint8_t value){
+ if(value>mulLogDebug||!cfgStorageReady())return false;
+ if(!uwbControlRequested()&&!uwbControlRunning()&&value!=savedVerbosity){
+  uint16_t tx,rx;mulAntennaGet(&tx,&rx);if(!calStore(tx,rx,value))return false;
+ }
+ mulLogSetLevel(value);return true;
+}
+int cfgVerbosityPoll(void){
+ if(!cfgVerbosityPending()||!cfgStorageReady()||uwbControlRequested()||uwbControlRunning())return 0;
+ return cfgVerbositySet((uint8_t)mulLogLevel())?1:-1;
 }

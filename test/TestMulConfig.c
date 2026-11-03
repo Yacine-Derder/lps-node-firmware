@@ -1,3 +1,4 @@
+#include "mul_log.h"
 #include "mul_antenna.h"
 #include "mul_pose.h"
 #include "mul_geometry.h"
@@ -596,4 +597,41 @@ void test_tdmaConsoleExplicitConversionPersistsBudgetsRejectsUnsafeAndRfOnEdits(
  TEST_ASSERT_EQUAL(2,mulRangingPlanVersion(&stored->plan));TEST_ASSERT_EQUAL(0,stored->plan.aaMilliHz);
  TEST_ASSERT_EQUAL(0,stored->plan.arMilliHz);TEST_ASSERT_EQUAL(70,stored->plan.maxUtilization);
  cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&stored));TEST_ASSERT_EQUAL(2,mulRangingPlanVersion(&stored->plan));
+}
+
+void test_verbosityPersistsWithoutChangingPlanCalibrationOrLegacyConfiguration(void) {
+ send(":off\n");apply();TEST_ASSERT_TRUE(cfgAntennaWrite(14500,18500));
+ uint8_t snapshot[8192];memcpy(snapshot,memory,sizeof(snapshot));
+ TEST_ASSERT_EQUAL(mulLogNormal,mulLogLevel());send(":cfg set verbosity quiet\n");
+ TEST_ASSERT_EQUAL(mulLogQuiet,mulLogLevel());TEST_ASSERT_FALSE(cfgVerbosityPending());
+ TEST_ASSERT_EQUAL_MEMORY(snapshot,memory,384);TEST_ASSERT_EQUAL_MEMORY(snapshot+448,memory+448,sizeof(snapshot)-448);
+ cfgInit();uint16_t tx,rx;mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(14500,tx);TEST_ASSERT_EQUAL(18500,rx);
+ TEST_ASSERT_EQUAL(mulLogQuiet,mulLogLevel());unsigned before=writes;
+ send(":cfg set verbosity quiet\n:cfg set verbosity unknown\n");TEST_ASSERT_EQUAL(before,writes);
+ send(":cfg set verbosity normal\n");TEST_ASSERT_EQUAL(1,memory[384+4]); // Latest alternate slot is legacy-readable again.
+ cfgInit();TEST_ASSERT_EQUAL(mulLogNormal,mulLogLevel());
+}
+void test_liveVerbosityDoesNotStopRadioOrWriteEepromAndCommitsOnlyAfterOffAcknowledgment(void) {
+ send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());unsigned before=writes,initialized=inits;
+ uint8_t snapshot[8192];memcpy(snapshot,memory,sizeof(snapshot));
+ send(":cfg set verbosity debug\n");TEST_ASSERT_EQUAL(mulLogDebug,mulLogLevel());TEST_ASSERT_TRUE(cfgVerbosityPending());
+ TEST_ASSERT_EQUAL(before,writes);TEST_ASSERT_EQUAL(initialized,inits);TEST_ASSERT_TRUE(uwbControlRunning());
+ TEST_ASSERT_EQUAL_MEMORY(snapshot,memory,sizeof(snapshot));TEST_ASSERT_EQUAL(0,cfgVerbosityPoll());
+ output[0]=0;send(":cfg show\n");TEST_ASSERT_NOT_NULL(strstr(output,"verbosity=debug saved=normal pending=1"));
+ send(":off\n");before=writes;TEST_ASSERT_EQUAL(0,cfgVerbosityPoll());TEST_ASSERT_EQUAL(before,writes);
+ apply();TEST_ASSERT_EQUAL(1,cfgVerbosityPoll());TEST_ASSERT_FALSE(cfgVerbosityPending());
+ cfgInit();TEST_ASSERT_EQUAL(mulLogDebug,mulLogLevel());
+}
+void test_verbosityJournalSurvivesEveryInterruptedByteAndLostCommitAck(void) {
+ send(":off\n");apply();TEST_ASSERT_TRUE(cfgAntennaWrite(14501,18501));
+ uint8_t snapshot[8192];memcpy(snapshot,memory,sizeof(snapshot));
+ for(int cut=0;cut<=28;cut++) {
+  memcpy(memory,snapshot,sizeof(snapshot));cfgInit();byteBudget=cut;bool ok=cfgVerbositySet(mulLogDebug);byteBudget=-1;
+  cfgInit();uint16_t tx,rx;mulAntennaGet(&tx,&rx);TEST_ASSERT_EQUAL(14501,tx);TEST_ASSERT_EQUAL(18501,rx);
+  TEST_ASSERT_EQUAL(ok?mulLogDebug:mulLogNormal,mulLogLevel());
+  TEST_ASSERT_EQUAL_MEMORY(snapshot,memory,384);TEST_ASSERT_EQUAL_MEMORY(snapshot+448,memory+448,sizeof(snapshot)-448);
+ }
+ memcpy(memory,snapshot,sizeof(snapshot));cfgInit();failCalAck=true;
+ TEST_ASSERT_FALSE(cfgVerbositySet(mulLogQuiet));TEST_ASSERT_FALSE(cfgStorageReady());
+ cfgInit();TEST_ASSERT_EQUAL(mulLogQuiet,mulLogLevel());
 }

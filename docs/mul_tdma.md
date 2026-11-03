@@ -431,3 +431,7 @@ bytes. Compiler frames are296 bytes for mapping,128 for preparation,168 for the
 worker/wait and248 for the ALR event handler; this is a static audit, not a board
 stack watermark. No stack or USB queue reservation is reduced. Runtime logging
 and final deployment validation are documented separately below.
+
+Runtime verbosity, final image limits and the operator-only four-robot30second
+procedure are documented in [mul_logging.md](mul_logging.md). SL1 capability is
+now included in the default production image, gated at runtime by debug.

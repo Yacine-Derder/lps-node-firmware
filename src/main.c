@@ -143,14 +143,14 @@ static void main_task(void *pvParameters) {
   }
 
   if (!selftestPasses) {
-    printf("TEST\t: One or more self-tests failed, blocking startup!\r\n");
+    printf("ERR self-test; startup blocked\r\n");
     usbcommSetSystemStarted(true);
   }
 
   // Printing UWB configuration
   struct uwbConfig_s * uwbConfig = uwbGetConfig();
-  printf("CONFIG\t: Address is 0x%X\r\n", uwbConfig->address[0]);
-  printf("CONFIG\t: Mode is %s\r\n", uwbAlgorithmName(uwbConfig->mode));
+  printf("CONFIG addr=0x%X\r\n", uwbConfig->address[0]);
+  printf("CONFIG mode=%s\r\n", uwbAlgorithmName(uwbConfig->mode));
 #if !MUL_ONLY
   printf("CONFIG\t: Tag mode anchor list (%i): ", uwbConfig->anchorListSize);
   for (i = 0; i < uwbConfig->anchorListSize; i++) {
@@ -165,13 +165,9 @@ static void main_task(void *pvParameters) {
                                                       uwbConfig->position[2]);
   }
 #endif
-  printf("CONFIG\t: SmartPower enabled: %s\r\n", uwbConfig->smartPower?"True":"False");
-  printf("CONFIG\t: Force TX power: %s\r\n", uwbConfig->forceTxPower?"True":"False");
-  if(uwbConfig->forceTxPower) {
-    printf("CONFIG\t: TX power setting: %08X\r\n", (unsigned int)uwbConfig->txPower);
-  }
-  printf("CONFIG\t: Bitrate: %s\r\n", uwbConfig->lowBitrate?"low":"normal");
-  printf("CONFIG\t: Preamble: %s\r\n", uwbConfig->longPreamble?"long":"normal");
+  printf("CONFIG smart=%u forced=%u power=%08lX bitrate=%s preamble=%s\r\n",
+         uwbConfig->smartPower,uwbConfig->forceTxPower,(unsigned long)uwbConfig->txPower,
+         uwbConfig->lowBitrate?"low":"normal",uwbConfig->longPreamble?"long":"normal");
 
   HAL_Delay(500);
 
@@ -179,9 +175,7 @@ static void main_task(void *pvParameters) {
   ledOff(ledSync);
   ledOff(ledMode);
 
-  printf("SYSTEM\t: Node started ...\r\n");
-  printf("CUSTOM\t: Custom code has been flashed.\r\n");
-  printf("SYSTEM\t: Press 'h' for help.\r\n");
+  printf("SYSTEM: MUL node started; h=help\r\n");
 
   usbcommSetSystemStarted(true);
 
@@ -193,6 +187,8 @@ static void main_task(void *pvParameters) {
     usbcommPrintWelcomeMessage();
 
     mulGeometryPoll((uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS);
+    int logSaved=cfgVerbosityPoll();
+    if(logSaved)printf("%s verbosity\r\n",logSaved>0?"SAVED":"ERR EEPROM unconfirmed;");
     ledTick();
     handleButton();
     // // Measure pressure
@@ -222,9 +218,7 @@ static void main_task(void *pvParameters) {
 #endif
       handleSerialInput(ch);
     }
-#if MUL_SLOT_TRACE
-    mulAlrSlotPoll(usbcommTryWrite);
-#endif
+    mulLogPoll(usbcommTryWrite);
 #if MUL_RX_DIAG
     mulRxDiagPoll(usbcommTryWrite);
 #endif
@@ -269,7 +263,7 @@ static void handleMenuMain(char ch, MenuState* menuState) {
       changeAddress(ch - '0');
       break;
     case 'i':
-      printf("Type new node ID then enter: ");
+      printf("ID0..255: ");
       fflush(stdout);
       menuState->currentMenu = idMenu;
       menuState->configChanged = false;
@@ -282,13 +276,13 @@ static void handleMenuMain(char ch, MenuState* menuState) {
 #endif
     case 'm':
       printModeList();
-      printf("Type 0-9 to choose new mode...\r\n");
+      printf("Mode 0-9: ");
       menuState->currentMenu = modeMenu;
       menuState->configChanged = false;
       break;
     case 'r':
       printRadioModeList();
-      printf("Type 0-9 to choose new mode...\r\n");
+      printf("Mode 0-9: ");
       menuState->currentMenu = radioMenu;
       menuState->configChanged = false;
       break;
@@ -384,10 +378,10 @@ static void handleMenuId(char ch, MenuState* menuState) {
       printf("\r\n");
       fflush(stdout);
       if (menuState->tempId < 256) {
-        printf("Setting node ID to %d\r\n", menuState->tempId);
+        printf("ID %d\r\n", menuState->tempId);
         changeAddress(menuState->tempId);
       } else {
-        printf("Wrong ID '%d', the ID should be between 0 and 255\r\n", menuState->tempId);
+        printf("ERR ID %d; use0..255\r\n", menuState->tempId);
         menuState->configChanged = false;
       }
       menuState->currentMenu = mainMenu;
@@ -401,12 +395,12 @@ static void handleMenuId(char ch, MenuState* menuState) {
 static void handleMenuPower(char ch, MenuState* menuState) {
   switch(ch) {
     case 'f':
-      printf("Setting ForceTxPower\r\n");
+      printf("Power forced\r\n");
       cfgWriteU8(cfgSmartPower, 0);
       cfgWriteU8(cfgForceTxPower, 1);
       break;
     case 's':
-      printf("Setting SmartPower\r\n");
+      printf("Power smart\r\n");
       cfgWriteU8(cfgSmartPower, 1);
       cfgWriteU8(cfgForceTxPower, 0);
       break;
@@ -459,7 +453,7 @@ static void handleSerialInput(char ch) {
   }
 
   if (menuState.configChanged) {
-    printf("EEPROM configuration changed, restart for it to take effect!\r\n");
+    printf("EEPROM changed; restart to apply\r\n");
   }
 }
 
@@ -487,12 +481,12 @@ static void restConfig() {
 }
 
 static void changeAddress(uint8_t addr) {
-  printf("Updating address to 0x%02X\r\n", addr);
-  if(!cfgMulChangeAddress(addr)){printf("ERR address/role conflict or EEPROM write failed\r\n");return;}
+  printf("Address 0x%02X\r\n", addr);
+  if(!cfgMulChangeAddress(addr)){printf("ERR address/role or EEPROM\r\n");return;}
   if (cfgReadU8(cfgAddress, &addr)) {
     printf("Device address: 0x%X\r\n", addr);
   } else {
-    printf("Device address: Not found!\r\n");
+    printf("ERR address missing\r\n");
   }
 }
 
@@ -500,12 +494,9 @@ static void changeMode(unsigned int newMode) {
 #if MUL_ONLY
     if(newMode!=MODE_MUL_ALR&&newMode!=MODE_MUL_RLR){printf("ERR MUL-only image: mode5/6 required\r\n");return;}
 #endif
-    printf("Previous device mode: ");
-    printMode();
+        cfgWriteU8(cfgMode, newMode);
 
-    cfgWriteU8(cfgMode, newMode);
-
-    printf("New device mode: ");
+    printf("Mode: ");
     printMode();
 }
 
@@ -551,8 +542,7 @@ static void printModeList()
     current_mode = mode;
   }
 
-  printf("-------------------\r\n");
-  printf("Available UWB modes:\r\n");
+  printf("Modes:\r\n");
   for (int i=MUL_ONLY?MODE_MUL_ALR:0; i<count; i++) {
     printf(" %d - %s%s\r\n", i, uwbAlgorithmName(i),
                              (i == current_mode)?" (Current mode)":"");
@@ -572,16 +562,13 @@ static void printMode() {
 }
 
 static void changeRadioMode(unsigned int newMode) {
-    printf("Previous radio mode: ");
-    printRadioMode();
-
-    uint8_t lowBitrate = newMode & 1;
+        uint8_t lowBitrate = newMode & 1;
     uint8_t longPreamble = (newMode & 2) / 2;
 
     cfgWriteU8(cfgLowBitrate, lowBitrate);
     cfgWriteU8(cfgLongPreamble, longPreamble);
 
-    printf("New radio mode: ");
+    printf("PHY: ");
     printRadioMode();
 }
 
@@ -598,55 +585,21 @@ static void printRadioMode() {
 
 static void printRadioModeList()
 {
-  uint8_t lowBitrate;
-  uint8_t longPreamble;
-
-  cfgReadU8(cfgLowBitrate, &lowBitrate);
-  cfgReadU8(cfgLongPreamble, &longPreamble);
-
-  printf("-------------------\r\n");
-  printf("NOTE: PHY must match all MUL participants; experimental timing requires fast PHY.\r\n");
-  printf("\r\n");
-  printf("Current mode is "); printRadioMode();
-  printf("\r\n");
-  printf("Available radio modes:\r\n");
-  printf("0: normal bitrate, normal preamble (default)\r\n");
-  printf("1: low bitrate, normal preamble\r\n");
-  printf("2: normal bitrate, long preamble\r\n");
-  printf("3: low bitrate, long preamble\r\n");
+  printf("PHY must match all nodes; fast PHY required for experimental slots.\r\n");
+  printRadioMode();
+  printf("0: fast/normal (default)\r\n1: slow/normal\r\n2: fast/long\r\n3: slow/long\r\n");
 }
-
 
 
 static void printPowerHelp() {
-  printf("Power menu\r\n");
-  printf("-------------------\r\n");
-  printf("0-9 - to set ForceTxPower power (from 3.5dB to 33.5dB)\r\n");
-  printf("f   - for ForceTxPower\r\n");
-  printf("s   - for SmartPower\r\n");
+  printf("Power: 0-9=3.5..33.5dB forced, f=force, s=smart\r\n");
 }
-
 static void help() {
-  printf("Help\r\n");
-  printf("-------------------\r\n");
-  printf("0-9 - set address (node ID)\r\n");
-  printf("i   - set node ID from 0 to 255\r\n");
+  printf("0-9=ID; i=ID0..255; m=mode; r=PHY; p=power; d=reset; u=DFU; h=help\r\n"
 #if !MUL_ONLY
-  printf("a   - anchor mode\r\n");
-  printf("t   - tag mode\r\n");
-  printf("s   - sniffer mode\r\n");
+         "a=anchor; t=tag; s=sniffer; b=binary\r\n"
 #endif
-  printf("m   - List and change mode\r\n");
-  printf("r   - List and change UWB radio settings\r\n");
-  printf("p   - change power mode\r\n");
-  printf("d   - reset configuration\r\n");
-  printf("u   - enter BSL (DFU mode)\r\n");
-  printf("h   - This help\r\n");
-  printf(":mul show - persistent MUL role/roster commands (newline)\r\n");
-#if !MUL_ONLY
-  printf("---- For machine only\r\n");
-  printf("b   - Switch to binary mode (sniffer only)\r\n");
-#endif
+         ":help for MUL commands\r\n");
 }
 
 static StaticTask_t xMainTask;

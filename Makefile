@@ -41,7 +41,7 @@ HALS+=i2c_ex
 
 OBJS+=src/main.o
 OBJS+=src/usb_device.o src/usbd_cdc_if.o src/usbd_desc.o src/lps25h.o src/led.o src/button.o
-OBJS+=src/mul_antenna.o src/mul_console.o src/cfg.o src/usbcomm.o src/test_support.o src/production_test.o
+OBJS+=src/mul_antenna.o src/mul_log.o src/mul_console.o src/cfg.o src/usbcomm.o src/test_support.o src/production_test.o
 OBJS+=src/uwb_control.o src/uwb.o src/uwb_twr_anchor.o src/uwb_sniffer.o src/uwb_twr_tag.o
 OBJS+=src/lpp.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o
 OBJS+=src/mul_ads.o src/mul_ads_dw.o
@@ -91,6 +91,9 @@ $(filter src/%.o hal/%.o Middlewares/%.o,$(OBJS)) $(filter-out lib/freertos/src/
 # Keep the deferred-Kalman/SL1 production image within physical Flash. The
 # driver C operations/protocol are unchanged; only code-size optimization differs.
 $(filter vendor/libdw1000/src/%.o,$(OBJS)): CFLAGS += -Os
+# Share console/logging helpers across their callers without changing the
+# clock-estimator object compilation (no LTO or math flag changes there).
+src/main.o src/cfg.o src/mul_console.o src/mul_log.o src/mul_alr.o src/mul_twr.o src/uwb.o src/uwb_control.o src/mul_rx.o src/mul_geometry.o src/mul_antenna.o src/usbcomm.o src/usbd_cdc_if.o vendor/libdw1000/src/libdw1000.o vendor/libdw1000/src/libdw1000Spi.o: CFLAGS += -flto
 LDFLAGS+=-Wl,-Map=bin/$(PROG).map,--cref,--gc-sections
 
 

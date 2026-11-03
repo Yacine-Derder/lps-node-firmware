@@ -1,3 +1,4 @@
+#include "mul_log.h"
 #include "mul_antenna.h"
 #include "mul_pose.h"
 #include "mul_geometry.h"

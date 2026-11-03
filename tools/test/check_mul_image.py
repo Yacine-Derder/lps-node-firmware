@@ -21,7 +21,7 @@ def inspect(path):
     assert not any(name.startswith('mulEkf') for name in symbols), 'optional EKF must stay outside LPS radio image'
     for name in ('mulAlrAlgorithm', 'mulRlrAlgorithm', 'mulTwrOnEvent', 'mulClockObserveFitted',
                  'mulClockFitBegin', 'mulClockFitFinish', 'mulClockFitPrior'):
-        assert name in symbols, f'missing MUL function: {name}'
+        assert name in symbols or any(s.startswith(name+'.constprop.') for s in symbols), f'missing MUL function: {name}'
     # Cortex-M0 ABI: mulClockFit_t160 + mulClockFitConfig_t8, not the retired
     # regression workspace344. Deferred observation storage is separate.
     assert symbols.get('workspace') == 168, 'missing explicit bounded MUL clock workspace'

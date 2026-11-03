@@ -78,7 +78,7 @@ cd ~/Documents/lps-node-firmware
 git log -1 --oneline
 git status --short
 make clean
-make -f profiles/stationary-ch5.mk -j6 EXTRA_CFLAGS='-DMUL_TWR_TRACE=1'
+make -f profiles/stationary-ch5.mk -j6 EXTRA_CFLAGS='-DMUL_SLOT_TRACE=0 -DMUL_TWR_TRACE=1'
 python3 tools/test/check_mul_image.py bin/lps-node-firmware.elf
 arm-none-eabi-nm bin/lps-node-firmware.elf | grep -E 'mulTwrTracePoll|aaTrace'
 arm-none-eabi-strings bin/lps-node-firmware.elf | grep 'AA1 c='
@@ -1098,3 +1098,8 @@ initialization/recovery cases and USB trace drops. Measure update/service jitter
 and task stack watermarks before treating the10ms admission budget as established.
 A later200ms experiment needs a separately consistent full plan on all nodes;
 this campaign does not configure or physically validate5Hz operation.
+
+Runtime verbosity is described in [mul_logging.md](mul_logging.md). On this AA1
+variant, select `:cfg set verbosity debug`; quiet/normal do not produce AA1.
+SL1 now defaults on in production, so explicitly disable it for this separate
+AA1 build to respect physical Flash limits.

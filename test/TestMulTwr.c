@@ -1,3 +1,4 @@
+#include "mul_log.h"
 #include "mul_antenna.h"
 #include "mul_pose.h"
 #include "mul_geometry.h"
@@ -190,6 +191,7 @@ static void scenario(int32_t ppb, int64_t tof) {
   for (int i=0;i<2;i++) mulRxInit(&radios[i].device);
 }
 void setUp(void) {
+  mulLogSetLevel(mulLogDebug);
   mulAntennaSelect(MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU);
   mulGeometrySelect(mulDelayTwr);mulGeometryClear();
   memset(radios,0,sizeof(radios)); memset(contexts,0,sizeof(contexts)); memset(useAlr,0,sizeof(useAlr));
@@ -1805,5 +1807,27 @@ void test_tdmaPreparedExternalGeometryAllowsFreshPosesButRejectsWithdrawalAndDom
   advance(((int64_t)cycle*200+25)*MS);dispatch(1,eventTimeout);
   TEST_ASSERT_EQUAL(sent+(change==0),radios[1].sends);
   TEST_ASSERT_EQUAL(1,servedOperations);
+ }
+}
+
+void test_liveVerbosityPreservesDelayedBroadcastBytesAndKalmanEvolution(void) {
+ uint8_t expectedFrame[80];mulClock_t expectedClock;mulClockFit_t expectedFit;
+ for(unsigned level=0;level<3;level++) {
+  setUp();mulRangingPlan_t p;prepConfiguration(&p,134);
+  followerClock.epoch=1234; // Identical synthetic boot token in independent runs.
+  mulClock_t clock=followerClock;mulClockFit_t fit=mulClockWorkspace()->fit;
+  unsigned attempted=servedOperations,sends=radios[1].sends;bool pending=flags.tx;
+  mulLogSetLevel(level); // The actual live API, without reinit or a new epoch.
+  TEST_ASSERT_EQUAL_MEMORY(&clock,&followerClock,sizeof(clock));
+  TEST_ASSERT_EQUAL_MEMORY(&fit,&mulClockWorkspace()->fit,sizeof(fit));
+  TEST_ASSERT_EQUAL(attempted,servedOperations);TEST_ASSERT_EQUAL(pending,flags.tx);
+  TEST_ASSERT_EQUAL(sends,radios[1].sends);
+  deferredReference(&p,17);
+  if(level)TEST_ASSERT_EQUAL_MEMORY(expectedFrame,radios[1].tx,80);
+  else memcpy(expectedFrame,radios[1].tx,80);
+  advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);deferredQuiet(&p,17);
+  if(level){TEST_ASSERT_EQUAL_MEMORY(&expectedClock,&followerClock,sizeof(expectedClock));
+   TEST_ASSERT_EQUAL_MEMORY(&expectedFit,&mulClockWorkspace()->fit,sizeof(expectedFit));}
+  else {expectedClock=followerClock;expectedFit=mulClockWorkspace()->fit;}
  }
 }

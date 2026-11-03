@@ -2,6 +2,7 @@
 #include "mul_console.h"
 #include "mul_antenna_offset.h"
 #include "cfg.h"
+#include "mul_log.h"
 #include "uwb_control.h"
 #include "mul_rx.h"
 #include "mul_localization.h"
@@ -166,7 +167,12 @@ static void command(void) {
   if(!cfgGeometrySourceWrite(source)){reply("ERR source requires RF OFF/verified storage");return;}
   mulGeometrySelect(source);reply("SAVED geometry source; poses are volatile");return;
  }
+ if(count==2&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"show")){page=show;pageIndex=0;return;}
  if(!strcmp(w[0],"plan")){planCommand(w,count);return;}
+ if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&!strcmp(w[2],"verbosity")) {
+  uint8_t value;if(!mulLogParse(w[3],&value)){reply("ERR verbosity quiet/normal/debug");return;}
+  reply(!cfgVerbositySet(value)?"ERR EEPROM unconfirmed; reboot":cfgVerbosityPending()?"ACTIVE verbosity; OFF to persist":"SAVED verbosity");return;
+ }
  const mulStoredPlan_t *selectedPlan=NULL;
  if(cfgMulPlanCached(&selectedPlan)==mulPlanStored&&selectedPlan->selected&&
     ((!strcmp(w[0],"cfg")&&count>1&&((!strcmp(w[1],"set")&&(count<3||strncmp(w[2],"clock_",6)))||(!strcmp(w[1],"roster")&&count>2&&!strcmp(w[2],"set"))))||
@@ -377,14 +383,15 @@ bool mulConsolePoll(void) {
   "cfg set clock_estimator median_5/kalman",
   "cfg set clock_compensate on/off (OFF)",
   "cfg set profile legacy/multi/experimental (OFF)",
-  "cfg set FIELD VALUE; show lists saved timing",
+  "cfg set FIELD VALUE; show",
+  "cfg set verbosity quiet/normal/debug",
   "geometry source twr/external/none (OFF)",
   "pose begin clock epoch frame skew_ms; put HEX80; show",
   "plan init [tdma]/show; mode tdma; use on/off (OFF)",
   "plan alrs IDs; rlrs IDs; set aa/ar on/off",
   "plan set slot_ms/cycle_ms/kalman_budget_ms/twr_window_ms N",
   "plan set lead_us/process_us/air_us/guard_us/reply_ms N",
-  "Legacy plan rates/policy/priorities: docs/mul_commands.md"};
+  "Legacy rates: docs/mul_commands.md"};
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255;
  bool valid=saved(&node,&role,&ref,&fol),last=true,enabled=false;
  if(page==posePage) {
@@ -450,8 +457,9 @@ bool mulConsolePoll(void) {
   else if(pageIndex==0){snprintf(line,sizeof(line),"SAVED addr=0x%02X role=%s",node,roleName(role));last=false;}
   else if(pageIndex==1){snprintf(line,sizeof(line),"reference=0x%02X follower=0x%02X",ref,fol);last=page==peers;}
   else if(pageIndex==2){uint16_t slot=0;bool ok=cfgMulSlotRead(&slot);snprintf(line,sizeof(line),"SAVED slot_ms=%u verified=%u",slot,ok);last=false;}
-  else {cfgReadU8(cfgMode,&mode);bool ok=cfgRfEnabled(&enabled);
-   snprintf(line,sizeof(line),"mode=%u rf=%u verified=%u restart=%u",mode,enabled,ok,cfgPendingRestart());}
+  else if(pageIndex==3){cfgReadU8(cfgMode,&mode);bool ok=cfgRfEnabled(&enabled);
+   snprintf(line,sizeof(line),"mode=%u rf=%u verified=%u restart=%u",mode,enabled,ok,cfgPendingRestart());last=false;}
+  else snprintf(line,sizeof(line),"verbosity=%s saved=%s pending=%u",mulLogName(mulLogLevel()),mulLogName(cfgVerbositySaved()),cfgVerbosityPending());
  }
  if(page==status) {
   const uwbConfig_t *c=uwbGetConfig();
@@ -461,7 +469,8 @@ bool mulConsolePoll(void) {
   else snprintf(line,sizeof(line),"RF requested=%u running=%u restart=%u",uwbControlRequested(),uwbControlRunning(),cfgPendingRestart());
  }
  if(page==diag) {
-  if(pageIndex<5){snprintf(line,sizeof(line),"RADIO event=%u count=%lu",pageIndex,(unsigned long)uwbControlCount(pageIndex));last=pageIndex==4;}
+  if(pageIndex>=5){mulLogStatus(pageIndex-5,line,sizeof(line));last=pageIndex==5+logCount-1;}
+  else if(pageIndex<5){snprintf(line,sizeof(line),"RADIO event=%u count=%lu",pageIndex,(unsigned long)uwbControlCount(pageIndex));last=false;}
  }
  if(page==cal) {
   uint16_t tx,rx;mulAntennaGet(&tx,&rx);last=false;

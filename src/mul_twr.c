@@ -52,7 +52,7 @@ static unsigned traceReason(const char *reason) {
  for(unsigned i=0;i<sizeof(names)/sizeof(*names);i++)if(!strcmp(reason,names[i]))return i+1;
  return 21;
 }
-#define TRACE(t,e,s,w,v) do { RX_DIAG(t,e,s);trace(t,e,s,w,v); } while(0)
+#define TRACE(t,e,s,w,v) do { RX_DIAG(t,e,s);if(mulLogLevel()==mulLogDebug)trace(t,e,s,w,v); } while(0)
 #else
 #define TRACE(t,e,s,w,v) RX_DIAG(t,e,s)
 #endif
@@ -72,6 +72,7 @@ void mulTwrTracePoll(bool (*write)(const char *,unsigned)) {
  static mulAaTrace_t pending;static uint32_t lost;static bool ready;
  if(!ready)ready=mulTwrTraceTake(&pending,&lost);
  if(!ready||!write)return;
+ if(mulLogLevel()!=mulLogDebug){ready=false;mulLogCount(logFiltered);return;}
  char line[CDC_TRY_WRITE_MAX+1];
  int n=snprintf(line,sizeof(line),"AA1 c=%" PRIu32 " o=%u p=%02X>%02X l=%02X e=%u s=%02X f=%02X why=%u n=%02X%08" PRIX32 " t=%02X%08" PRIX32 " d=%02X%08" PRIX32 " lost=%" PRIu32 "\r\n",
   pending.cycle,pending.operation,pending.initiator,pending.responder,pending.local,pending.event,pending.stage,pending.flags,pending.why,
@@ -203,17 +204,15 @@ void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool inval
     mulRxRearm(dev);
     mulAlrTiming(4,twr->id,twr->planned?plannedSession.op.initiator:0,
       twr->planned?plannedSession.op.responder:0,2,hardwareNow(dev),twr->deadline,twr->stage,0);
-    if (reason) printf("MUL TWR: id=%" PRIu32 " result=FAILED reason=%s\r\n", twr->id, reason);
-    else twr->deferredCancel = true;
+    mulLogCount(logTwrFail);
+    mulLogRecord_t r={.cycle=twr->id,.event=9,.reason=reason?reason:"broadcast_priority"};mulLogPush(&r);
   }
 }
 
 void mulTwrFlush(mulTwr_t *twr)
 {
-  if (twr->deferredCancel) {
-    twr->deferredCancel = false;
-    printf("MUL TWR: id=%" PRIu32 " result=FAILED reason=broadcast_priority\r\n", twr->id);
-  }
+  (void)twr; // Records are now formatted only by main.
+
 }
 
 static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64_t target)
@@ -224,7 +223,7 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
 #endif
   TRACE(twr,mulAaTarget,type,0,target);
 #if MUL_SLOT_TRACE
-  uint64_t began=hardwareNow(dev);
+  uint64_t began=mulLogLevel()==mulLogDebug?hardwareNow(dev):0;
 #endif
   if (!mulAntennaValid(dev)) {
     mulTwrCancel(twr, dev, "antenna_config", true);
@@ -329,13 +328,11 @@ static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
   (void)dev;
   mulAlrTiming(4,twr->id,twrNetwork->addresses[0][0],twrNetwork->addresses[1][0],0,
     twr->stamps[0],twr->stamps[5],twr->candidateTof,twr->rawTof);
-  // Vacuum speed of light 299792458 m/s; display integer millimetres, not an accuracy claim.
-  uint32_t mm = (uint32_t)(((uint64_t)twr->candidateTof*UINT64_C(299792458000) + UINT64_C(31948800000)) /
-                         UINT64_C(63897600000));
-  printf("MUL TWR: id=%" PRIu32 " role=%s ref=0x%02X fol=0x%02X result=OK tof_dtu=%" PRIu32
-         " distance_m=%" PRIu32 ".%03" PRIu32 " power=%s raw_mm=%" PRIu32 "\r\n",
-         twr->id, role == mulAlrReference ? "INIT" : "RESP",twrNetwork->addresses[0][0],twrNetwork->addresses[1][0], (uint32_t)twr->candidateTof, mm/1000, mm%1000, twr->candidatePowerCorrected ? "APPLIED" : "UNAVAILABLE",
-         (uint32_t)(((uint64_t)twr->rawTof*UINT64_C(299792458000)+UINT64_C(31948800000))/UINT64_C(63897600000)));
+  mulLogCount(logTwrOk);
+  if(mulLogLevel()==mulLogQuiet)return;
+  mulLogRecord_t r={.t={twr->candidateTof,twr->rawTof},.cycle=twr->id,.event=8,
+   .local=role!=mulAlrReference,.initiator=twrNetwork->addresses[0][0],
+   .responder=twrNetwork->addresses[1][0],.why=twr->candidatePowerCorrected};mulLogPush(&r);
 }
 
 bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_t role,
@@ -349,7 +346,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   if(event==eventPacketReceived)RX_DIAG(twr,0,0);
   if ((twr->active || (event == eventPacketReceived && dwGetDataLength(dev) == (twr->multiProfile?MUL_MULTI_TWR_BYTES:MUL_TWR_FRAME_LENGTH))) &&
       !mulAntennaValid(dev)) {
-    if (!twr->active) printf("MUL TWR: result=FAILED reason=antenna_config\r\n");
+    if (!twr->active) {mulLogCount(logTwrFail);mulLogRecord_t r={.cycle=sequence,.event=9,.reason="antenna_config"};mulLogPush(&r);}
     mulTwrCancel(twr, dev, "antenna_config", true);
     mulRxRearm(dev);
     return true;

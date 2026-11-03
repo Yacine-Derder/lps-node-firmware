@@ -1,3 +1,4 @@
+#include "mul_log.h"
 #include "mul_antenna.h"
 #include "mul_pose.h"
 #include "mul_geometry.h"
@@ -114,6 +115,7 @@ static void receivedCallback(dwDevice_t *device) {
 static dwOps_t radioOps = {.spiRead = radioRead, .spiWrite = radioWrite};
 
 void setUp(void) {
+  mulLogSetLevel(mulLogDebug);
   mulAntennaSelect(MUL_ANTENNA_TX_DTU,MUL_ANTENNA_RX_DTU);
   memset(registers, 0, sizeof(registers));
   memset(&radio, 0, sizeof(radio));

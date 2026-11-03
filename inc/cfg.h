@@ -50,6 +50,12 @@ typedef enum {
 } ConfigField;
 
 void cfgInit();
+// RAM logging changes are immediate. EEPROM commit waits for acknowledged RF OFF.
+bool cfgVerbositySet(uint8_t level);
+uint8_t cfgVerbositySaved(void);
+bool cfgVerbosityPending(void);
+int cfgVerbosityPoll(void); // Main only:0 none,1 committed,-1 storage failure.
+
 #include "mul_plan_store.h"
 // Separate EEPROM journal; physical load/save require acknowledged RF OFF.
 mulPlanStoreResult_t cfgMulPlanCached(const mulStoredPlan_t **stored);
