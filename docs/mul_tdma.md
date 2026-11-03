@@ -463,9 +463,13 @@ Enable RF with `on` on RLR141, `:on` on each follower, then `:on` on ALR132.
 Use the existing collector/logging workflow without changing live settings.
 
 1. **A — startup:** wait at least10s, then observe30s of normal operation.
-2. **B — short restart:** on ALR132 only send `:off`, confirm `:status` says
-   requested=0/running=0, wait approximately1s, send `:on`. Leave followers and
-   RLR running; observe at least30s after restart.
+2. **B — short restart:** on ALR132 only send `:off` then `:on` with measured
+   RF downtime approximately1s **total**, including command/status overhead.
+   Use a direct serial terminal for this short test: observe `:status`
+   requested=0/running=0 promptly, then issue `:on` within that1s interval.
+   The interactive sender's blocking response waits can extend the interruption
+   beyond3s and would miss this regression. Record actual stop/resume times.
+   Leave followers and RLR running; observe at least30s after restart.
 3. **C — medium restart:** repeat B with approximately5s OFF.
 4. **D — long restart:** repeat B with approximately10s OFF.
 
