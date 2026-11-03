@@ -30,6 +30,11 @@
 static const mulNetwork_t *alrNetwork;
 static const mulRangingPlan_t *activePlan;
 static uint32_t servedOperations;
+typedef struct {uint64_t start,poll,end;bool compensated;} mulLocalReservation_t;
+static struct {
+ mulLocalReservation_t local;uint64_t epoch,prepare;
+ uint32_t cycle,context;mulDelaySource_t source;bool ready;
+} followerPrep;
 static uint8_t source[MUL_ADDRESS_LENGTH];
 // dwSetData() reads length + 2 bytes when hardware FCS is enabled.
 #define txFrame mulRoleIo.alr.frame
@@ -170,7 +175,7 @@ static bool readBroadcast(dwDevice_t *dev,mulTestPacket_t *packet,uint64_t *arri
 
 static void mulAlrInit(uwbConfig_t *config, dwDevice_t *dev)
 {
-  deferredClock.fit.active=false;
+  deferredClock.fit.active=false;followerPrep.ready=false;
   activePlan=config->mulPlan;servedOperations=0;
   dwIdle(dev);
   mulAntennaConfigure(dev);
@@ -342,12 +347,12 @@ static void abortFollowerTx(dwDevice_t *dev)
   flags.tx = false;
 }
 
-typedef struct {uint64_t start,poll,end;bool compensated;} mulLocalReservation_t;
-static bool mapReservation(const mulRangingOperation_t *op,uint32_t now,mulLocalReservation_t *out) {
+static bool mapReservation(const mulRangingOperation_t *op,uint32_t now,mulLocalReservation_t *out,uint64_t *prepare) {
+ if(prepare&&op->startUs<MUL_PLAN_SERVICE_MARGIN_US)return false;
  mulClockDelay_t delay;bool supplied=selectedDelay((uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS,&delay);
- uint32_t offsets[3]={op->startUs,op->pollUs,op->endUs};uint64_t targets[3];
+ uint32_t offsets[4]={op->startUs,op->pollUs,op->endUs,prepare?op->startUs-MUL_PLAN_SERVICE_MARGIN_US:0};uint64_t targets[4];
  bool compensated=supplied&&mulClockDelayStatusNetwork(alrNetwork,&followerClock,&delay,now)==mulClockDelayValid;
- for(unsigned i=0;i<3;i++) {
+ for(unsigned i=0;i<(prepare?4u:3u);i++) {
   uint64_t ref=mulTimestampMask(refTx()+((uint64_t)offsets[i]*MUL_DTU_PER_MS+999)/1000);
   if(compensated) {
    mulClockCorrectedMapping_t mapped;
@@ -361,7 +366,29 @@ static bool mapReservation(const mulRangingOperation_t *op,uint32_t now,mulLocal
    targets[i]=mapped.timestamp;
   }
  }
+ if(prepare)*prepare=targets[3];
  *out=(mulLocalReservation_t){.start=targets[0],.poll=targets[1],.end=targets[2],.compensated=compensated};return true;
+}
+// One immutable mapped reservation. No radio IO or repeated full mapping is
+// performed at the reservation-start wakeup. Packet/SPI setup retains its guards.
+static bool prepareFollower(dwDevice_t *dev,const mulRangingOperation_t *op,unsigned index) {
+ if(followerPrep.ready&&followerPrep.cycle==refSequence())return true;
+ if(flags.tx||deferredClock.fit.active||ranging.active)return false;
+ uint64_t began=readHardwareTime(dev);(void)began;
+ uint32_t context=mulGeometryContext(),now=(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS;
+ mulDelaySource_t source=mulGeometrySource();mulLocalReservation_t local;
+ bool mapped=mapReservation(op,now,&local,&followerPrep.prepare);
+ uint64_t mappedAt=readHardwareTime(dev);(void)mappedAt;
+ if(!mapped||!mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index)||
+    (source==mulDelayExternal&&context!=mulGeometryContext())) {
+  servedOperations|=UINT32_C(1)<<index;
+  mulAlrTiming(5,refSequence(),op->initiator,op->responder,1,began,mappedAt,readHardwareTime(dev),0);
+  return false;
+ }
+ followerPrep.local=local;followerPrep.epoch=followerClock.epoch;
+ followerPrep.cycle=refSequence();followerPrep.context=context;followerPrep.source=source;followerPrep.ready=true;
+ mulAlrTiming(5,refSequence(),op->initiator,op->responder,0,began,mappedAt,readHardwareTime(dev),followerPrep.prepare);
+ return true;
 }
 static bool plannedFollowerOperation(dwDevice_t *dev,uwbEvent_t event,mulAlrRole_t *role) {
  uint64_t now=readHardwareTime(dev);uint32_t ms=(uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS;
@@ -375,15 +402,30 @@ static bool plannedFollowerOperation(dwDevice_t *dev,uwbEvent_t event,mulAlrRole
     *role=mulAlrFollower;return mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index);
    }
   }else if(op.kind==MUL_PLAN_AR&&op.initiator==source[0]) {
-   mulLocalReservation_t local;if(!mapReservation(&op,ms,&local))continue;
-   if(mulTimestampDifference(now,local.end)>=0){servedOperations|=UINT32_C(1)<<index;continue;}
-   if(mulTimestampDifference(now,local.start)<0)continue;
+   *role=mulAlrReference;
+   bool staged=activePlan->policy==MUL_PLAN_TDMA;mulLocalReservation_t local;
+   if(staged) {
+    if(servedOperations&(UINT32_C(1)<<index)) {
+     return ranging.planned&&ranging.active&&ranging.id==refSequence()&&ranging.operation==index;
+    }
+    if(!prepareFollower(dev,&op,index))continue;
+    local=followerPrep.local;now=readHardwareTime(dev);
+   }else if(!mapReservation(&op,ms,&local,NULL))continue;
+   if(mulTimestampDifference(now,local.end)>=0){servedOperations|=UINT32_C(1)<<index;followerPrep.ready=false;continue;}
+   if(mulTimestampDifference(now,staged?followerPrep.prepare:local.start)<0)continue;
    *role=mulAlrReference;
    if(ranging.active&&(ranging.id!=refSequence()||ranging.operation!=index))mulTwrCancel(&ranging,dev,"reservation_turnaround",false);
    uint32_t bit=UINT32_C(1)<<index;
    if(event==eventTimeout&&!(servedOperations&bit)) {
     servedOperations|=bit;
-    if(mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index))
+    if(staged) {
+     followerPrep.ready=false;
+     if(followerPrep.epoch==followerClock.epoch&&mulClockMapStatus(&followerClock,ms)==mulClockMapValid&&
+        followerPrep.source==mulGeometrySource()&&
+        (followerPrep.source!=mulDelayExternal||(followerPrep.context==mulGeometryContext()&&mulGeometrySnapshot(ms,NULL,NULL)==mulPoseAvailable)))
+      mulTwrStartTargets(&ranging,dev,refSequence(),local.poll,local.end);
+     else mulAlrTiming(5,refSequence(),op.initiator,op.responder,2,now,local.start,local.poll,0);
+    }else if(mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index))
       mulTwrStartTargets(&ranging,dev,refSequence(),local.poll,local.end);
    }
    return ranging.planned&&ranging.active&&ranging.id==refSequence()&&ranging.operation==index;
@@ -403,7 +445,22 @@ static uint32_t plannedFollowerWait(dwDevice_t *dev,uint32_t fallback) {
    if(mulTimestampDifference(now,end)>=0)continue;
    start=mulTimestampMask(refRx()+(uint64_t)op.startUs*MUL_DTU_PER_MS/1000);
   }else if(op.kind==MUL_PLAN_AR&&op.initiator==source[0]&&!(servedOperations&(UINT32_C(1)<<index))) {
-   mulLocalReservation_t local;if(!mapReservation(&op,ms,&local)||mulTimestampDifference(now,local.end)>=0)continue;start=local.start;
+   if(activePlan->policy==MUL_PLAN_TDMA) {
+    // Pending Kalman gets its full admission window first; preparation follows.
+    if(!followerPrep.ready&&deferredClock.fit.active)
+     start=mulTimestampMask(refRx()+(uint64_t)op.startUs*MUL_DTU_PER_MS/1000);
+    else {
+     if(!prepareFollower(dev,&op,index))continue;
+     start=followerPrep.prepare;
+    }
+    now=readHardwareTime(dev); // Mapping/encoding elapsed time is not part of sleep.
+    int64_t left=mulTimestampDifference(start,now);
+    uint32_t wake=left<=0?1:(uint32_t)(deferredClock.fit.active?((left+MUL_DTU_PER_MS-1)/MUL_DTU_PER_MS):(left/MUL_DTU_PER_MS));
+    if(!wake)wake=1; // Service interval follows protected processing; RF stays at POLL.
+    if(wake<fallback)fallback=wake;
+    continue;
+   }
+   mulLocalReservation_t local;if(!mapReservation(&op,ms,&local,NULL)||mulTimestampDifference(now,local.end)>=0)continue;start=local.start;
   }else continue;
   int64_t remaining=mulTimestampDifference(start,now);
   uint32_t wait=remaining<=0?1:(uint32_t)(((uint64_t)remaining+MUL_DTU_PER_MS-1)/MUL_DTU_PER_MS);
@@ -457,7 +514,9 @@ static uint32_t followerWait(dwDevice_t *dev)
       if(!mulRangingPlanOperation(activePlan,refSequence(),0,&op))return 1;
       int64_t start=mulTimestampDifference(mulTimestampMask(refRx()+(uint64_t)op.startUs*MUL_DTU_PER_MS/1000),hw);
       int64_t end=mulTimestampDifference(mulTimestampMask(refRx()+(uint64_t)op.endUs*MUL_DTU_PER_MS/1000),hw);
-      if(start>0&&start<next)next=start;
+      int64_t preparation=start;
+      if(op.kind==MUL_PLAN_AR&&op.initiator==source[0])preparation-=(int64_t)(MUL_PLAN_SERVICE_MARGIN_US*MUL_DTU_PER_MS/1000);
+      if(preparation>0&&preparation<next)next=preparation;
       if(start<=0&&end>0) {
         next=0; // No estimator work inside the global TWR phase.
         // Resume at its end, not just the20ms tail: larger budgets may not fit there.
@@ -517,7 +576,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
   bool lostNow = referenceAcquired &&
     (TickType_t)(now - lastReferenceTick) >= pdMS_TO_TICKS(MUL_REFERENCE_LOSS_MS);
   if (lostNow) {
-    referenceAcquired = false;
+    referenceAcquired = false;followerPrep.ready=false;
     mulClockWorkspace_t *w=mulClockWorkspace();
     if(!mulClockFitHoldover(&followerClock,&w->fit,&w->config,(uint32_t)now*portTICK_PERIOD_MS)){
       deferredClock.fit.active=false; // Epoch loss invalidates queued work.
@@ -615,7 +674,7 @@ static uint32_t followerOnEvent(dwDevice_t *dev, uwbEvent_t event)
       result=mulObservePacket(&followerReference,&packet,arrival);
     }
     if (result != mulSequenceDuplicate && result != mulSequenceOld) {
-      slotReason=0;servedOperations=0;
+      slotReason=0;servedOperations=0;followerPrep.ready=false;
       acquiredNow = !referenceAcquired;
       referenceAcquired = true;
       lastReferenceTick = now;

@@ -223,6 +223,9 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   aaSending=(uint8_t)type;
 #endif
   TRACE(twr,mulAaTarget,type,0,target);
+#if MUL_SLOT_TRACE
+  uint64_t began=hardwareNow(dev);
+#endif
   if (!mulAntennaValid(dev)) {
     mulTwrCancel(twr, dev, "antenna_config", true);
     return false;
@@ -230,8 +233,10 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   // Same raw-DX_TIME/live-TX_ANTD contract as Stage 2; never use immediate TX.
   uint16_t antenna = dwSpiRead16(dev, TX_ANTD, NO_SUB);
   dwTime_t raw = {.full=mulTimestampMask((mulTimestampMask(target-antenna)+511) & ~UINT64_C(511))};
-  if (mulTimestampDifference(raw.full, hardwareNow(dev)) < (int64_t)leadDtu(twr) ||
+  uint64_t checked=hardwareNow(dev);
+  if (mulTimestampDifference(raw.full, checked) < (int64_t)leadDtu(twr) ||
       mulTimestampDifference(twr->windowEnd, target) < (int64_t)tailDtu(twr)) {
+    if(twr->planned)mulAlrTiming(6,twr->id,plannedSession.op.initiator,plannedSession.op.responder,1,began,checked,raw.full,twr->windowEnd);
     mulTwrCancel(twr, dev, "late", false);
     return false;
   }
@@ -262,7 +267,9 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
     if(!mulMultiTwrEncode(frame,(const mulSchedule_t *)twrContext,twr->syncWindow,&packet))return false;
   } else if(!mulTwrEncodeNetwork(twrNetwork,frame,&packet))return false;
   dwSetData(dev,frame,length);
-  if (mulTimestampDifference(raw.full, hardwareNow(dev)) < (int64_t)leadDtu(twr)) {
+  uint64_t configured=hardwareNow(dev);
+  if (mulTimestampDifference(raw.full, configured) < (int64_t)leadDtu(twr)) {
+    if(twr->planned)mulAlrTiming(6,twr->id,plannedSession.op.initiator,plannedSession.op.responder,2,began,configured,raw.full,twr->windowEnd);
     mulTwrCancel(twr, dev, "late_setup", false);
     return false;
   }
@@ -275,6 +282,7 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
     return false;
   }
   TRACE(twr,mulAaArm,type,0,twr->expectedTx);
+  if(twr->planned)mulAlrTiming(6,twr->id,plannedSession.op.initiator,plannedSession.op.responder,0,began,configured,raw.full,hardwareNow(dev));
 #if MUL_TWR_TRACE
   aaSending=0;
 #endif
@@ -325,7 +333,7 @@ static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
   uint32_t mm = (uint32_t)(((uint64_t)twr->candidateTof*UINT64_C(299792458000) + UINT64_C(31948800000)) /
                          UINT64_C(63897600000));
   printf("MUL TWR: id=%" PRIu32 " role=%s ref=0x%02X fol=0x%02X result=OK tof_dtu=%" PRIu32
-         " distance_m=%" PRIu32 ".%03" PRIu32 " power=%s raw_mm=%" PRIu32 " uncertainty=UNKNOWN\r\n",
+         " distance_m=%" PRIu32 ".%03" PRIu32 " power=%s raw_mm=%" PRIu32 "\r\n",
          twr->id, role == mulAlrReference ? "INIT" : "RESP",twrNetwork->addresses[0][0],twrNetwork->addresses[1][0], (uint32_t)twr->candidateTof, mm/1000, mm%1000, twr->candidatePowerCorrected ? "APPLIED" : "UNAVAILABLE",
          (uint32_t)(((uint64_t)twr->rawTof*UINT64_C(299792458000)+UINT64_C(31948800000))/UINT64_C(63897600000)));
 }
@@ -381,6 +389,8 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   if (event == eventPacketSent && twr->txPending) {
     dwTime_t actual = {.full=0};
     dwGetTransmitTimestamp(dev, &actual);
+    if(twr->planned&&twr->stage==mulTwrPoll)mulAlrTiming(7,twr->id,plannedSession.op.initiator,plannedSession.op.responder,mulTimestampMask(actual.full)!=twr->expectedTx,
+      twr->expectedTx,mulTimestampMask(actual.full),0,0);
     if (mulTimestampMask(actual.full) != twr->expectedTx) {
       mulTwrCancel(twr, dev, "tx_stamp", true);
       return true;

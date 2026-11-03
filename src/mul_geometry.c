@@ -8,13 +8,15 @@ static uint32_t generation,cachedGeneration;
 static mulPoseStatus_t cachedStatus=mulPoseMissing;
 static uint8_t reference=255,follower=255;
 static mulDelaySource_t selected=mulDelayTwr;
+static uint32_t context;
+uint32_t mulGeometryContext(void){taskENTER_CRITICAL();uint32_t value=context;taskEXIT_CRITICAL();return value;}
 void mulGeometryClear(void) {
- taskENTER_CRITICAL();stream.active=false;stream.count=0;generation++;taskEXIT_CRITICAL();
+ taskENTER_CRITICAL();stream.active=false;stream.count=0;generation++;context++;taskEXIT_CRITICAL();
 }
 bool mulGeometryBegin(uint32_t clock,uint32_t epoch,uint32_t frame,uint16_t skewMs) {
  if(!clock||!frame||skewMs>1000)return false;
  taskENTER_CRITICAL();
- (void)mulPoseStreamBegin(&stream,clock,epoch,frame,skewMs);generation++;
+ (void)mulPoseStreamBegin(&stream,clock,epoch,frame,skewMs);generation++;context++;
  taskEXIT_CRITICAL();return true;
 }
 mulPoseStatus_t mulGeometryPut(const mulPose_t *pose) {
@@ -25,10 +27,10 @@ mulPoseStatus_t mulGeometryPut(const mulPose_t *pose) {
 }
 void mulGeometryPair(const mulNetwork_t *network) {
  taskENTER_CRITICAL();
- reference=network?network->addresses[0][0]:255;follower=network?network->addresses[1][0]:255;generation++;
+ reference=network?network->addresses[0][0]:255;follower=network?network->addresses[1][0]:255;generation++;context++;
  taskEXIT_CRITICAL();
 }
-void mulGeometrySelect(mulDelaySource_t source) {taskENTER_CRITICAL();selected=source<=mulDelayNone?source:mulDelayNone;taskEXIT_CRITICAL();}
+void mulGeometrySelect(mulDelaySource_t source) {taskENTER_CRITICAL();if(selected!=source)context++;selected=source<=mulDelayNone?source:mulDelayNone;taskEXIT_CRITICAL();}
 mulDelaySource_t mulGeometrySource(void) {taskENTER_CRITICAL();mulDelaySource_t source=selected;taskEXIT_CRITICAL();return source;}
 void mulGeometryPoll(uint32_t nowMs) {
  mulPose_t a,b;bool haveA=false,haveB=false;uint16_t skew;

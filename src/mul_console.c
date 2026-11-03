@@ -51,16 +51,16 @@ static bool saved(uint8_t *node,uint8_t *role,uint8_t *ref,uint8_t *fol) {
  }
  return true;
 }
-static void result(bool ok) {reply(ok?"SAVED; restart to activate":"ERR EEPROM/roster unconfirmed; inspect reboot");}
+static void result(bool ok) {reply(ok?"SAVED; restart to activate":"ERR EEPROM unconfirmed; reboot");}
 static bool rfOff(void) {
  uwbSetEnabled(false);
  return cfgWriteU8(cfgRfEnable,0);
 }
 static void planCommand(char **w,unsigned count) {
  if(count==2&&!strcmp(w[1],"show")){page=planPage;pageIndex=0;return;}
- if(uwbControlRequested()||uwbControlRunning()){reply("ERR plan edit requires RF OFF acknowledged");return;}
+ if(uwbControlRequested()||uwbControlRunning()){reply("ERR requires RF OFF");return;}
  const mulStoredPlan_t *stored=NULL;mulPlanStoreResult_t state=cfgMulPlanCached(&stored);
- if(state==mulPlanIoError||state==mulPlanCorrupt){reply("ERR plan storage unconfirmed; inspect reboot");return;}
+ if(state==mulPlanIoError||state==mulPlanCorrupt){reply("ERR EEPROM unconfirmed; reboot");return;}
  mulRangingPlan_t p;bool selected=stored&&stored->selected;
  if((count==2||(count==3&&!strcmp(w[2],"tdma")))&&!strcmp(w[1],"init")) {
   if(stored){reply("ERR plan exists; use plan set/show/use");return;}
@@ -126,7 +126,7 @@ static void planCommand(char **w,unsigned count) {
   }else {reply("ERR plan init/show/use/alrs/rlrs/set");return;}
  }
  const char *error=mulRangingPlanValidate(&p,NULL);if(error){reply(error);return;}
- uint32_t generation=0;reply(cfgMulPlanSave(&p,selected,&generation)?"SAVED plan; ON checks assigned radio support":"ERR plan write unconfirmed; inspect reboot");
+ uint32_t generation=0;reply(cfgMulPlanSave(&p,selected,&generation)?"SAVED; ON checks radio support":"ERR EEPROM unconfirmed; reboot");
 }
 
 static uint32_t poseNow(void){return (uint32_t)xTaskGetTickCount()*portTICK_PERIOD_MS;}
@@ -194,7 +194,7 @@ static void command(void) {
  if(count==2&&!strcmp(w[0],"clock")&&!strcmp(w[1],"show")){page=clockPage;pageIndex=0;return;}
  if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&
     (!strcmp(w[2],"clock_estimator")||!strcmp(w[2],"clock_compensate"))) {
-  if(uwbControlRequested()||uwbControlRunning()){reply("ERR clock requires RF OFF");return;}
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR requires RF OFF");return;}
   mulClockFitConfig_t spec;if(!cfgMulClockRead(&spec)){reply("ERR invalid stored clock settings");return;}
   if(!strcmp(w[2],"clock_estimator")) {
    if(!strcmp(w[3],"median")||!strcmp(w[3],"median_5"))spec.estimator=0;
@@ -205,25 +205,25 @@ static void command(void) {
    else if(!strcmp(w[3],"off"))spec.compensate=0;
    else {reply("ERR clock_compensate: on/off");return;}
   }
-  reply(cfgMulClockWrite(&spec)?"SAVED clock; ON applies":"ERR clock/EEPROM unconfirmed");return;
+  reply(cfgMulClockWrite(&spec)?"SAVED; ON applies":"ERR EEPROM unconfirmed; reboot");return;
  }
  if(count>=3&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"roster")) {
   mulSchedule_t schedule;
   if(!cfgMulScheduleRead(node,&schedule)){reply("ERR invalid stored schedule");return;}
   if(count==3&&!strcmp(w[2],"show")){page=peers;pageIndex=0;return;}
   if(count<5||strcmp(w[2],"set")){reply("ERR cfg roster set id0 id1 [id2..id7]");return;}
-  if(uwbControlRequested()||uwbControlRunning()){reply("ERR roster requires RF OFF acknowledged");return;}
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR requires RF OFF");return;}
   schedule.count=(uint8_t)(count-3);memset(schedule.ids,0,sizeof(schedule.ids));
   for(unsigned i=0;i<schedule.count;i++)if(!id(w[3+i],&schedule.ids[i])){reply("ERR invalid roster identity");return;}
   if(schedule.profile!=MUL_PROFILE_EXPERIMENTAL)schedule.profile=schedule.count==2?MUL_PROFILE_LEGACY:MUL_PROFILE_MULTI;
   const char *error=mulScheduleValidate(&schedule);
   if(error){reply(error);return;}
-  reply(cfgMulScheduleWrite(node,&schedule)?"SAVED roster; ON applies; mode5 only for multi":"ERR roster/EEPROM unchanged or unconfirmed");return;
+  reply(cfgMulScheduleWrite(node,&schedule)?"SAVED; ON checks radio support":"ERR EEPROM unconfirmed; reboot");return;
  }
  if(count==2&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"show")){page=show;pageIndex=0;return;}
  if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&
     (!strcmp(w[2],"tx_lead_us")||!strcmp(w[2],"rx_budget_us")||!strcmp(w[2],"airtime_us")||!strcmp(w[2],"guard_us")||!strcmp(w[2],"alr_alr_twr")||!strcmp(w[2],"twr_reply_ms"))) {
-  if(uwbControlRequested()||uwbControlRunning()){reply("ERR timing requires RF OFF acknowledged");return;}
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR requires RF OFF");return;}
   mulSchedule_t spec;if(!cfgMulScheduleRead(node,&spec)||spec.profile!=MUL_PROFILE_EXPERIMENTAL){reply("ERR select profile experimental first");return;}
   if(!strcmp(w[2],"alr_alr_twr")) {
    if(!strcmp(w[3],"on"))spec.rangingFlags|=MUL_RANGING_ALR_ALR;
@@ -241,11 +241,11 @@ static void command(void) {
    else {if(n%100||n>10000){reply("ERR guard_us: 100..10000, step100");return;}spec.guard100us=(uint8_t)(n/100);}
   }
   const char *error=mulScheduleValidate(&spec);if(error){reply(error);return;}
-  reply(cfgMulScheduleWrite(node,&spec)?"SAVED experimental timing; ON applies":"ERR timing/EEPROM unconfirmed");return;
+  reply(cfgMulScheduleWrite(node,&spec)?"SAVED; ON applies":"ERR EEPROM unconfirmed; reboot");return;
  }
  if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&
     (!strcmp(w[2],"profile")||!strcmp(w[2],"schedule_revision")||!strcmp(w[2],"cycle_ms"))) {
-  if(uwbControlRequested()||uwbControlRunning()){reply("ERR schedule requires RF OFF acknowledged");return;}
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR requires RF OFF");return;}
   mulSchedule_t spec;if(!cfgMulScheduleRead(node,&spec)){reply("ERR invalid stored schedule");return;}
   if(!strcmp(w[2],"profile")) {
    if(!strcmp(w[3],"experimental")){if(spec.profile!=MUL_PROFILE_EXPERIMENTAL)mulScheduleExperimental(&spec);}
@@ -259,11 +259,11 @@ static void command(void) {
    uint32_t n;if(!revision(w[3],&n)||n>2000){reply("ERR cycle_ms: 100..2000");return;}spec.periodMs=(uint16_t)n;
   }else if(!revision(w[3],&spec.revision)){reply("ERR revision: 1..4294967295");return;}
   const char *error=mulScheduleValidate(&spec);if(error){reply(error);return;}
-  reply(cfgMulScheduleWrite(node,&spec)?"SAVED schedule; ON applies":"ERR schedule/EEPROM unconfirmed");return;
+  reply(cfgMulScheduleWrite(node,&spec)?"SAVED; ON applies":"ERR EEPROM unconfirmed; reboot");return;
  }
  if(count==4&&!strcmp(w[0],"cfg")&&!strcmp(w[1],"set")&&!strcmp(w[2],"slot_ms")) {
   uint32_t slot;if(!revision(w[3],&slot)||slot>UINT16_MAX){reply("ERR slot_ms: 1..65535");return;}
-  if(uwbControlRequested()||uwbControlRunning()){reply("ERR slot_ms requires RF OFF acknowledged");return;}
+  if(uwbControlRequested()||uwbControlRunning()){reply("ERR requires RF OFF");return;}
   if(!uwbControlCanEnable()){reply("ERR slot_ms blocked: restart/config required");return;}
   mulSchedule_t spec;if(!cfgMulScheduleRead(node,&spec)){reply("ERR invalid schedule");return;}
   spec.slotMs=(uint16_t)slot;const char *error=mulScheduleValidate(&spec);if(error){reply(error);return;}
@@ -364,45 +364,27 @@ bool mulConsoleByte(char ch) {
 bool mulConsolePoll(void) {
  if(!page)return true;
  static const char *const helps[]={
-  "UWB: :command newline; :console for lines",
-  "help show status on off save legacy",
-  "geometry source twr/external/none (RF OFF)",
-  "pose begin clock epoch frame skew_ms",
-  "pose put HEX80; pose show (USB observations)",
+  "UWB :command newline; help/show/status/on/off",
+  "Autosave; off retains mode; restart applies",
 #if MUL_ONLY
-  "MUL-only: mode hybrid; role ref/follower/rlr",
+  "mode hybrid; role ref/follower/rlr; addr ID",
 #else
   "mode anchor/tag/sniffer/tdoa2/tdoa3/hybrid",
 #endif
-  "role ref/follower/rlr/standalone; addr id",
-  "reference id; follower id; peer list",
-  "cal show|set tx N rx N|set offset_mm N|reset",
-  "wifi/tlm unsupported; cal requires OFF",
-  "Autosave; restart applies; off retains mode",
-  "hybrid_static: stationary opt-in build only",
-  "cfg set slot_ms number; compat:10/50/500",
-  "cfg roster show/set id0 id1 [..id7]",
-  "cfg set profile legacy/multi; RF OFF",
-  "cfg set cycle_ms number; compat:1000",
-  "cfg set schedule_revision 1..4294967295",
+  "reference/follower ID; peer list; legacy",
+  "cal show|set tx N rx N|set offset_mm N|reset (OFF)",
+  "cfg roster show/set IDs; clock show",
   "cfg set clock_estimator median_5/kalman",
-  "clock show; cfg set clock_compensate on/off",
-  "cfg set clock_compensate on/off; RF OFF",
-  "cfg set profile experimental; HW unverified",
-  "cfg set tx_lead_us/rx_budget_us number",
-  "cfg set airtime_us/guard_us number",
-  "cfg set alr_alr_twr on/off; RF OFF",
-  "cfg set twr_reply_ms 20/10/5; RF OFF",
-  "plan init [tdma]/show; mode tdma; use on/off",
-  "plan set kalman_budget_ms/twr_window_ms",
-  "plan alrs id0 id1...; plan rlrs id0...",
-  "plan set aa/ar on/off; aa_millihz/ar_millihz",
-  "plan set reply_ms/util_percent",
-  "plan set aa_start_delay_us <microseconds>",
-  "plan set policy fair/freshness",
-  "plan set aa_priority/ar_priority 0..255",
-  "plan set slot_ms/cycle_ms/revision",
-  "plan set lead_us/process_us/air_us/guard_us"};
+  "cfg set clock_compensate on/off (OFF)",
+  "cfg set profile legacy/multi/experimental (OFF)",
+  "cfg set FIELD VALUE; show lists saved timing",
+  "geometry source twr/external/none (OFF)",
+  "pose begin clock epoch frame skew_ms; put HEX80; show",
+  "plan init [tdma]/show; mode tdma; use on/off (OFF)",
+  "plan alrs IDs; rlrs IDs; set aa/ar on/off",
+  "plan set slot_ms/cycle_ms/kalman_budget_ms/twr_window_ms N",
+  "plan set lead_us/process_us/air_us/guard_us/reply_ms N",
+  "Legacy plan rates/policy/priorities: docs/mul_commands.md"};
  uint8_t node=0,role=2,ref=0x84,fol=0x85,mode=255;
  bool valid=saved(&node,&role,&ref,&fol),last=true,enabled=false;
  if(page==posePage) {

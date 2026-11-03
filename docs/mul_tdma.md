@@ -1,7 +1,8 @@
 # Configurable TDMA and one TWR opportunity per cycle
 
-This is an **opt-in software-tested plan**, not an activation or a physical 5 Hz
-validation. The saved/live `6B11782D` plan has not been changed. All nodes must
+The operator has deployed **55ADA235** and recorded5Hz broadcasts on November3.
+The follower-AR timing correction below is offline-tested and still needs board
+validation. This agent has not changed a live plan or accessed hardware. All nodes must
 select the identical new plan before RF is enabled. Median-5 remains the default;
 Kalman remains selectable and its dense double-precision mathematics is unchanged.
 
@@ -280,7 +281,7 @@ records rather than hiding an incomplete final snapshot. Check `mismatches`,
 `replay_complete`, `transport_complete`, missing vectors and observed diagnostic
 drops independently. After recording, issue `:off` / `off` and confirm stopped.
 
-## Offline engineering results
+## Initial TDMA engineering results (5a49fe3)
 
 The named stationary profile and actual linker map give:
 
@@ -344,3 +345,89 @@ The local unrelated channel5 Makefile addition was excluded using a temporary
 copy of the committed Makefile for those two checks and remains untouched.
 The retained stationary diagnostic artifact is the last build. No generated
 binaries, stack reports, raw logs, EEPROM images or secrets are committed.
+
+## Deadline-aware follower AR preparation
+
+The operator's November3 `tdma-200ms-30s` capture uses55ADA235. Across vector
+cycles2944..3066, initiator logs show132->13323OK/2timeout,132->13423OK/1radio/
+1timeout,132->14124OK,133->14121OK/2late_setup/1timeout, and134->1412OK/
+17late_setup/5late. One134 opportunity has no logged outcome; do not invent its
+cause from missing text. The122 complete ALR134 worker timing records have
+median4394.55us, range4365.50..4528.99us, and finish10113..11401us after reference
+RX. ALR133's corresponding median is4342.03us, finishing14994..15495us after RX.
+Thus this recording does not support the claim that Kalman consumed its entire
+10ms allowance or directly occupied the TWR POLL deadline.
+
+Two software defects are demonstrated: the old AR wait sampled SYS_TIME before
+three mappings and then slept the entire old remaining interval, and the AR
+operation repeated those mappings at its reservation-start callback. Rounding
+and setup then consumed the minimum-lead margin. The logs prove the late-check
+failure class, but do not measure every mapping/SPI contribution; the aggregate
+latencies below are explicit simulation inputs, not inferred board WCETs.
+
+For codec5 only, a follower now prepares one immutable mapped reservation after
+its own TX resolution and deferred Kalman completion. It maps the existing start,
+POLL and end plus the existing preceding1ms service interval. It rechecks the
+hardware clock after preparation, rather than including CPU work in the sleep.
+Subsequent callbacks reuse the mapping. The participating initiator's Kalman
+admission also respects its earlier preparation deadline; it still runs
+immediately when the configured allowance and service margin fit.
+
+At the example settings, protected broadcast/Kalman time ends at23.1ms. Local
+radio preparation may start in the existing23.1..24.1ms service quantum. This
+only programs the delayed transaction; **RF transmission remains at28.1ms**.
+The exchange phase still starts at24.1ms and ends114.1ms, the same packet bytes,
+reply spacing, pair rotation and **55ADA235** fingerprint. No responder accepts a
+POLL earlier, and STM32 needs no scheduling/protocol change. No additional idle
+period or configuration constant was added. Legacy codec2/3/4 retain their old
+three-query mapping and release timing.
+
+The cache is bounded to one reservation and bound to the reference cycle and
+clock epoch. Source selection/domain resets or unavailable external geometry
+invalidate it. Same-domain fresh poses may arrive while the previously validated
+snapshot remains within its checked horizon; explicit withdrawal/unavailable
+geometry cancels preparation. The mapper already validates the full reservation
+end against propagation/clock age bounds. All live antenna, DX_TIME, setup-lead,
+TX-status, absolute deadline and actual-TX-marker checks remain. One served bit
+retires an opportunity before arming, including errors and late callbacks.
+
+The driver-level simulation uses the real mapping, Kalman and protocol logic,
+with elapsed hardware time injected around production calls. It reproduces the
+old path's511.87..511.94us lead with4.4ms Kalman,300us/query and1.188ms aggregate
+encoding/configuration/SPI work. The new path has3111.91..3111.98us lead, and
+2299.91..2299.98us with2ms aggregate setup. A9ms Kalman case retains2699.91us
+or more with2ms setup. Impossible3ms setup/late wakes, stale epochs and withdrawn
+external geometry cancel without retransmission. Both AR pairs complete actual
+encoded five-message exchanges in the simulator; every follower position for
+N2..8 and5/10ms spacing is covered. Independent-clock alignment remains within
+the existing512-DTU rule. These results do not prove physical success rates.
+
+Additional debug SL1 events retain the existing four-line envelope:
+
+|e|w|t0,t1,t2,t3|
+|---:|---:|---|
+|5|0|software begin,mapping end,software end,earliest preparation target|
+|5|1|software begin,mapping end,failure time,0 (invalid preparation)|
+|5|2|now,reservation start,POLL,0 (epoch/source invalidated)|
+|6|0|radio configuration begin,configuration end,raw delayed target,armed time|
+|6|1/2|begin,lead-check time,raw target,reservation end (initial/setup deadline)|
+|7|0/1|expected POLL,actual POLL,0,0 (exact/mismatch)|
+
+The analyzer reports mapping/software duration, configured/armed lead and POLL
+error, using only differences in the emitting hardware clock. It retains partial
+capture/drop handling; missing events are not evidence of zero errors. Compact
+console help and repeated storage-error strings were consolidated for Flash;
+commands and validation are unchanged. The redundant human `uncertainty=UNKNOWN`
+suffix was removed, while `distance_m`, `raw_mm`, role and power result fields
+remain compatible with the existing archived ALR parser. UWB machine telemetry
+and replay framing were not filtered or changed.
+
+The timing milestone passes the280-test production sanitizer matrix (three
+compile profiles),280 diagnostic tests,305 legacy tests,54 host tests, and the
+240000-observation bit-identical clock comparison. The additional external-validity
+regression brings the diagnostic suite to281 tests. The diagnostic image is
+130904/131072 Flash and14892/16384 RAM including reserved stacks, leaving168/1492
+bytes. Compiler frames are296 bytes for mapping,128 for preparation,168 for the
+worker/wait and248 for the ALR event handler; this is a static audit, not a board
+stack watermark. No stack or USB queue reservation is reduced. Runtime logging
+and final deployment validation are documented separately below.

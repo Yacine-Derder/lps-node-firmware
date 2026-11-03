@@ -24,7 +24,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint64_t mapCost,fitCost;static unsigned mapCalls;
+static void advance(int64_t at);
+static bool timedMap(const mulClock_t *,uint64_t,uint32_t,mulClockMapping_t *);
+static bool timedCorrected(const mulNetwork_t *,const mulClock_t *,uint64_t,const mulClockDelay_t *,uint32_t,mulClockCorrectedMapping_t *);
+static void timedFinish(const mulNetwork_t *,mulClock_t *,mulClockFit_t *,const mulClockFitConfig_t *,const mulTestPacket_t *,uint64_t,uint32_t,mulClockFitPending_t *);
+#define mulClockMapRefToFollower timedMap
+#define mulClockMapRefToFollowerSimultaneousNetwork timedCorrected
+#define mulClockFitFinish timedFinish
 #include "../src/mul_alr.c"
+#undef mulClockMapRefToFollower
+#undef mulClockMapRefToFollowerSimultaneousNetwork
+#undef mulClockFitFinish
 static mulLocalization_t capturedObservation;
 static unsigned int observationCount;
 static void captureObservation(const mulLocalization_t *o) { capturedObservation=*o; observationCount++; }
@@ -140,6 +151,16 @@ static void advance(int64_t at) {
   ticks=(TickType_t)(5000+at/(int64_t)MS);
   for (int i=0;i<3;i++) radios[i].now=clockAt(i,at);
 }
+// Model CPU time around the real production mapping/math, not an alternative filter.
+static bool timedMap(const mulClock_t *c,uint64_t tx,uint32_t now,mulClockMapping_t *out) {
+ bool ok=mulClockMapRefToFollower(c,tx,now,out);mapCalls++;if(mapCost)advance(physical+mapCost);return ok;
+}
+static bool timedCorrected(const mulNetwork_t *n,const mulClock_t *c,uint64_t tx,const mulClockDelay_t *delay,uint32_t now,mulClockCorrectedMapping_t *out) {
+ bool ok=mulClockMapRefToFollowerSimultaneousNetwork(n,c,tx,delay,now,out);mapCalls++;if(mapCost)advance(physical+mapCost);return ok;
+}
+static void timedFinish(const mulNetwork_t *n,mulClock_t *c,mulClockFit_t *fit,const mulClockFitConfig_t *config,const mulTestPacket_t *packet,uint64_t rx,uint32_t now,mulClockFitPending_t *pending) {
+ mulClockFitFinish(n,c,fit,config,packet,rx,now,pending);if(fitCost)advance(physical+fitCost);
+}
 static int64_t sendTime(int node) {
   return physical+llroundl((mulTimestampDifference(radios[node].raw,radios[node].now)+radios[node].physicalTx)/rate(node));
 }
@@ -181,7 +202,7 @@ void setUp(void) {
   }
   observationCount=0; offsets[2]=MUL_TIMESTAMP_MASK-5000*MS;
   offsets[0]=MUL_TIMESTAMP_MASK-660*MS; offsets[1]=UINT64_C(0x723456789a);
-  skew=0; flight=0; physical=framePhysical=0; ticks=5000;
+  skew=0; flight=0; physical=framePhysical=0; ticks=5000;mapCost=fitCost=0;mapCalls=0;
   protocolRole[0]=mulAlrReference;protocolRole[1]=mulAlrFollower;
   exchangeSequence=5; mulClockReset(&model);
 }
@@ -1498,7 +1519,7 @@ static void deferredReference(const mulRangingPlan_t *p,unsigned cycle) {
  ranging.delayValid=true;ranging.epoch=followerClock.epoch;ranging.tof=flight;
  ranging.measuredMs=ticks-80;ranging.estimateId=cycle?cycle-1:0;
  ranging.aa=(mulTwrAa_t){.epoch=followerClock.epoch,.measuredMs=ticks-80,
-   .sequence=cycle?cycle-1:0,.tof=flight,.reference=132,.follower=p->broadcast.ids[1],.valid=true};
+   .sequence=cycle?cycle-1:0,.tof=flight,.reference=p->broadcast.ids[0],.follower=multiConfiguration.address[0],.valid=true};
  injectMulti(1,0,cycle,clockAt(0,at),clockAt(1,at+flight));
  TEST_ASSERT_TRUE(flags.tx);
 }
@@ -1662,5 +1683,127 @@ void test_tdmaActualTwrOneExchangePerCycleRotatesDespiteLossAndKeepsCalibration(
    TEST_ASSERT_TRUE(physical<(int64_t)op.endUs*MS/1000);
   }
   TEST_ASSERT_FALSE(mulTwrConfigurePlan(ctx(0),&p,cycle,0));
+ }
+}
+
+static void prepConfiguration(mulRangingPlan_t *p,unsigned node) {
+ deferredConfiguration(p,200,134);mulRangingPlanTdma(p);p->broadcast.revision=1;
+ unsigned slot=node==134?1:2;TEST_ASSERT_TRUE(mulSchedulePair(&p->broadcast,slot,&multiConfiguration.mulNetwork));
+ multiConfiguration.mulSchedule=p->broadcast;
+ // mulNetwork_t has pair addresses0/1 even when the roster slot is2.
+ memcpy(multiConfiguration.address,multiConfiguration.mulNetwork.addresses[1],8);
+ mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+ for(unsigned cycle=0;cycle<15;cycle++) {
+  deferredReference(p,cycle);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+ }
+}
+void test_tdmaAdvanceMappingAvoidsOldLateSetupAtBothFollowerSlotsWithoutMovingPoll(void) {
+ for(unsigned node=133;node<=134;node++)for(unsigned slow=0;slow<2;slow++)for(unsigned spi=0;spi<2;spi++) {
+  setUp();mulRangingPlan_t p;prepConfiguration(&p,node);
+  unsigned cycle=node==134?19:18;int64_t base=(int64_t)cycle*200*MS;
+  deferredReference(&p,cycle);fitCost=(slow?9000:4400)*MS/1000;
+  advance(sendTime(1)+1200*MS/1000);radios[1].armed=false;dispatch(1,eventPacketSent);
+  TEST_ASSERT_FALSE(deferredClock.fit.active);fitCost=0;
+  // Same timed mapping and1.188ms SPI setup in old/new models. All coordinates
+  // come from the actual production mapper and exact55ADA235 plan.
+  TEST_ASSERT_EQUAL_HEX32(0x55ADA235,mulRangingPlanFingerprint(&p));
+  mapCost=300*MS/1000;mapCalls=0;advance(physical+MS);
+  uint64_t began=readHardwareTime(&radios[1].device);int64_t oldPhysical=physical;
+  mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,cycle,0,&op));
+  mulLocalReservation_t local;TEST_ASSERT_TRUE(mapReservation(&op,ticks,&local,NULL));
+  // Old wait used its pre-mapping SYS_TIME, then repeated mapping at wakeup.
+  int64_t until=mulTimestampDifference(local.start,began);
+  unsigned oldWait=(unsigned)((until+MS-1)/MS);advance(physical+oldWait*MS);
+  TEST_ASSERT_TRUE(mapReservation(&op,ticks,&local,NULL));
+  TEST_ASSERT_TRUE(mulTwrConfigurePlan(&ranging,&p,cycle,0));
+  radios[1].setupLag=1188*MS/1000;unsigned sent=radios[1].sends;
+  TEST_ASSERT_FALSE(mulTwrStartTargets(&ranging,&radios[1].device,cycle,local.poll,local.end));
+  TEST_ASSERT_EQUAL(sent,radios[1].sends);TEST_ASSERT_TRUE(ranging.attempted);
+  int64_t oldLead=mulTimestampDifference(radios[1].raw,radios[1].now);
+  // Recreate only the old-op retirement state so the same reference/mathematics
+  // can exercise the new production owner at its post-Kalman point.
+  ranging.attempted=ranging.active=false;servedOperations=0;followerPrep.ready=false;
+  advance(oldPhysical);mapCalls=0;radios[1].setupLag=0;
+  unsigned wait=followerWait(&radios[1].device);TEST_ASSERT_TRUE(followerPrep.ready);TEST_ASSERT_EQUAL(4,mapCalls);
+  TEST_ASSERT_TRUE(physical<base+24*MS);TEST_ASSERT_EQUAL(sent,radios[1].sends);
+  unsigned newSetup=spi?2000:1188;radios[1].setupLag=newSetup*MS/1000;
+  for(unsigned wake=0;wake<4&&!ranging.active;wake++) {
+   advance(physical+(int64_t)wait*MS);wait=dispatch(1,eventTimeout);
+  }
+  if(!ranging.active)printf("PREPFAIL node=%u slow=%u spi=%u time=%lld lead=%lld served=%lu epoch=%lu/%lu status=%u\n",node,slow,spi,(long long)(physical-base)/MS,(long long)mulTimestampDifference(radios[1].raw,radios[1].now)/MS,(unsigned long)servedOperations,(unsigned long)followerPrep.epoch,(unsigned long)followerClock.epoch,followerClock.status);
+  TEST_ASSERT_TRUE(ranging.active);TEST_ASSERT_EQUAL(sent+1,radios[1].sends);TEST_ASSERT_EQUAL(4,mapCalls);
+  int64_t newLead=mulTimestampDifference(radios[1].raw,radios[1].now);
+  TEST_ASSERT_TRUE(newLead>1000*(int64_t)MS/1000);
+  printf("PREP MODEL node=%u fit_us=%u setup_us=%u old_lead_us=%.3f new_lead_us=%.3f\n",node,slow?9000:4400,newSetup,(double)oldLead/63897.6,(double)newLead/63897.6);
+  mulTwrPacket_t poll;TEST_ASSERT_TRUE(mulPlanTwrDecode(&p,cycle,0,radios[1].tx,90,&poll));
+  TEST_ASSERT_EQUAL_UINT64(ranging.expectedTx,poll.txTimestamp);
+  TEST_ASSERT_EQUAL_UINT64(local.poll,followerPrep.local.poll);
+  TEST_ASSERT_INT64_WITHIN(511,local.poll,poll.txTimestamp);
+  // Confirm actual radio exchange and current-cycle retirement, not just arming.
+  advance(physical+newSetup*MS/1000);radios[1].setupLag=0;exchangeSequence=cycle;
+  origins[0]=clockAt(0,base);origins[1]=clockAt(1,base+flight);protocolRole[0]=mulAlrFollower;
+  TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,cycle,0));mulRxInit(&radios[0].device);
+  transfer(1);transfer(0);transfer(1);transfer(0);transfer(1);
+  TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_TRUE(ranging.aa.valid);TEST_ASSERT_EQUAL(4,mapCalls);
+  sent=radios[1].sends;dispatch(1,eventTimeout);TEST_ASSERT_EQUAL(sent,radios[1].sends);
+ }
+}
+
+void test_tdmaPreparedOpportunityRejectsImpossibleHardwareAndChangedEpochOnce(void) {
+ for(unsigned fault=0;fault<3;fault++) {
+  setUp();mulRangingPlan_t p;prepConfiguration(&p,134);unsigned cycle=19;
+  deferredReference(&p,cycle);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+  advance(physical+MS);(void)followerWait(&radios[1].device);TEST_ASSERT_TRUE(followerPrep.ready);
+  unsigned sent=radios[1].sends;
+  if(fault==0)radios[1].setupLag=3*MS;
+  if(fault==1)followerClock.epoch++;
+  advance(((int64_t)cycle*200+(fault==2?29:25))*MS);dispatch(1,eventTimeout);
+  TEST_ASSERT_EQUAL(sent,radios[1].sends);TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_EQUAL(1,servedOperations);
+  radios[1].setupLag=0;advance(physical+MS);dispatch(1,eventTimeout);TEST_ASSERT_EQUAL(sent,radios[1].sends);
+  mulRangingOperation_t next;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,cycle+1,0,&next));
+  TEST_ASSERT_EQUAL(132,next.initiator);TEST_ASSERT_EQUAL(133,next.responder);
+ }
+}
+void test_tdmaAdvancePreparationUsesEveryFollowerSlotAndRosterSize(void) {
+ for(unsigned count=2;count<=8;count++)for(unsigned slot=1;slot<count;slot++)for(unsigned spacing=5;spacing<=10;spacing+=5) {
+  setUp();mulRangingPlan_t p;deferredConfiguration(&p,200,134);mulRangingPlanTdma(&p);
+  p.broadcast.count=count;p.broadcast.slotMs=spacing;
+  for(unsigned i=0;i<8;i++)p.broadcast.ids[i]=i<count?100+i:0;
+  TEST_ASSERT_NULL(mulRangingPlanValidate(&p,NULL));
+  multiConfiguration.mulSchedule=p.broadcast;TEST_ASSERT_TRUE(mulSchedulePair(&p.broadcast,slot,&multiConfiguration.mulNetwork));
+  memcpy(multiConfiguration.address,multiConfiguration.mulNetwork.addresses[1],8);
+  mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+  unsigned cycle=16;while(cycle%(2*count-1)!=count-1+slot)cycle++;
+  for(unsigned warm=0;warm<cycle;warm++) {
+   deferredReference(&p,warm);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+  }
+  deferredReference(&p,cycle);fitCost=4400*MS/1000;
+  advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);TEST_ASSERT_FALSE(deferredClock.fit.active);fitCost=0;
+  mapCost=300*MS/1000;mapCalls=0;advance(physical+MS);unsigned wait=followerWait(&radios[1].device);
+  if(!followerPrep.ready)printf("PREPGEN n=%u slot=%u spacing=%u c=%u status=%u served=%lu calls=%u fit=%u/%u\n",count,slot,spacing,cycle,followerClock.status,(unsigned long)servedOperations,mapCalls,mulClockWorkspace()->fit.ready,mulClockWorkspace()->fit.accepted);
+  TEST_ASSERT_TRUE(followerPrep.ready);TEST_ASSERT_EQUAL(4,mapCalls);unsigned sent=radios[1].sends;radios[1].setupLag=2*MS;
+  for(unsigned wake=0;wake<4&&!ranging.active;wake++){advance(physical+(int64_t)wait*MS);wait=dispatch(1,eventTimeout);}
+  TEST_ASSERT_TRUE(ranging.active);TEST_ASSERT_EQUAL(sent+1,radios[1].sends);TEST_ASSERT_EQUAL(4,mapCalls);
+ }
+}
+
+void test_tdmaPreparedExternalGeometryAllowsFreshPosesButRejectsWithdrawalAndDomainReset(void) {
+ for(unsigned change=0;change<3;change++) {
+  setUp();mulRangingPlan_t p;prepConfiguration(&p,134);unsigned cycle=19;
+  deferredReference(&p,cycle);advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+  mulGeometrySelect(mulDelayExternal);TEST_ASSERT_TRUE(mulGeometryBegin(1,1,1,0));
+  mulPose_t a={.clock=1,.epoch=1,.frame=1,.sequence=1,.sourceUs=1000000,.node=132,.flags=7,.ttlMs=1000,.receivedMs=ticks};
+  a.covarianceMm2[0]=a.covarianceMm2[3]=a.covarianceMm2[5]=1;
+  mulPose_t b=a;b.node=134;b.positionMm[0]=1000;
+  TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&a));TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&b));mulGeometryPoll(ticks);
+  advance(physical+MS);(void)followerWait(&radios[1].device);TEST_ASSERT_TRUE(followerPrep.ready);
+  unsigned sent=radios[1].sends;
+  if(change==2){TEST_ASSERT_TRUE(mulGeometryBegin(1,1,1,0));}
+  a.sequence=b.sequence=2;a.sourceUs=b.sourceUs=1001000;
+  if(change==1)a.flags=6;
+  TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&a));TEST_ASSERT_EQUAL(mulPoseAvailable,mulGeometryPut(&b));mulGeometryPoll(ticks);
+  advance(((int64_t)cycle*200+25)*MS);dispatch(1,eventTimeout);
+  TEST_ASSERT_EQUAL(sent+(change==0),radios[1].sends);
+  TEST_ASSERT_EQUAL(1,servedOperations);
  }
 }

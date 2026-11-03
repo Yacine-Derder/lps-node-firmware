@@ -28,3 +28,9 @@ class Timing(unittest.TestCase):
         rows=list(timing.records(a[:2]+b+a))
         self.assertEqual(len(rows),2)
         self.assertEqual(rows[1]['tx_error_dtu'],0)
+
+    def test_advance_mapping_radio_setup_and_actual_poll(self):
+        rows=list(timing.records(event(19,5,0,[100,200,300,400,0,0,0,0])+event(19,6,0,[400,500,100000000,600,0,0,0,0])+event(19,7,0,[1234,1234,0,0,0,0,0,0])))
+        self.assertAlmostEqual(rows[0]['software_prepare_us'],200/timing.DTU_US)
+        self.assertAlmostEqual(rows[1]['configured_lead_us'],99999500/timing.DTU_US)
+        self.assertEqual(rows[2]['poll_error_dtu'],0)

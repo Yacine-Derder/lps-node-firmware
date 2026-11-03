@@ -2,6 +2,8 @@
 #ifndef MUL_GEOMETRY_H
 #define MUL_GEOMETRY_H
 #include "mul_pose.h"
+// Changes on stream-domain/selection invalidation, not ordinary same-domain poses.
+uint32_t mulGeometryContext(void);
 void mulGeometryClear(void);
 bool mulGeometryBegin(uint32_t clock,uint32_t epoch,uint32_t frame,uint16_t skewMs);
 mulPoseStatus_t mulGeometryPut(const mulPose_t *pose);

@@ -44,6 +44,17 @@ def records(lines):
                 row['tx_error_dtu'] = delta(pieces[1], pieces[0])
             elif event == 3 and why == 0:
                 row['worker_us'] = delta(pieces[1], pieces[0]) / DTU_US
+            elif event == 5 and why == 0:
+                row['mapping_us'] = delta(pieces[1], pieces[0]) / DTU_US
+                row['software_prepare_us'] = delta(pieces[2], pieces[0]) / DTU_US
+                row['prepare_opens_dtu'] = pieces[3]
+            elif event == 6:
+                row['radio_prepare_us'] = delta(pieces[1], pieces[0]) / DTU_US
+                row['configured_lead_us'] = delta(pieces[2], pieces[1]) / DTU_US
+                if why == 0:
+                    row['armed_lead_us'] = delta(pieces[2], pieces[3]) / DTU_US
+            elif event == 7:
+                row['poll_error_dtu'] = delta(pieces[1], pieces[0])
             yield row
             del pending[key]
 
