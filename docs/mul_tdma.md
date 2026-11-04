@@ -814,10 +814,13 @@ Clean GCC13.2.1 linked images, checked by `tools/test/check_mul_image.py`:
 
 |image|Flash bytes /131072|RAM including linker stack /16384|free Flash|free RAM|
 |---|---:|---:|---:|---:|
+|published default (CH2, without local Makefile selection)|130508|14928|564|1456|
 |default build (existing local CH5 selection)|130808|14932|264|1452|
 |stationary CH5 production/SL1|130856|14932|216|1452|
 
-The stationary artifact is restored in `bin/`. The clock workspace stays168 B,
+The published default was built using an unmodified Git copy of the Makefile,
+without editing the existing local CH5 selection. The stationary artifact is
+restored in `bin/`. The clock workspace stays168 B,
 radio and main task stacks1600 B each, idle800 B, linker stack2048 B and USB
 queue512 B. No safety allocation, guard, validation or estimator math is reduced.
 Individual production compiler frames: mapping296 B, preparation120 B,
