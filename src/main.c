@@ -62,7 +62,8 @@ const uint8_t *uid = (uint8_t*)MCU_ID_ADDRESS;
 
 static void restConfig();
 static void changeAddress(uint8_t addr);
-static void handleSerialInput(char ch);
+// Keep the existing console dispatcher out of main_task to bound code/stack.
+static __attribute__((noinline)) void handleSerialInput(char ch);
 static void handleButton(void);
 static void changeMode(unsigned int newMode);
 static void changeRadioMode(unsigned int newMode);

@@ -184,6 +184,15 @@ void mulTwrInit(mulTwr_t *twr) {
 
 bool mulTwrDue(uint32_t sequence) { return sequence != 0 && sequence % 5 == 0; }
 
+static void rangeMetadata(mulLogRecord_t *r,const mulTwr_t *twr,uint64_t marker) {
+ r->event+=2; // 8/9 human success/failure -> 10/11 human plus MR1 metadata.
+ r->initiator=plannedSession.op.initiator;r->responder=plannedSession.op.responder;
+ r->local=twr->local;r->t[2]=marker;r->t[3]=twr->epoch;
+ r->t[4]=mulRangingPlanFingerprint(plannedSession.plan);r->t[5]=plannedSession.op.kind;
+}
+static bool geometryRange(const mulTwr_t *twr) {
+ return twr->planned&&plannedSession.op.kind!=MUL_PLAN_AR;
+}
 void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool invalidateDelay)
 {
   bool wasActive = twr->active;
@@ -205,7 +214,9 @@ void mulTwrCancel(mulTwr_t *twr, dwDevice_t *dev, const char *reason, bool inval
     mulAlrTiming(4,twr->id,twr->planned?plannedSession.op.initiator:0,
       twr->planned?plannedSession.op.responder:0,2,hardwareNow(dev),twr->deadline,twr->stage,0);
     mulLogCount(logTwrFail);
-    mulLogRecord_t r={.cycle=twr->id,.event=9,.reason=reason?reason:"broadcast_priority"};mulLogPush(&r);
+    mulLogRecord_t r={.cycle=twr->id,.event=9,.reason=reason?reason:"broadcast_priority"};
+    if(geometryRange(twr))rangeMetadata(&r,twr,hardwareNow(dev));
+    mulLogPush(&r);
   }
 }
 
@@ -297,6 +308,7 @@ bool mulTwrStartTargets(mulTwr_t *twr,dwDevice_t *dev,uint32_t cycle,uint64_t po
  if(span<(int64_t)(4*replyMs(twr)*MUL_TWR_DTU_PER_MS+tailDtu(twr))||
     span>(int64_t)(plannedSession.plan->broadcast.periodMs*MUL_TWR_DTU_PER_MS))return false;
  twr->id=cycle;twr->attempted=twr->active=true;twr->windowEnd=end;
+ twr->local=plannedSession.op.initiator;
 #if MUL_TWR_TRACE
  aaLocal=plannedSession.op.initiator;aaInput=7;aaNowValid=false;aaEnd=twr->windowEnd;
 #endif
@@ -312,6 +324,7 @@ bool mulTwrStart(mulTwr_t *twr, dwDevice_t *dev, uint32_t sequence, uint64_t ori
   twr->id = sequence;
   twr->attempted = twr->active = true;
   twr->windowEnd = mulTimestampMask(origin+endOffset(twr));
+  if(twr->planned)twr->local=plannedSession.op.initiator;
 #if MUL_TWR_TRACE
   aaLocal=plannedSession.op.initiator;aaInput=7;aaNowValid=false;aaEnd=twr->windowEnd;
 #endif
@@ -332,7 +345,10 @@ static void logSuccess(const mulTwr_t *twr, mulAlrRole_t role, dwDevice_t *dev)
   if(mulLogLevel()==mulLogQuiet)return;
   mulLogRecord_t r={.t={twr->candidateTof,twr->rawTof},.cycle=twr->id,.event=8,
    .local=role!=mulAlrReference,.initiator=twrNetwork->addresses[0][0],
-   .responder=twrNetwork->addresses[1][0],.why=twr->candidatePowerCorrected};mulLogPush(&r);
+   .responder=twrNetwork->addresses[1][0],.why=twr->candidatePowerCorrected};
+  if(geometryRange(twr))rangeMetadata(&r,twr,role==mulAlrReference?twr->stamps[0]:
+    mulTimestampMask(twr->stamps[1]-twr->power[0].deltaDtu));
+  mulLogPush(&r);
 }
 
 bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_t role,
@@ -369,7 +385,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   bool expired=twr->planned?mulTimestampDifference(hardwareNow(dev),twr->windowEnd)>=0:
     phase<0||phase>=(int64_t)endOffset(twr);
   if (twr->active && (expired ||
-      sequence != twr->id || (role == mulAlrFollower && epoch != twr->epoch))) {
+      sequence != twr->id || ((role == mulAlrFollower||(twr->planned&&plannedSession.op.kind==MUL_PLAN_FF)) && epoch != twr->epoch))) {
     mulTwrCancel(twr, dev, "window_or_epoch", role == mulAlrFollower && epoch != twr->epoch);
   }
   if (event == eventPacketReceived &&
@@ -440,11 +456,11 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   }
   if (packet.type == mulTwrPoll && role == mulAlrFollower && !twr->active) {
     int64_t arrivalPhase = mulTimestampDifference(rx.full, origin);
-    int64_t remotePhase = twr->planned&&plannedSession.op.kind==MUL_PLAN_AR?0:mulTimestampDifference(packet.stamps[0], referenceOrigin);
+    int64_t remotePhase = twr->planned&&plannedSession.op.kind!=MUL_PLAN_AA?0:mulTimestampDifference(packet.stamps[0], referenceOrigin);
     bool phaseValid;
     if(twr->planned) {
       phaseValid=arrivalPhase>=(int64_t)microsDtu(plannedSession.op.startUs)&&arrivalPhase<(int64_t)endOffset(twr);
-      // Only AA's initiator is the reference clock. An AR initiator may be a
+      // Only AA's initiator is the reference clock. AR/FF may use a
       // different ALR: never compare its P1 directly to reference-domain origin.
       if(plannedSession.op.kind==MUL_PLAN_AA)phaseValid=phaseValid&&remotePhase>=(int64_t)microsDtu(plannedSession.op.startUs)&&remotePhase<(int64_t)endOffset(twr);
     }else phaseValid=arrivalPhase>=(int64_t)((pollMs(twr)-50)*MUL_TWR_DTU_PER_MS)&&arrivalPhase<=(int64_t)((pollMs(twr)+50)*MUL_TWR_DTU_PER_MS)&&
@@ -461,6 +477,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
     // Preserve the committed estimate during an attempted refresh.
     twr->windowEnd = mulTimestampMask(origin+endOffset(twr));
     twr->epoch = epoch;
+    if(twr->planned)twr->local=plannedSession.op.responder;
     // Backdate the coarse acquisition time by hardware RX-to-callback latency,
     // rounded upwards. Neither callback delay nor RESULT delivery can re-date it.
     // Commit acquisition time only after RESULT, backdated from stored P2.
@@ -511,6 +528,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
       if (elapsed<0 || elapsed>(int64_t)(200*MUL_TWR_DTU_PER_MS)) {
         mulTwrCancel(twr,dev,"measurement_age",true); return true;
       }
+      if(!twr->planned||plannedSession.op.kind!=MUL_PLAN_FF) {
       twr->measuredMs=nowMs-(uint32_t)(((uint64_t)elapsed+MUL_TWR_DTU_PER_MS-1)/MUL_TWR_DTU_PER_MS);
       twr->estimateId=twr->id;
       twr->tof=twr->candidateTof; twr->powerCorrected=twr->candidatePowerCorrected;
@@ -523,6 +541,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
           .valid=true,.powerCorrected=twr->powerCorrected};
       }
       twr->syncDirty = true;
+      }
       twr->active = false;
       mulRxRearm(dev);
       TRACE(twr,mulAaDone,twr->stage,0,0);

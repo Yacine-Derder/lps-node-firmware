@@ -635,3 +635,22 @@ void test_verbosityJournalSurvivesEveryInterruptedByteAndLostCommitAck(void) {
  TEST_ASSERT_FALSE(cfgVerbositySet(mulLogQuiet));TEST_ASSERT_FALSE(cfgStorageReady());
  cfgInit();TEST_ASSERT_EQUAL(mulLogQuiet,mulLogLevel());
 }
+void test_ffOptInConsolePersistsFullTenPairPreviewAndRejectsRfOnEdits(void) {
+ send(":off\n");apply();uint8_t legacy[100];memcpy(legacy,memory,sizeof(legacy));
+ send(":plan init tdma\n:plan set lead_us 1000\n:plan set process_us 2000\n:plan set slot_ms 5\n");
+ send(":plan set reply_ms 5\n:plan set twr_window_ms 30\n:plan set cycle_ms 100\n");
+ send(":plan alrs 132 134 133 135\n:plan rlrs 141\n:plan set aa on\n:plan set ar on\n");
+ const mulStoredPlan_t *s=NULL;TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&s));
+ TEST_ASSERT_FALSE(s->plan.enabled&MUL_PLAN_FF);TEST_ASSERT_EQUAL(5,mulRangingPlanVersion(&s->plan));
+ send(":plan set ff on\n:plan use on\n");TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&s));
+ TEST_ASSERT_TRUE(s->selected);TEST_ASSERT_EQUAL_MESSAGE(6,mulRangingPlanVersion(&s->plan),output);
+ TEST_ASSERT_EQUAL_HEX32(0xEC2B4B2A,mulRangingPlanFingerprint(&s->plan));
+ TEST_ASSERT_EQUAL_MEMORY(legacy,memory,sizeof(legacy));
+ output[0]=0;send(":plan show\n");TEST_ASSERT_NOT_NULL(strstr(output,"FF=1"));
+ TEST_ASSERT_NOT_NULL(strstr(output,"C4 F 133>135"));TEST_ASSERT_NOT_NULL(strstr(output,"C9 R 135>141"));
+ cfgInit();TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&s));TEST_ASSERT_EQUAL(6,mulRangingPlanVersion(&s->plan));
+ send(":on\n");apply();TEST_ASSERT_TRUE(uwbControlRunning());unsigned before=writes;
+ send(":plan set ff off\n");TEST_ASSERT_EQUAL(before,writes);TEST_ASSERT_TRUE(s->plan.enabled&MUL_PLAN_FF);
+ send(":off\n");apply();send(":plan set ff off\n");
+ TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&s));TEST_ASSERT_EQUAL(5,mulRangingPlanVersion(&s->plan));
+}

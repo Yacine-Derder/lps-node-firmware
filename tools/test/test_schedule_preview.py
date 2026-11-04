@@ -107,3 +107,25 @@ class SchedulePreview(unittest.TestCase):
                             r=planner.preview(c,cycles=1)
                             self.assertEqual(r['guard_us'],period*1000-start-window*1000)
                             self.assertEqual(r['cycles'][0]['operations'][0]['start_us'],start)
+
+    def test_ff_all_pairs_are_versioned_and_bind_the_ten_pair_rotation(self):
+        c=dict(scheduling_policy='tdma',cycle_ms=100,reply_ms=5,twr_window_ms=30)
+        old=planner.preview(c,cycles=10)
+        self.assertEqual(old['planner_version'],5)
+        self.assertEqual(old['fingerprint'],'2AED8A85')
+        target=c|dict(alrs=[132,134,133,135],follower_follower=True)
+        r=planner.preview(target,cycles=20)
+        self.assertEqual((r['planner_version'],r['fingerprint'],r['ff_pairs']),(6,'EC2B4B2A',3))
+        pairs=[(132,133),(132,134),(132,135),(133,134),(133,135),(134,135),
+               (132,141),(133,141),(134,141),(135,141)]
+        self.assertEqual([(b['node'],b['offset_us']) for b in r['broadcasts']],[(132,0),(134,5000),(133,10000),(135,15000)])
+        for i,row in enumerate(r['cycles']):
+            self.assertEqual(len(row['operations']),1)
+            op=row['operations'][0]
+            self.assertEqual((op['initiator'],op['responder']),pairs[i%10])
+            self.assertEqual((op['start_us'],op['poll_us'],op['end_us']),(29100,33100,59100))
+        self.assertEqual(r['guard_us'],40900)
+        inter=planner.preview(target|dict(alr_rlr=False),cycles=12)
+        self.assertEqual([(o['initiator'],o['responder']) for row in inter['cycles'] for o in row['operations']],pairs[:6]*2)
+        for bad in (dict(follower_follower=1),dict(follower_follower=True,scheduling_policy='fair')):
+            with self.assertRaises(ValueError):planner.preview(bad)

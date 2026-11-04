@@ -73,6 +73,23 @@ int main(void) {
   assert(mulRangingPlanFingerprint(&loaded.plan)==mulRangingPlanFingerprint(ok?&tdma:&p));
   untouchedPrefix();
  }
+ // Codec5 -> opt-in codec6 and back: every cut retains a complete old or new
+ // plan, never a partially enabled pair graph. Legacy memory is untouched.
+ assert(mulPlanStoreSave(&store,&tdma,true,&generation));
+ memcpy(saved,memory,sizeof(memory));
+ mulRangingPlan_t ff=tdma;ff.enabled|=MUL_PLAN_FF;
+ for(unsigned direction=0;direction<2;direction++) {
+  const mulRangingPlan_t *old=direction?&ff:&tdma,*next=direction?&tdma:&ff;
+  for(int cut=0;cut<=100;cut++) {
+   memcpy(memory,saved,sizeof(memory));bytesLeft=cut;
+   bool ok=mulPlanStoreSave(&store,next,true,&generation);bytesLeft=-1;
+   assert(mulPlanStoreLoad(&store,&loaded)==mulPlanStored&&loaded.selected);
+   assert(mulRangingPlanFingerprint(&loaded.plan)==mulRangingPlanFingerprint(ok?next:old));
+   assert(mulRangingPlanVersion(&loaded.plan)==(ok?(direction?5:6):(direction?6:5)));
+   untouchedPrefix();
+  }
+  assert(mulPlanStoreSave(&store,next,true,&generation));memcpy(saved,memory,sizeof(memory));
+ }
  // No valid committed copy: CRC damage is corruption, not blank defaults.
  memset(memory+MUL_PLAN_STORE_BASE+(loaded.slot^1u)*MUL_PLAN_STORE_STRIDE,255,MUL_PLAN_STORE_BYTES);
  memory[MUL_PLAN_STORE_BASE+loaded.slot*MUL_PLAN_STORE_STRIDE+12]^=1;

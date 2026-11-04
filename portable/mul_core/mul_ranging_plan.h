@@ -9,12 +9,14 @@
 #define MUL_PLAN_FRESHNESS_VERSION 3u
 #define MUL_PLAN_DELAY_VERSION 4u
 #define MUL_PLAN_TDMA_VERSION 5u
+#define MUL_PLAN_FF_VERSION 6u
 #define MUL_PLAN_TDMA 2u
 #define MUL_PLAN_FAIR 0u
 #define MUL_PLAN_FRESHNESS 1u
 #define MUL_PLAN_SERVICE_MARGIN_US 1000u // One1ms service quantum before TX setup.
 #define MUL_PLAN_AA 1u
 #define MUL_PLAN_AR 2u
+#define MUL_PLAN_FF 4u // TDMA-only all unordered sorted-follower pairs; never synchronization AA.
 /* Per-pair rates, in milliHz. This version is a planner/configuration codec;
  * radio adapters must explicitly opt in before using these reservations. */
 typedef struct {
@@ -28,7 +30,7 @@ typedef struct {
 typedef struct {
  uint32_t dataEndUs,reservationUs,prepareUs,usableEndUs,requestedMilliHz,guardUs;
  uint16_t capacity,peakOperations;
- uint8_t aaPairs,arPairs;
+ uint8_t aaPairs,arPairs,ffPairs;
 } mulRangingBudget_t;
 typedef struct {
  uint32_t startUs,pollUs,endUs;

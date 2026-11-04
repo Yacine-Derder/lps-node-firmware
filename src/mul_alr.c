@@ -385,13 +385,13 @@ static bool plannedFollowerOperation(dwDevice_t *dev,uwbEvent_t event,mulAlrRole
  unsigned count=mulRangingPlanCount(activePlan,refSequence());
  for(unsigned index=0;index<count;index++) {
   mulRangingOperation_t op;(void)mulRangingPlanOperation(activePlan,refSequence(),index,&op);
-  if(op.kind==MUL_PLAN_AA&&op.responder==source[0]) {
+  if((op.kind==MUL_PLAN_AA||op.kind==MUL_PLAN_FF)&&op.responder==source[0]) {
    int64_t phase=mulTimestampDifference(now,refRx());
    if(phase>=(int64_t)((uint64_t)op.startUs*MUL_DTU_PER_MS/1000)&&phase<(int64_t)((uint64_t)op.endUs*MUL_DTU_PER_MS/1000)) {
     if(ranging.active&&(ranging.id!=refSequence()||ranging.operation!=index))mulTwrCancel(&ranging,dev,"reservation_turnaround",false);
     *role=mulAlrFollower;return mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index);
    }
-  }else if(op.kind==MUL_PLAN_AR&&op.initiator==source[0]) {
+  }else if((op.kind==MUL_PLAN_AR||op.kind==MUL_PLAN_FF)&&op.initiator==source[0]) {
    *role=mulAlrReference;
    bool staged=activePlan->policy==MUL_PLAN_TDMA;mulLocalReservation_t local;
    if(staged) {
@@ -413,10 +413,10 @@ static bool plannedFollowerOperation(dwDevice_t *dev,uwbEvent_t event,mulAlrRole
      if(followerPrep.epoch==followerClock.epoch&&mulClockMapStatus(&followerClock,ms)==mulClockMapValid&&
         followerPrep.source==mulGeometrySource()&&
         (followerPrep.source!=mulDelayExternal||(followerPrep.context==mulGeometryContext()&&mulGeometrySnapshot(ms,NULL,NULL)==mulPoseAvailable)))
-      mulTwrStartTargets(&ranging,dev,refSequence(),local.poll,local.end);
+      {ranging.epoch=followerClock.epoch;mulTwrStartTargets(&ranging,dev,refSequence(),local.poll,local.end);}
      else mulAlrTiming(5,refSequence(),op.initiator,op.responder,2,now,local.start,local.poll,0);
     }else if(mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index))
-      mulTwrStartTargets(&ranging,dev,refSequence(),local.poll,local.end);
+      {ranging.epoch=followerClock.epoch;mulTwrStartTargets(&ranging,dev,refSequence(),local.poll,local.end);}
    }
    return ranging.planned&&ranging.active&&ranging.id==refSequence()&&ranging.operation==index;
   }
@@ -429,12 +429,12 @@ static uint32_t plannedFollowerWait(dwDevice_t *dev,uint32_t fallback) {
  unsigned count=mulRangingPlanCount(activePlan,refSequence());
  for(unsigned index=0;index<count;index++) {
   mulRangingOperation_t op;(void)mulRangingPlanOperation(activePlan,refSequence(),index,&op);uint64_t start;
-  if(op.kind==MUL_PLAN_AA&&op.responder==source[0]) {
+  if((op.kind==MUL_PLAN_AA||op.kind==MUL_PLAN_FF)&&op.responder==source[0]) {
    if(ranging.planned&&ranging.attempted&&ranging.id==refSequence()&&ranging.operation>=index)continue;
    uint64_t end=mulTimestampMask(refRx()+(uint64_t)op.endUs*MUL_DTU_PER_MS/1000);
    if(mulTimestampDifference(now,end)>=0)continue;
    start=mulTimestampMask(refRx()+(uint64_t)op.startUs*MUL_DTU_PER_MS/1000);
-  }else if(op.kind==MUL_PLAN_AR&&op.initiator==source[0]&&!(servedOperations&(UINT32_C(1)<<index))) {
+  }else if((op.kind==MUL_PLAN_AR||op.kind==MUL_PLAN_FF)&&op.initiator==source[0]&&!(servedOperations&(UINT32_C(1)<<index))) {
    if(activePlan->policy==MUL_PLAN_TDMA) {
     // Pending Kalman gets its full admission window first; preparation follows.
     if(!followerPrep.ready&&deferredClock.fit.active)
@@ -505,7 +505,7 @@ static uint32_t followerWait(dwDevice_t *dev)
       int64_t start=mulTimestampDifference(mulTimestampMask(refRx()+(uint64_t)op.startUs*MUL_DTU_PER_MS/1000),hw);
       int64_t end=mulTimestampDifference(mulTimestampMask(refRx()+(uint64_t)op.endUs*MUL_DTU_PER_MS/1000),hw);
       int64_t preparation=start;
-      if(op.kind==MUL_PLAN_AR&&op.initiator==source[0])preparation-=(int64_t)(MUL_PLAN_SERVICE_MARGIN_US*MUL_DTU_PER_MS/1000);
+      if((op.kind==MUL_PLAN_AR||op.kind==MUL_PLAN_FF)&&op.initiator==source[0])preparation-=(int64_t)(MUL_PLAN_SERVICE_MARGIN_US*MUL_DTU_PER_MS/1000);
       if(preparation>0&&preparation<next)next=preparation;
       if(start<=0&&end>0) {
         next=0; // No estimator work inside the global TWR phase.
@@ -737,7 +737,7 @@ static uint32_t plannedReferenceService(dwDevice_t *dev,bool start) {
    int follower=mulScheduleIndex(schedule,op.responder);
    if(op.initiator==source[0]&&(op.kind==MUL_PLAN_AR||(follower>0&&(followerSeen&(1u<<follower))))&&
       phase<(int64_t)((uint64_t)op.pollUs*MUL_DTU_PER_MS/1000)-(int64_t)minimumLeadDtu()&&
-      mulTwrConfigurePlan(&ranging,activePlan,pendingSequence,index))mulTwrStart(&ranging,dev,pendingSequence,pendingTimestamp);
+      mulTwrConfigurePlan(&ranging,activePlan,pendingSequence,index)){ranging.epoch=followerClock.epoch;mulTwrStart(&ranging,dev,pendingSequence,pendingTimestamp);}
   }else {
    int64_t remaining=begins-phase;
    uint32_t ms=remaining<=0?1:(uint32_t)((remaining+MUL_DTU_PER_MS-1)/MUL_DTU_PER_MS);

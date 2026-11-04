@@ -9,7 +9,49 @@ static mulRangingPlan_t plan(void) {
  p.broadcast.rxBudgetUs=2000;p.broadcast.rangingFlags=0;p.rlrCount=1;p.rlrs[0]=141;p.replyMs=20;
  mulRangingPlanTdma(&p);return p;
 }
+static void follower_pairs(void) {
+ mulRangingPlan_t p=plan();p.broadcast.periodMs=100;p.replyMs=5;p.twrWindowMs=30;
+ uint8_t old[64],wire[64];assert(mulRangingPlanEncode(old,&p)&&old[0]==5);
+ uint32_t oldHash=mulRangingPlanFingerprint(&p);
+ p.broadcast.count=4;p.broadcast.ids[3]=135;p.enabled|=4u;
+ mulRangingBudget_t b;assert(!mulRangingPlanValidate(&p,&b));
+ assert(b.dataEndUs==29100&&b.reservationUs==30000&&b.guardUs==40900);
+ assert(mulRangingPlanEncode(wire,&p)&&wire[0]==6&&wire[1]==7);
+ uint8_t damaged[64];memcpy(damaged,wire,64);damaged[0]=5;
+ uint32_t crc=mulScheduleCrc(damaged,60);for(unsigned k=0;k<4;k++)damaged[60+k]=crc>>(8*k);
+ mulRangingPlan_t rejected;assert(!mulRangingPlanDecode(damaged,&rejected));
+ memcpy(damaged,wire,64);damaged[1]&=~4u;crc=mulScheduleCrc(damaged,60);
+ for(unsigned k=0;k<4;k++)damaged[60+k]=crc>>(8*k);
+ assert(!mulRangingPlanDecode(damaged,&rejected));
+ mulRangingPlan_t q;assert(mulRangingPlanDecode(wire,&q));
+ const uint8_t i[]={132,132,132,133,133,134,132,133,134,135};
+ const uint8_t j[]={133,134,135,134,135,135,141,141,141,141};
+ for(unsigned c=0;c<1000;c++) {
+  mulRangingOperation_t op,other;assert(mulRangingPlanCount(&p,c)==1);
+  assert(mulRangingPlanOperation(&p,c,0,&op)&&mulRangingPlanOperation(&q,c,0,&other));
+  assert(op.initiator==i[c%10]&&op.responder==j[c%10]);
+  assert(op.kind==(c%10<3?MUL_PLAN_AA:c%10<6?4u:MUL_PLAN_AR));
+  assert(op.startUs==29100&&op.pollUs==33100&&op.endUs==59100);
+  assert(!memcmp(&op,&other,sizeof(op)));
+ }
+ p.enabled&=~4u;p.broadcast.count=3;p.broadcast.ids[3]=0;
+ assert(mulRangingPlanEncode(wire,&p)&&!memcmp(wire,old,64)&&mulRangingPlanFingerprint(&p)==oldHash);
+ for(unsigned n=3;n<=8;n++) {
+  p=plan();p.broadcast.periodMs=1000;p.broadcast.count=n;
+  for(unsigned k=0;k<n;k++)p.broadcast.ids[k]=100+2*(n-k);
+  for(unsigned k=n;k<8;k++)p.broadcast.ids[k]=0;
+  p.enabled|=4u;assert(!mulRangingPlanValidate(&p,NULL));
+  for(uint32_t c=UINT32_MAX-20;;c++) {
+   mulRangingOperation_t op;assert(mulRangingPlanOperation(&p,c,0,&op));
+   if(op.kind==4u)assert(op.initiator<op.responder&&op.responder!=p.broadcast.ids[0]);
+   if(c==20)break;
+  }
+ }
+ p=plan();p.enabled|=4u;p.policy=MUL_PLAN_FAIR;assert(mulRangingPlanValidate(&p,NULL));
+ p=plan();p.enabled|=4u;p.broadcast.count=2;p.broadcast.ids[2]=0;assert(mulRangingPlanValidate(&p,NULL));
+}
 int main(void) {
+ follower_pairs();
  mulRangingPlan_t p=plan();mulRangingBudget_t b;
  assert(!mulRangingPlanValidate(&p,&b));assert(b.dataEndUs==24100&&b.reservationUs==90000&&b.guardUs==85900);
  const unsigned initiators[]={132,132,132,133,134},responders[]={133,134,141,141,141};

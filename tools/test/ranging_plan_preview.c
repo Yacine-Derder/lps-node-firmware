@@ -13,14 +13,14 @@ int main(int argc,char **argv) {
  printf("{\"kalman_budget_ms\":%u,\"twr_window_ms\":%u,\"guard_us\":%lu,\"broadcasts\":[",
    p.policy==MUL_PLAN_TDMA?p.kalmanBudgetMs:0,p.policy==MUL_PLAN_TDMA?p.twrWindowMs:0,(unsigned long)b.guardUs);
  for(unsigned i=0;i<p.broadcast.count;i++)printf("%s{\"node\":%u,\"offset_us\":%lu}",i?",":"",p.broadcast.ids[i],(unsigned long)i*p.broadcast.slotMs*1000);
- printf("],\"version\":2,\"planner_version\":%u,\"radio_integration\":{\"lps_aa\":true,\"rlr_receive\":true,\"alr_rlr\":true},\"fingerprint\":\"%08lX\",\"aa_start_delay_us\":%lu,\"reservation_us\":%lu,\"data_end_us\":%lu,\"capacity\":%u,\"peak_operations\":%u,\"aa_pairs\":%u,\"ar_pairs\":%u,\"aa_pair_millihz\":%u,\"ar_pair_millihz\":%u,\"max_utilization_percent\":%u,\"requested_millihz\":%lu,\"scheduling_policy\":\"%s\",\"aa_priority\":%u,\"ar_priority\":%u,\"freshness_scope\":\"planned_reservations\",\"cycles\":[",
-  mulRangingPlanVersion(&p),(unsigned long)mulRangingPlanFingerprint(&p),(unsigned long)p.aaStartDelayUs,(unsigned long)b.reservationUs,(unsigned long)b.dataEndUs,b.capacity,b.peakOperations,b.aaPairs,b.arPairs,p.policy!=MUL_PLAN_TDMA&&b.aaPairs?p.aaMilliHz:0,p.policy!=MUL_PLAN_TDMA&&b.arPairs?p.arMilliHz:0,p.maxUtilization,(unsigned long)b.requestedMilliHz,p.policy==MUL_PLAN_TDMA?"tdma":p.policy?"freshness":"fair",p.aaPriority,p.arPriority);
+ printf("],\"version\":2,\"planner_version\":%u,\"radio_integration\":{\"lps_aa\":true,\"rlr_receive\":true,\"alr_rlr\":true},\"fingerprint\":\"%08lX\",\"aa_start_delay_us\":%lu,\"reservation_us\":%lu,\"data_end_us\":%lu,\"capacity\":%u,\"peak_operations\":%u,\"aa_pairs\":%u,\"ar_pairs\":%u,\"ff_pairs\":%u,\"aa_pair_millihz\":%u,\"ar_pair_millihz\":%u,\"max_utilization_percent\":%u,\"requested_millihz\":%lu,\"scheduling_policy\":\"%s\",\"aa_priority\":%u,\"ar_priority\":%u,\"freshness_scope\":\"planned_reservations\",\"cycles\":[",
+  mulRangingPlanVersion(&p),(unsigned long)mulRangingPlanFingerprint(&p),(unsigned long)p.aaStartDelayUs,(unsigned long)b.reservationUs,(unsigned long)b.dataEndUs,b.capacity,b.peakOperations,b.aaPairs,b.arPairs,b.ffPairs,p.policy!=MUL_PLAN_TDMA&&b.aaPairs?p.aaMilliHz:0,p.policy!=MUL_PLAN_TDMA&&b.arPairs?p.arMilliHz:0,p.maxUtilization,(unsigned long)b.requestedMilliHz,p.policy==MUL_PLAN_TDMA?"tdma":p.policy?"freshness":"fair",p.aaPriority,p.arPriority);
  for(unsigned at=0;at<count;at++) {
   uint32_t cycle=(uint32_t)(first+at);unsigned n=mulRangingPlanCount(&p,cycle);
   printf("%s{\"cycle\":%lu,\"reserved_us\":%lu,\"utilization_permille\":%lu,\"ranging_reserved_us\":%lu,\"operations\":[",at?",":"",(unsigned long)cycle,(unsigned long)(b.dataEndUs+n*b.reservationUs),(unsigned long)((b.dataEndUs+n*b.reservationUs)/p.broadcast.periodMs),(unsigned long)(n*b.reservationUs));
   for(unsigned i=0;i<n;i++) {
    mulRangingOperation_t o;if(!mulRangingPlanOperation(&p,cycle,i,&o))return 1;
-   printf("%s{\"kind\":\"%s\",\"initiator\":%u,\"responder\":%u,\"start_us\":%lu,\"poll_us\":%lu,\"end_us\":%lu}",i?",":"",o.kind==MUL_PLAN_AA?"alr_alr":"alr_rlr",o.initiator,o.responder,(unsigned long)o.startUs,(unsigned long)o.pollUs,(unsigned long)o.endUs);
+   printf("%s{\"kind\":\"%s\",\"initiator\":%u,\"responder\":%u,\"start_us\":%lu,\"poll_us\":%lu,\"end_us\":%lu}",i?",":"",o.kind==MUL_PLAN_AA?"alr_alr":o.kind==MUL_PLAN_FF?"follower_follower":"alr_rlr",o.initiator,o.responder,(unsigned long)o.startUs,(unsigned long)o.pollUs,(unsigned long)o.endUs);
   }
   printf("]}");
  }

@@ -1410,3 +1410,26 @@ result records retain local clock identity, cycle/operation, peer IDs, stage,
 TX-pending state, callback type and existing absolute deadlines. Verified TX and
 requested targets remain distinct. No scheduler, persistence, RF safety or wire
 format changes accompany tracing. [Inspection contract](mul_aa_diagnostics.md).
+
+
+## Central PC localization interface
+
+The initial PC estimator has two separate stages. Stage A reconstructs the ALR
+constellation using only inter-ALR TWR: for four ALRs, the three reference AA
+links and three opt-in FF links form K4. RLR ranges and TDoA are excluded from
+this geometry solution. Translation, rotation and reflection are gauge freedoms;
+a consistent coordinate convention or initial reflection branch fixes them.
+Reference AA ranges retain two consumers (synchronization and geometry); FF
+ranges have only the geometry consumer and never own reference propagation data.
+
+Stage B localizes each RLR relative to the Stage A constellation using downlink
+TDoA. ALR–RLR TWR remains scheduled for independent diagnostics/validation and
+future calibration, and is not required by either initial stage. The firmware
+exports pair IDs, cycle, local acquisition marker/domain/epoch, full-plan identity,
+validity, failure and power quality through bounded MR1 records; see
+[codec6 and measurement fields](mul_tdma.md#opt-in-complete-follower-graph-codec6).
+Host serial arrival time is not acquisition time. Local clock epochs are scoped
+to a firmware boot and require capture/session provenance on the PC. A moving
+constellation also requires handling the different acquisition times across the
+rotation. This firmware task supplies measurements and export tests, not the
+central geometry/TDoA estimators or an ALR networking stack.

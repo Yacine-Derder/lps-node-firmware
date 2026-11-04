@@ -521,3 +521,80 @@ The exact100ms restart matrix also executes `prepareFollower` and the real AR
 initiator path after warmup: preparation succeeds on both followers, `prep_fail`
 stays unchanged, one POLL is armed and its target differs from the immutable
 mapped reservation only by the existing0..511-DTU alignment rounding.
+
+## Opt-in complete follower graph (codec6)
+
+`plan set ff on` adds every unordered pair of followers, ordered lexicographically
+by ID with the lower ID initiating. It is valid only in TDMA with at least two
+followers. AA remains reference→sorted followers, then FF, then the existing
+sorted ALR→RLR operations. `ff off` preserves codec5 bytes, fingerprint and pair
+ordering; old codecs2..5 remain readable with no migration. The explicit FF bit
+is4 in the existing enable byte; codec6 is mandatory when it is set. No reserved
+byte is reused. RF5 framing and the five-message exchange remain unchanged.
+Older decoders reject codec6; every participant must run matching plan support.
+
+Codec6 fingerprints bind both the semantic plan and the actual ordered
+`(kind,initiator,responder)` triples. Starting with the codec5-style semantic CRC,
+fold each triple in rotation order as CRC32 of the little-endian prior CRC plus
+those three bytes. The storage CRCs remain unchanged. This uses bounded storage
+and no roster-sized packet buffers. Changing either broadcast order or enabled
+pair graph changes the full-plan radio fingerprint.
+
+For ALRs `[132,134,133,135]`, RLR `[141]`,100ms cycles,5ms slots,10ms Kalman
+budget,5ms reply and30ms TWR window, the fingerprint is **EC2B4B2A**. One operation
+occurs per cycle, with reservation29.1–59.1ms, POLL33.1ms and40.9ms guard:
+
+|cycle mod10|kind|initiator|responder|
+|---:|---|---:|---:|
+|0|AA|132|133|
+|1|AA|132|134|
+|2|AA|132|135|
+|3|FF|133|134|
+|4|FF|133|135|
+|5|FF|134|135|
+|6|AR|132|141|
+|7|AR|133|141|
+|8|AR|134|141|
+|9|AR|135|141|
+
+The two followers execute the existing initiator/responder state machines in
+exchange-local roles. FF POLL preparation maps the reservation into the
+initiator's local clock after its broadcast and protected Kalman work. Its epoch
+is checked even while it acts as exchange initiator. The responder never compares
+the initiator's P1 to the unrelated reference-clock origin. All packet identity,
+fixed-target, delayed-TX, antenna, setup lead, prefix, interval, age and deadline
+checks remain. FF RESULT never commits an AA propagation estimate or changes the
+clock fit. The separate `aa` owner retains its reference/follower binding through
+FF successes and pair-local failures; an actual reference epoch loss still
+invalidates synchronization through the existing owner.
+
+At normal/debug verbosity, successful planned AA and FF ranges retain the human
+`MUL TWR` line and add one atomic, machine-readable `MR1` line (at most128 bytes):
+
+```
+MR1 c=43 i=133 j=134 l=133 t=0123456789 e=0000000000000012 p=EC2B4B2A b=4 s=0 mm=1500 raw=1500 q=0 why=ok
+```
+
+`c` is the reference cycle; `i/j` are exchange initiator/responder; `l` identifies
+the emitting radio; `b` is1 for AA or4 for FF. `t` is a native40-bit local DW1000
+marker: P1 TX at the initiator or raw P2 RX at the responder. `e` is that local
+clock's64-bit boot-local epoch; `p` is the full-plan fingerprint. Neither time nor
+epoch can be compared across different radios without a clock model. On full
+reboot epoch tokens may repeat: the PC must retain capture/boot-session context.
+`s=0` supplies corrected/selected `mm`, uncorrected `raw` millimetres and power
+indicator `q` (1 applied,0 unavailable). Both endpoints report the same pairwise
+range in initiator DTU converted with the existing formula. On `s=1`, `t` is the
+failure marker, `why` is the existing failure reason, and no numerical range is
+supplied. Unstarted/missed preparations remain visible in `prep_fail`/SL1;
+missing records never imply success. Quiet mode suppresses successful range
+text; finite USB backpressure uses the existing bounded ring and dropped counter.
+No ALR networking stack or extra on-air traffic is added.
+
+The existing native harness now runs two independent production follower owners
+with separate clocks, pending workers and calibrations through all three FF pairs,
+including signed skew and native counter rollover. It checks the five-message
+exchange, fixed broadcast slots, preserved AA exports and subsequent Kalman
+progress. Codec/persistence tests cover all-byte cuts and opt-in/rollback. The
+console dispatchers are kept out of their callers to fit Flash without changing
+clock mathematics, stack reservations, queues, radio timing or validation.
+Physical validation and matching STM32 support are required before deployment.

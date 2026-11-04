@@ -68,7 +68,7 @@ typedef struct {
   uint8_t syncWindow:1;
   uint8_t followerSlot:3;
   uint8_t planned:1;
-  uint8_t operation;
+  uint8_t operation,local; // Exchange-local radio ID; independent of synchronization role.
   mulTwrAa_t aa;
 } mulTwr_t;
 

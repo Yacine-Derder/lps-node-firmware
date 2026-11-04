@@ -38,3 +38,14 @@ void test_normalSummariesAndMaximumTwrRecordFitAtomicUsbWrites(void){
  output[0]=0;mulLogRecord_t r={.event=8,.cycle=UINT32_MAX,.t={65535,65535},.local=1,.initiator=254,.responder=253};
  mulLogPush(&r);drain();TEST_ASSERT_EQUAL(127,strlen(output));TEST_ASSERT_NOT_NULL(strstr(output,"distance_m=307.475"));
 }
+void test_geometryRangesCarryBoundedMachineMetadataAndPreserveHumanLogs(void) {
+ mulLogSetLevel(mulLogNormal);
+ mulLogRecord_t r={.event=10,.cycle=UINT32_MAX,.local=254,.initiator=254,.responder=253,
+   .why=1,.t={65535,65535,UINT64_C(0xffffffffff),UINT64_MAX,UINT32_MAX,4}};
+ mulLogPush(&r);writable=false;mulLogPoll(sink);TEST_ASSERT_EQUAL_STRING("",output);
+ writable=true;drain();TEST_ASSERT_NOT_NULL(strstr(output,"result=OK"));
+ TEST_ASSERT_NOT_NULL(strstr(output,"MR1 c=4294967295 i=254 j=253 l=254 t=FFFFFFFFFF e=FFFFFFFFFFFFFFFF p=FFFFFFFF b=4 s=0"));
+ TEST_ASSERT_NOT_NULL(strstr(output,"s=0 mm=307475 raw=307475 q=1 why=ok"));
+ output[0]=0;r.event=11;r.reason="reservation_turnaround";mulLogPush(&r);drain();
+ TEST_ASSERT_NOT_NULL(strstr(output,"s=1"));TEST_ASSERT_NOT_NULL(strstr(output,"s=1 why=reservation_turnaround"));
+}

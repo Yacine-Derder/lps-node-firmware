@@ -3,14 +3,15 @@
 #include <string.h>
 static void put(uint8_t *p,uint32_t n,unsigned bytes){for(unsigned i=0;i<bytes;i++)p[i]=(uint8_t)(n>>(8*i));}
 static uint32_t get(const uint8_t *p,unsigned bytes){uint32_t n=0;for(unsigned i=0;i<bytes;i++)n|=(uint32_t)p[i]<<(8*i);return n;}
-uint8_t mulRangingPlanVersion(const mulRangingPlan_t *p){return p&&p->policy==MUL_PLAN_TDMA?MUL_PLAN_TDMA_VERSION:p&&p->aaStartDelayUs?MUL_PLAN_DELAY_VERSION:p&&p->policy==MUL_PLAN_FRESHNESS?MUL_PLAN_FRESHNESS_VERSION:MUL_PLAN_VERSION;}
+uint8_t mulRangingPlanVersion(const mulRangingPlan_t *p){return p&&(p->enabled&MUL_PLAN_FF)?MUL_PLAN_FF_VERSION:p&&p->policy==MUL_PLAN_TDMA?MUL_PLAN_TDMA_VERSION:p&&p->aaStartDelayUs?MUL_PLAN_DELAY_VERSION:p&&p->policy==MUL_PLAN_FRESHNESS?MUL_PLAN_FRESHNESS_VERSION:MUL_PLAN_VERSION;}
 void mulRangingPlanTdma(mulRangingPlan_t *p) {
+ uint8_t ff=p->policy==MUL_PLAN_TDMA?(p->enabled&MUL_PLAN_FF):0;
  p->policy=MUL_PLAN_TDMA;p->kalmanBudgetMs=10;
  unsigned minimum=p->broadcast.txLeadUs+2u*p->broadcast.rxBudgetUs+MUL_PLAN_SERVICE_MARGIN_US+
    4u*p->replyMs*1000+p->broadcast.airtimeUs+p->broadcast.guard100us*100;
  p->twrWindowMs=(uint16_t)((minimum+999)/1000);if(p->twrWindowMs<90)p->twrWindowMs=90;
  p->aaStartDelayUs=p->aaPriority=p->arPriority=p->maxUtilization=0;
- p->enabled=MUL_PLAN_AA|(p->rlrCount?MUL_PLAN_AR:0);
+ p->enabled=MUL_PLAN_AA|(p->rlrCount?MUL_PLAN_AR:0)|ff;
 }
 const char *mulRangingPlanValidate(const mulRangingPlan_t *p,mulRangingBudget_t *out) {
  if(!p)return "missing ranging plan";
@@ -19,7 +20,8 @@ const char *mulRangingPlanValidate(const mulRangingPlan_t *p,mulRangingBudget_t 
  if(s->profile!=MUL_PROFILE_EXPERIMENTAL)return "ranging planner requires explicit experimental timing";
  if(s->rangingFlags)return "generated plan requires zero legacy ranging flags";
  if(p->policy>MUL_PLAN_TDMA||(!p->policy&&(p->aaPriority||p->arPriority)))return "policy fair requires zero priorities; freshness supports priorities0..255";
- if(p->enabled&~(MUL_PLAN_AA|MUL_PLAN_AR))return "unknown ranging flags";
+ if(p->enabled&~(MUL_PLAN_AA|MUL_PLAN_AR|MUL_PLAN_FF))return "unknown ranging flags";
+ if((p->enabled&MUL_PLAN_FF)&&(p->policy!=MUL_PLAN_TDMA||s->count<3))return "FF needs TDMA and >=3 ALRs";
  if(p->rlrCount>MUL_MAX_RLRS)return "RLR count: 0..8";
  for(unsigned i=0;i<MUL_MAX_RLRS;i++) {
   if(i>=p->rlrCount){if(p->rlrs[i])return "unused RLR entries must be zero";continue;}
@@ -35,6 +37,7 @@ const char *mulRangingPlanValidate(const mulRangingPlan_t *p,mulRangingBudget_t 
  mulRangingBudget_t b={0};
  b.aaPairs=(p->enabled&MUL_PLAN_AA)?s->count-1:0;
  b.arPairs=(p->enabled&MUL_PLAN_AR)?s->count*p->rlrCount:0;
+ b.ffPairs=(p->enabled&MUL_PLAN_FF)?(s->count-1)*(s->count-2)/2:0;
  b.requestedMilliHz=(uint32_t)b.aaPairs*p->aaMilliHz+(uint32_t)b.arPairs*p->arMilliHz;
  b.prepareUs=(uint32_t)s->txLeadUs+s->rxBudgetUs+MUL_PLAN_SERVICE_MARGIN_US;
  /* RX timestamps are marker referenced: reserve four complete reply intervals,
@@ -47,7 +50,7 @@ const char *mulRangingPlanValidate(const mulRangingPlan_t *p,mulRangingBudget_t 
   if(s->slotMs<5)return "TDMA slot_ms >=5; 3ms pre-TX bound unverified";
   if(p->aaStartDelayUs||p->aaPriority||p->arPriority||p->maxUtilization)
    return "TDMA has no rates/priorities/AA delay/utilization setting";
-  if(!b.aaPairs&&!b.arPairs)return "TDMA needs at least one enabled TWR pair";
+  if(!b.aaPairs&&!b.arPairs&&!b.ffPairs)return "TDMA needs at least one enabled TWR pair";
   if(p->kalmanBudgetMs<5)return "kalman_budget_ms >=5; dense KF bound";
   if((uint32_t)p->twrWindowMs*1000<b.reservationUs)return "twr_window_ms below complete guarded exchange";
   b.dataEndUs+=(uint32_t)p->kalmanBudgetMs*1000+MUL_PLAN_SERVICE_MARGIN_US;
@@ -108,19 +111,30 @@ static uint8_t ordered(const uint8_t *ids,unsigned count,unsigned rank,uint8_t s
  }
  return 255;
 }
+/* Codec6 fixes class order AA, all lexicographic FF pairs, AR. The reference is excluded from
+ * the chain even when its ID sorts between followers. No radio/clock role changes. */
+static void tdmaPair(const mulRangingPlan_t *p,const mulRangingBudget_t *b,unsigned pair,mulRangingOperation_t *o) {
+ if(pair<b->aaPairs) {
+  o->kind=MUL_PLAN_AA;o->initiator=p->broadcast.ids[0];
+  o->responder=ordered(p->broadcast.ids,p->broadcast.count,pair,o->initiator);
+ }else if((pair-=b->aaPairs)<b->ffPairs) {
+  o->kind=MUL_PLAN_FF;
+  unsigned first=0,width=p->broadcast.count-2;
+  while(pair>=width){pair-=width;first++;width--;}
+  o->initiator=ordered(p->broadcast.ids,p->broadcast.count,first,p->broadcast.ids[0]);
+  o->responder=ordered(p->broadcast.ids,p->broadcast.count,first+1+pair,p->broadcast.ids[0]);
+ }else {
+  pair-=b->ffPairs;o->kind=MUL_PLAN_AR;
+  o->initiator=ordered(p->broadcast.ids,p->broadcast.count,pair/p->rlrCount,255);
+  o->responder=ordered(p->rlrs,p->rlrCount,pair%p->rlrCount,255);
+ }
+}
 bool mulRangingPlanOperation(const mulRangingPlan_t *p,uint32_t cycle,unsigned index,mulRangingOperation_t *out) {
  mulRangingBudget_t b;if(!out||mulRangingPlanValidate(p,&b)||!b.requestedMilliHz)return false;
  unsigned n=count(p,&b,cycle);if(index>=n)return false;
  if(p->policy==MUL_PLAN_TDMA) {
-  unsigned pair=cycle%(b.aaPairs+b.arPairs);mulRangingOperation_t o={0};
-  if(pair<b.aaPairs) {
-   o.kind=MUL_PLAN_AA;o.initiator=p->broadcast.ids[0];
-   o.responder=ordered(p->broadcast.ids,p->broadcast.count,pair,o.initiator);
-  }else {
-   pair-=b.aaPairs;o.kind=MUL_PLAN_AR;
-   o.initiator=ordered(p->broadcast.ids,p->broadcast.count,pair/p->rlrCount,255);
-   o.responder=ordered(p->rlrs,p->rlrCount,pair%p->rlrCount,255);
-  }
+  unsigned pair=cycle%(b.aaPairs+b.ffPairs+b.arPairs);mulRangingOperation_t o={0};
+  tdmaPair(p,&b,pair,&o);
   o.startUs=b.dataEndUs;o.pollUs=o.startUs+b.prepareUs;o.endUs=o.startUs+b.reservationUs;
   *out=o;return true;
  }
@@ -175,8 +189,9 @@ bool mulRangingPlanEncode(uint8_t out[MUL_PLAN_BYTES],const mulRangingPlan_t *p)
  memcpy(out,b,sizeof(b));return true;
 }
 const char *mulRangingPlanDecodeError(const uint8_t in[MUL_PLAN_BYTES],mulRangingPlan_t *out) {
- if(!in||!out||(in[0]!=MUL_PLAN_VERSION&&in[0]!=MUL_PLAN_FRESHNESS_VERSION&&in[0]!=MUL_PLAN_DELAY_VERSION&&in[0]!=MUL_PLAN_TDMA_VERSION)||in[45]||get(in+60,4)!=mulScheduleCrc(in,60))return "ranging plan version/CRC/header";
- if((in[0]==MUL_PLAN_TDMA_VERSION&&in[50]!=MUL_PLAN_TDMA)||(in[0]!=MUL_PLAN_TDMA_VERSION&&in[50]==MUL_PLAN_TDMA)||(in[0]==MUL_PLAN_VERSION&&(in[50]||in[51]||in[52]))||(in[0]==MUL_PLAN_FRESHNESS_VERSION&&in[50]!=MUL_PLAN_FRESHNESS))return "ranging plan policy/version";
+ if(!in||!out||(in[0]!=MUL_PLAN_VERSION&&in[0]!=MUL_PLAN_FRESHNESS_VERSION&&in[0]!=MUL_PLAN_DELAY_VERSION&&in[0]!=MUL_PLAN_TDMA_VERSION&&in[0]!=MUL_PLAN_FF_VERSION)||in[45]||get(in+60,4)!=mulScheduleCrc(in,60))return "ranging plan version/CRC/header";
+ if(((in[0]==MUL_PLAN_TDMA_VERSION||in[0]==MUL_PLAN_FF_VERSION)&&in[50]!=MUL_PLAN_TDMA)||((in[0]!=MUL_PLAN_TDMA_VERSION&&in[0]!=MUL_PLAN_FF_VERSION)&&in[50]==MUL_PLAN_TDMA)||(in[0]==MUL_PLAN_VERSION&&(in[50]||in[51]||in[52]))||(in[0]==MUL_PLAN_FRESHNESS_VERSION&&in[50]!=MUL_PLAN_FRESHNESS))return "ranging plan policy/version";
+ if((in[0]==MUL_PLAN_FF_VERSION)!=!!(in[1]&MUL_PLAN_FF))return "ranging plan FF/version";
  if(in[0]!=MUL_PLAN_DELAY_VERSION&&get(in+53,4))return "ranging plan delay/version";
  if(in[0]==MUL_PLAN_DELAY_VERSION&&!get(in+53,4))return "ranging plan delay/version";
  for(unsigned i=57;i<60;i++)if(in[i])return "ranging plan reserved bytes";
@@ -191,5 +206,17 @@ uint32_t mulRangingPlanFingerprint(const mulRangingPlan_t *p) {
  uint8_t b[MUL_PLAN_BYTES];if(!mulRangingPlanEncode(b,p))return 0;
  // Hash semantic payload, not the CRC codeword embedded at schedule[28..31].
  // Keep both stored CRCs unchanged: existing EEPROM remains readable/verifiable.
- memset(b+32,0,4);return mulScheduleCrc(b,60);
+ memset(b+32,0,4);uint32_t h=mulScheduleCrc(b,60);
+ if(p->enabled&MUL_PLAN_FF) {
+  mulRangingBudget_t budget;(void)mulRangingPlanValidate(p,&budget);
+  // Bind the actual pair sequence, not just the enable bit. Seven-byte CRC
+  // folding keeps the additional stack bounded independently of roster sizes.
+  unsigned pairs=budget.aaPairs+budget.ffPairs+budget.arPairs;
+  for(unsigned i=0;i<pairs;i++) {
+   mulRangingOperation_t op;tdmaPair(p,&budget,i,&op);
+   put(b,h,4);b[4]=op.kind;b[5]=op.initiator;b[6]=op.responder;
+   h=mulScheduleCrc(b,7);
+  }
+ }
+ return h;
 }
