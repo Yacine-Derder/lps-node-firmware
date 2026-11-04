@@ -37,8 +37,16 @@ Codec5 adds four timing controls, independent post-own-TX Kalman work and one
 canonical cycle-indexed AA/AR TWR opportunity. Existing codec2/3/4 plans are retained;
 no live plan or EEPROM migration is automatic. LPS and STM32 share the canonical
 planner; ESP32 transports the existing RF5/replay formats. See
-[configuration, timing and operator validation](docs/mul_tdma.md). Physical200ms
-and3ms feasibility remain unverified;3ms TDMA slots are rejected.
+[configuration, timing and operator validation](docs/mul_tdma.md). Codec6 now adds
+explicit opt-in all-pairs follower TWR, preserving FF-off bytes/hash and reference
+calibration ownership. Four ALRs produce the six-edge K4 geometry graph, followed
+by four diagnostic AR opportunities. Bounded MR1 records and an offline JSONL
+exporter provide local acquisition/session provenance. The future PC architecture
+separates inter-ALR-only geometry from RLR TDoA localization; no PC solver is added.
+Offline native/sanitizer/replay, persistence and linked-image checks pass across
+LPS/STM32/host. Four-ALR100ms physical timing/ranging/throughput and board stack
+watermarks remain operator work; no hardware was accessed. Existing three-ALR
+physical success is user-reported.3ms TDMA slots remain rejected.
 
 ## Current software upgrade campaign
 

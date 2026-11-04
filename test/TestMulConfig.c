@@ -637,9 +637,10 @@ void test_verbosityJournalSurvivesEveryInterruptedByteAndLostCommitAck(void) {
 }
 void test_ffOptInConsolePersistsFullTenPairPreviewAndRejectsRfOnEdits(void) {
  send(":off\n");apply();uint8_t legacy[100];memcpy(legacy,memory,sizeof(legacy));
- send(":plan init tdma\n:plan set lead_us 1000\n:plan set process_us 2000\n:plan set slot_ms 5\n");
- send(":plan set reply_ms 5\n:plan set twr_window_ms 30\n:plan set cycle_ms 100\n");
- send(":plan alrs 132 134 133 135\n:plan rlrs 141\n:plan set aa on\n:plan set ar on\n");
+ send(":plan init tdma\n:plan set ff off\n:plan set lead_us 1000\n:plan set process_us 2000\n");
+ send(":plan set air_us 1000\n:plan set guard_us 100\n:plan set slot_ms 5\n:plan set cycle_ms 1000\n");
+ send(":plan alrs 132 134 133 135\n:plan rlrs 141\n:plan set reply_ms 5\n:plan mode tdma\n");
+ send(":plan set aa on\n:plan set ar on\n:plan set kalman_budget_ms 10\n:plan set twr_window_ms 30\n:plan set cycle_ms 100\n:plan set revision 1\n");
  const mulStoredPlan_t *s=NULL;TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&s));
  TEST_ASSERT_FALSE(s->plan.enabled&MUL_PLAN_FF);TEST_ASSERT_EQUAL(5,mulRangingPlanVersion(&s->plan));
  send(":plan set ff on\n:plan use on\n");TEST_ASSERT_EQUAL(mulPlanStored,cfgMulPlanCached(&s));

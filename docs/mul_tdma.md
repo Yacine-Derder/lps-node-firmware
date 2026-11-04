@@ -623,3 +623,207 @@ wakeups cannot retransmit a retired opportunity. Its production KF calls include
 a modeled4.4ms execution cost; this checks admission/slot interactions and does
 not establish a hardware WCET. Synthetic exported acquisitions advance in their
 declared local modular clocks with the scheduled cycle, rather than host time.
+
+## Four-ALR operator configuration
+
+These are manual deployment instructions, not actions performed by the agent.
+Keep the existing three-ALR100ms/reply5/window30 configuration and captures as the
+rollback baseline. Its codec5 fingerprint is **2AED8A85** with ordered ALRs
+`[132,134,133]`, RLR `[141]` and revision1. The approximately98% physical TWR
+success is user-reported; this change has only been tested offline. Earlier
+200ms/reply20 and100ms/reply10 sections describe other profiles, not this target.
+
+1. Stop RF on every ALR (`:off`) and RLR (`off`); require status requested/running
+   both0. Save `status`, `plan show`, `cfg show`, `clock show`, `cal show` and
+   diagnostics from each device. Preserve address, role, power/antenna calibration,
+   retained legacy profile and configuration sectors. Keep known-good firmware
+   artifacts for rollback. Do not issue defaults or mass erase.
+2. Build the same stationary CH5 image for all four ALRs and Universal for RLR141
+   using the existing build commands above. Check each ELF before operator-only
+   programming. The LPS artifacts are `bin/lps-node-firmware.elf/.dfu`; STM32 is
+   `build/Universal/EPuck_STM32.elf`. Update LPS and STM32 together, retaining RF OFF
+   across programming/reset. No ESP32 firmware update is needed. Update the PC
+   replay tools from the sibling ESP repository.
+3. Confirm ALR132 is reference and ALR134/133/135 have their own distinct existing
+   IDs in mode5. RLR141 retains address141 and `hybrid_static`. If ALR135 has not
+   been provisioned, use the established [identity/roster commands](mul_commands.md#persistent-multi-alr-schedules)
+   while OFF before the common plan below; verify its saved/boot ID and mode after
+   the required restart. Do not copy another board's address or calibration.
+4. On each ALR, issue the following complete lines, inspecting every reply. If a
+   saved plan exists, retain it and skip `plan init tdma`; initialize only if absent.
+   The temporary1000ms period permits safe changes without bypassing validation.
+   Setup lead/process must be reduced before setting5ms slots.
+
+```text
+:off
+:status
+:plan show
+# Only if the plan is absent:
+:plan init tdma
+:plan set ff off
+:plan set lead_us 1000
+:plan set process_us 2000
+:plan set air_us 1000
+:plan set guard_us 100
+:plan set slot_ms 5
+:plan set cycle_ms 1000
+:plan alrs 132 134 133 135
+:plan rlrs 141
+:plan set reply_ms 5
+:plan mode tdma
+:plan set aa on
+:plan set ar on
+:plan set kalman_budget_ms 10
+:plan set twr_window_ms 30
+:plan set cycle_ms 100
+:plan set revision 1
+:plan set ff on
+:plan use on
+:cfg set clock_estimator kalman
+:plan show
+:clock show
+:status
+```
+
+On **RLR141**, send the same block without the leading `:`. It changes the plan
+and selected estimator only; retain existing samples/telemetry/Wi-Fi verbosity
+settings unless deliberately preparing a capture. `plan init` is conditional and
+the comment line is not a command. Every successful mutation is autosaved; no
+extra save is needed. The ALR native test executes this command sequence and
+checks the final fingerprint, legacy storage preservation and reboot persistence.
+
+All five devices must report selected codec6/hash **EC2B4B2A**, ordered ALR slots
+132@0,134@5,133@10,135@15ms, RLR141, cycle100ms, Kalman budget10ms, reply5ms and
+window30ms. A representative ALR `plan show` excerpt follows (generation varies):
+
+```text
+PLAN selected=1 gen=<saved-generation> codec=6 p=2
+PLAN hash=EC2B4B2A ALR=4 RLR=1
+PLAN slot=5 cycle=100 reply=5
+PLAN AA=1 AR=1 FF=1 util=0
+TDMA kalman_budget_ms=10 twr_window_ms=30
+TDMA start_us=29100 guard_us=40900
+ALR 0 id=132 offset=0 ms
+ALR 1 id=134 offset=5 ms
+ALR 2 id=133 offset=10 ms
+ALR 3 id=135 offset=15 ms
+RLR 0 id=141
+AIR reserve=30000 capacity=1 peak=1
+PREVIEW reference_us; TDMA full rotation
+C0 A 132>133 29100..59100us
+POLL cycle=0 at=33100 us
+C1 A 132>134 29100..59100us
+POLL cycle=1 at=33100 us
+C2 A 132>135 29100..59100us
+POLL cycle=2 at=33100 us
+C3 F 133>134 29100..59100us
+POLL cycle=3 at=33100 us
+C4 F 133>135 29100..59100us
+POLL cycle=4 at=33100 us
+C5 F 134>135 29100..59100us
+POLL cycle=5 at=33100 us
+C6 R 132>141 29100..59100us
+POLL cycle=6 at=33100 us
+C7 R 133>141 29100..59100us
+POLL cycle=7 at=33100 us
+C8 R 134>141 29100..59100us
+POLL cycle=8 at=33100 us
+C9 R 135>141 29100..59100us
+POLL cycle=9 at=33100 us
+```
+
+Only after agreement, start RLR141 (`on`), then all three followers (`:on`), then
+reference132 (`:on`). Inspect status and allow warmup plus at least one full1s
+rotation. A failed command, unsupported version or mismatch must be resolved
+while OFF; do not substitute a legacy schedule to bypass the check.
+
+For rollback, stop **all** RF first. On the new firmware set FF off everywhere
+before loading older images; restore the saved codec5 plan, including the original
+three-ALR roster and timing, and verify **2AED8A85** if using the baseline above.
+To construct that baseline with the common block, leave FF off, replace the ALR
+roster by `132 134 133`, and omit `ff on`; all other target values stay the same.
+Keep135 OFF after removing it from the roster. Preserve each board's calibration
+and identity and verify the selected plan again after programming. A frozen
+pre-FF decoder from `b8205b1` accepts codec5 and rejects codec6. Its journal can
+fall back to a previously supported record; rejection alone does not guarantee
+RF remains OFF on an older image. Explicit saved OFF and post-boot inspection
+remain required. `plan use off` retains the plan but selects a separate legacy
+profile, which must be inspected independently before any ON.
+
+### Optional inter-ALR-only schedule
+
+No new planner policy is needed. With all five radios OFF, `plan set ar off`
+(`:plan set ar off` on ALRs) on every participant leaves exactly the first six
+AA/FF pairs, one per100ms cycle: each edge gets an opportunity every600ms
+(approximately1.67Hz). The target fingerprint becomes **68648141**. RLR141 stays
+in the roster and continues receiving all four broadcasts at10Hz; it simply has
+no assigned AR responses. Native median/Kalman replay with AR off still yields
+all135 TDoA/vector comparisons exactly. Leave AR on for the requested initial
+ten-pair configuration. Toggling AR back on restores **EC2B4B2A**.
+
+### Physical acceptance, still outstanding
+
+Use fixed, noncollinear ALR geometry and the existing calibration first. Capture
+all four ALR serial streams at normal verbosity plus RLR essential telemetry and
+replay, retaining capture/boot-session IDs. Split export sessions at full resets.
+Do not tune offsets or gates to force agreement. Before testing FF, repeat the
+original three-ALR FF-off baseline and compare success/error counters against the
+user's prior experiment under the same geometry and capture load.
+
+For the target plan, after warmup collect at least10min. Check exactly one TWR
+opportunity per cycle and all ten pairs per rotation, with each pair at1Hz. Count
+successes, failures and missed opportunities separately. Require all six unique
+inter-ALR edges in `MR1`/JSONL, correct endpoint/plan/epoch provenance and no
+numerical range on failures. Compare the six distances to independently measured
+geometry; quantization tests do not establish physical accuracy. Endpoint reports
+are duplicates of one exchange, not independent factors. Four AR pairs remain
+available for diagnostic comparison but must not enter Stage A geometry.
+
+Require ALR broadcasts at0/5/10/15ms, continuous follower Kalman/tx counters and
+fresh RLR three-component TDoA vectors at100ms cycles. Capture debug SL1 for a
+short timing interval if needed; inspect its dropped counter and restore normal
+verbosity afterward. Verify actual setup lead, delayed-TX alignment, reservation
+end before59.1ms and preparation guard40.9ms, without sustained prep_fail,
+slot_miss, backlog or overrun growth. Check reference AA delay ownership/age before
+and after FF cycles: FF must not refresh or replace it. Invalid/missing data must
+remain explicitly unavailable. Record USB/UART/Wi-Fi drops separately.
+
+Repeat reference-only1/5/10s OFF/ON recovery using the procedure above, leaving
+followers/RLR running; keep the1s test's measured total downtime below3s. Require
+automatic warmup, fresh AA correction and resumed TDoA/FF without follower reset.
+A failure or missed broadcast may retire one opportunity but must not cause an
+extra POLL. Board stack high-water, interrupt/radio WCET, true4th-slot fit and
+sustained serial/telemetry throughput remain hardware acceptance requirements.
+The future PC solver must handle asynchronous edges, clock conversion, NLOS and
+geometry degeneracy; it is deliberately outside this firmware task.
+
+### Final offline verification and resource limits
+
+All320 native tests and295 MUL ASan/UBSan tests pass at each500/50/10ms compile
+profile; the production SL1 profile passes295 plus sanitizers. Canonical/vendor
+byte agreement, independent golden tests, both DW roles and configuration rejection
+pass. All58 ALR host tests pass, including exact ten/six-pair preview, old bytes,
+persistence and synthetic K4 C-formatter export. The frozen clock comparison
+passes240000 bit-identical complete-state observations. STM32 passes all nine
+native suites, its runtime/power-cut/replay/FF-overhearing checks and nine
+coexistence scenarios. ESP host tests pass121; accelerated full transport replay
+matches all135 four-ALR TDoA/vector results exactly. Intentional paced UART stress
+still reports queue drops rather than hiding them.
+
+Clean GCC13.2.1 linked images, checked by `tools/test/check_mul_image.py`:
+
+|image|Flash bytes /131072|RAM including linker stack /16384|free Flash|free RAM|
+|---|---:|---:|---:|---:|
+|default build (existing local CH5 selection)|130808|14932|264|1452|
+|stationary CH5 production/SL1|130856|14932|216|1452|
+
+The stationary artifact is restored in `bin/`. The clock workspace stays168 B,
+radio and main task stacks1600 B each, idle800 B, linker stack2048 B and USB
+queue512 B. No safety allocation, guard, validation or estimator math is reduced.
+Individual production compiler frames: mapping296 B, preparation120 B,
+worker/wait328 B, ALR event handler256 B, TWR event handler488 B, fingerprint160 B,
+plan command224 B, serial dispatch40 B and main task448 B; Begin/Finish96/104 B.
+These are individual frames, not a complete call-chain bound or board watermark.
+STM32 Universal uses172420/786432 B Flash and44344/131072 B RAM, CCM0, with
+reserved-sector ELF checks passing. ESP firmware is unchanged. Small Flash
+headroom makes the linked-image check mandatory for any changed build flags.
