@@ -830,3 +830,21 @@ These are individual frames, not a complete call-chain bound or board watermark.
 STM32 Universal uses172420/786432 B Flash and44344/131072 B RAM, CCM0, with
 reserved-sector ELF checks passing. ESP firmware is unchanged. Small Flash
 headroom makes the linked-image check mandatory for any changed build flags.
+
+## Four-ALR TWR turnaround investigation
+
+User captures show a physical reliability regression at unchanged100ms/5ms
+slots/reply5/window30: many endpoint-paired failures are responder `late_setup`
+with initiator `timeout`. This is not evidence that every timeout has that cause.
+Normal and debug captures have different execution load and capture boundaries.
+
+An offline Cortex-M0 reproduction is `tools/test/twr_cost.py` (use the optional
+Unicorn/Capstone/pyelftools environment used by `clock_cost.py`). With the production
+-Os/LTO codec path, valid AA packet encoding/decoding costs14398/15031 executed
+Thumb instructions for3ALR FF-off,19392/20025 for3ALR FF-on,14495/15128 for4ALR
+FF-off and22887/23520 for4ALR FF-on. The full plan fingerprint is recomputed on
+every packet, including AA in an FF plan; the extra pair-fold work therefore
+follows the plan rather than just the FF role. The radio encoder runs inside
+`sendPacket` between its two setup-lead checks. These are CPU instruction counts,
+not cycle simulation or a measurement of IRQ/SPI latency. They establish
+avoidable deadline-path work, not proof of the complete physical failure cause.
