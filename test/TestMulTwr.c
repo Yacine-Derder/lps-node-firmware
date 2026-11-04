@@ -25,7 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static uint64_t mapCost,fitCost;static unsigned mapCalls;
+static uint64_t mapCost,fitCost,callbackLag;static bool corruptFrame,modelSetupTime;static unsigned mapCalls;
 static void advance(int64_t at);
 static bool timedMap(const mulClock_t *,uint64_t,uint32_t,mulClockMapping_t *);
 static bool timedCorrected(const mulNetwork_t *,const mulClock_t *,uint64_t,const mulClockDelay_t *,uint32_t,mulClockCorrectedMapping_t *);
@@ -97,7 +97,8 @@ void dwGetRawReceiveTimestamp(dwDevice_t *dev, dwTime_t *time) { time->full=radi
 void dwSetTxRxTime(dwDevice_t *dev, const dwTime_t time) {
   TEST_ASSERT_EQUAL_UINT64(0, time.full & 511);
   radio(dev)->raw=time.full;
-  radio(dev)->now=mulTimestampMask(radio(dev)->now+radio(dev)->setupLag);
+  if(modelSetupTime)advance(physical+radio(dev)->setupLag);
+  else radio(dev)->now=mulTimestampMask(radio(dev)->now+radio(dev)->setupLag);
 }
 void dwSpiRead(dwDevice_t *dev, uint8_t reg, uint32_t sub, void *data, size_t size) {
 #if MUL_RX_DIAG
@@ -204,7 +205,7 @@ void setUp(void) {
   }
   observationCount=0; offsets[2]=MUL_TIMESTAMP_MASK-5000*MS;
   offsets[0]=MUL_TIMESTAMP_MASK-660*MS; offsets[1]=UINT64_C(0x723456789a);
-  skew=0; flight=0; physical=framePhysical=0; ticks=5000;mapCost=fitCost=0;mapCalls=0;
+  skew=0; flight=0; physical=framePhysical=0; ticks=5000;mapCost=fitCost=0;callbackLag=2*MS;corruptFrame=modelSetupTime=false;mapCalls=0;
   protocolRole[0]=mulAlrReference;protocolRole[1]=mulAlrFollower;
   exchangeSequence=5; mulClockReset(&model);
 }
@@ -224,7 +225,8 @@ static void transfer(int from) {
   if (s->stampError == 0) TEST_ASSERT_EQUAL_UINT64(s->actual,packet.txTimestamp);
   int64_t when=sendTime(from);
   advance(when+(int64_t)MS); s->armed=false; dispatch(from,eventPacketSent);
-  advance(when+flight+2*(int64_t)MS);
+  advance(when+flight+(int64_t)callbackLag);
+  if(corruptFrame){payload[13]^=1;corruptFrame=false;}
   memcpy(r->rx,payload,length); r->rxLength=length; r->arrival=mulTimestampMask(clockAt(to,when+flight)+r->physicalRx-r->rxAntenna+r->rxBiasDtu); r->receiving=false;
   dispatch(to,eventPacketReceived);
 }
@@ -2139,5 +2141,74 @@ void test_ffAllPairsRunBothProductionFollowersWithKalmanCalibrationAndFixedSlots
    TEST_ASSERT_EQUAL_UINT64(epoch[node],twins[node].io.alr.clock.epoch);
    TEST_ASSERT_TRUE(twins[node].work.fit.accepted>accepted[node]);
   }
+ }
+}
+
+
+void test_tdmaPersistentFollowerAlternatesAaFfArWithTurnaroundFaultsAndRecovery(void) {
+ for(unsigned n=3;n<=4;n++)for(unsigned ff=0;ff<2;ff++) {
+  setUp();mulLogSetLevel(mulLogNormal);mulRangingPlan_t p;deferredConfiguration(&p,200,134);
+  p.broadcast.count=n;if(n==4)p.broadcast.ids[3]=135;
+  p.broadcast.periodMs=100;p.replyMs=5;p.aaStartDelayUs=0;mulRangingPlanTdma(&p);p.twrWindowMs=30;
+  if(ff)p.enabled|=MUL_PLAN_FF;
+  multiConfiguration.mulSchedule=p.broadcast;mulAlrAlgorithm.init(&multiConfiguration,&radios[1].device);
+  modelSetupTime=true;fitCost=4400*MS/1000;flight=2131;skew=ff?-150000:150000;
+  uint64_t epoch=followerClock.epoch;unsigned opportunity=0,success=0,fail=0,kinds=0,successfulKinds=0,misses=0;
+  for(unsigned cycle=0;cycle<120;cycle++) {
+   int64_t base=(int64_t)cycle*100*MS;uint32_t prepBefore=mulLogCounter(logPrepFail);
+   advance(base+flight+MS);exchangeSequence=cycle;
+   origins[0]=clockAt(0,base);origins[1]=clockAt(1,base+flight);
+   injectMulti(1,0,cycle,origins[0],origins[1]);TEST_ASSERT_TRUE(flags.tx);
+   advance(sendTime(1)+MS);radios[1].armed=false;dispatch(1,eventPacketSent);
+   advance(base+22*MS);dispatch(1,eventTimeout);
+   TEST_ASSERT_FALSE(deferredClock.fit.active);TEST_ASSERT_EQUAL_UINT64(epoch,followerClock.epoch);
+   mulRangingOperation_t op;TEST_ASSERT_TRUE(mulRangingPlanOperation(&p,cycle,0,&op));
+   bool own=op.initiator==134||op.responder==134;
+   if(cycle>=20&&own) {
+    kinds|=op.kind;
+    bool initiator=op.initiator==134;unsigned first=initiator?1:0;
+    mulTwrAa_t aa=ranging.aa;
+    memset(ctx(0),0,sizeof(*ctx(0)));protocolRole[0]=initiator?mulAlrFollower:mulAlrReference;
+    TEST_ASSERT_TRUE(mulTwrConfigurePlan(ctx(0),&p,cycle,0));ctx(0)->epoch=followerClock.epoch;
+    mulRxRearm(&radios[0].device);
+    for(unsigned i=0;i<2;i++)radios[i].setupLag=1270*MS/1000;
+    advance(base+(int64_t)op.startUs*MS/1000+MS/10);dispatch(1,eventTimeout);
+    if(!initiator){TEST_ASSERT_TRUE(mulTwrStart(ctx(0),&radios[0].device,cycle,origins[0]));}
+    if(!radios[first].armed) {
+     // Warmup or AA age expiring inside the mapped reservation must fail
+     // closed, with one explicit preparation failure and no retry.
+     TEST_ASSERT_TRUE(initiator);TEST_ASSERT_EQUAL(prepBefore+1,mulLogCounter(logPrepFail));
+     TEST_ASSERT_FALSE(ranging.active);misses++;goto cycle_end;
+    }
+    // Establish all roles with repeated successes before rotating faults.
+    unsigned attempt=opportunity++,fault=cycle<50?0:(attempt+attempt/6)%6;
+    uint32_t ok=mulLogCounter(logTwrOk);
+    if(fault==2)corruptFrame=true;
+    if(fault==3)callbackLag=2800*MS/1000; // RESPONSE cannot keep its1ms post-setup lead.
+    else callbackLag=2600*MS/1000; // Tight but valid1.13ms modeled residual lead.
+    transfer(first);callbackLag=2600*MS/1000;
+    if(fault==0||fault==4||fault==5) {
+     transfer(1-first);
+     if(fault==4)callbackLag=2800*MS/1000; // Same boundary at REPORT preparation.
+     transfer(first);callbackLag=2600*MS/1000;
+     if(fault!=4){transfer(1-first);transfer(first);success++;successfulKinds|=op.kind;}
+    }else if(fault==1)dispatch(1,eventReceiveFailed);
+    if(fault>=1&&fault<=4)fail++;
+    if(op.kind!=MUL_PLAN_AA)TEST_ASSERT_EQUAL_MEMORY(&aa,&ranging.aa,sizeof aa);
+    if(fault==0||fault==5)TEST_ASSERT_EQUAL(ok+2,mulLogCounter(logTwrOk));
+    else TEST_ASSERT_EQUAL(ok,mulLogCounter(logTwrOk));
+   }
+cycle_end:
+   advance(base+61*MS);
+   if(ctx(0)->active)dispatch(0,eventTimeout);
+   dispatch(1,eventTimeout);
+   TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_FALSE(ranging.txPending);
+   TEST_ASSERT_FALSE(radios[0].armed);TEST_ASSERT_FALSE(radios[1].armed);
+   unsigned sends=radios[1].sends;dispatch(1,eventTimeout);TEST_ASSERT_EQUAL(sends,radios[1].sends);
+   for(unsigned i=0;i<2;i++)radios[i].setupLag=0;
+  }
+  TEST_ASSERT_TRUE(success>0&&fail>0);TEST_ASSERT_EQUAL(MUL_PLAN_AA|MUL_PLAN_AR|(ff?MUL_PLAN_FF:0),kinds);
+  TEST_ASSERT_EQUAL(kinds,successfulKinds);TEST_ASSERT_TRUE(mulClockWorkspace()->fit.accepted>100);
+  printf("TURNAROUND n=%u ff=%u cycles=120 successful=%u injected_failures=%u unavailable_preparations=%u\n",n,ff,success,fail,misses);
  }
 }

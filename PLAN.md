@@ -47,6 +47,11 @@ Offline native/sanitizer/replay, persistence and linked-image checks pass across
 LPS/STM32/host. Four-ALR100ms physical timing/ranging/throughput and board stack
 watermarks remain operator work; no hardware was accessed. Existing three-ALR
 physical success is user-reported.3ms TDMA slots remain rejected.
+The four-ALR turnaround fix binds the validated RF5 identity before packet
+turnaround instead of recomputing the graph fingerprint on every message.
+Wire/configuration/schedule/clock semantics are unchanged. Offline instruction,
+frozen-codec and radio-path regression checks pass; restored physical reliability
+and the remaining non-FF RX-error/timeout cause still need operator evidence.
 
 ## Current software upgrade campaign
 

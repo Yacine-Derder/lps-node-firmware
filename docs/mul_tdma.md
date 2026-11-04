@@ -859,7 +859,7 @@ cycle, operation, fingerprint, unused-stamp and power check remains; the state
 machine still checks the prefix, role, intervals, epoch, setup lead and deadline.
 No plan, fingerprint recipe, packet format, timing or calibration changes occur.
 
-For the same four-ALR FF-on Cortex fixture, bound encode/decode execute1550/2072
+For the same four-ALR FF-on Cortex fixture, bound encode/decode execute1548/1952
 instructions, independent of the four tested3/4-ALR FF-off/on plans, versus
 approximately22.9k/23.5k previously. Binding costs about21.7k but occurs once at
 reservation preparation rather than per packet. This removes repeated full-plan
@@ -871,5 +871,135 @@ the original decoder verdict. Existing actual-radio-owner/native/sanitizer tests
 pass, retaining AA/FF isolation and no retries. The bound-codec stationary build uses14964 B RAM, including the32-byte prepared
 identity. TDMA responders bind after protected broadcast/Kalman work, refresh
 hardware time before calculating sleep, and keep legacy multi-operation order.
-The stationary image uses130952 B Flash (120 B free); original stacks/queues and168-byte clock workspace remain. Further fault/transition and
-cross-repository checks follow before physical deployment.
+The stationary image uses130952 B Flash (120 B free); original stacks/queues and168-byte clock workspace remain. The original mutable-plan
+codec entry points retain their existing source and early header rejection;
+only the ALR exchange owner selects the prepared path.
+
+### Evidence boundaries and remaining failures
+
+Offline correlation of the supplied FF1/FF2 normal-verbosity ALR `MR1` records
+(last report per local endpoint, matching plan/cycle/pair) finds246 responder
+`late_setup` + initiator `timeout` cases among256 failures with both endpoint
+reports. This approximately96.1% cohort supports investigating turnaround; it is
+not an opportunity-based physical success rate. Capture boundaries, missing
+records, warmup and unstarted opportunities need separate accounting. The
+three-ALR FF-on validation capture also contains `late_setup`, consistent with
+fingerprint work scaling with the plan graph rather than exclusively with FF
+packets. The earlier approximately99% baseline and66.4/67.1/90.5% experiment
+figures remain user-reported physical results, not new firmware results.
+
+The root `uwb_logs/alr*.log` four-ALR FF-off capture has no recorded `late_setup`,
+but includes10 paired `radio_event`/`timeout` failures and an endpoint `ok` versus
+`radio_event` disagreement. Its normal records cannot identify the hardware RX
+status, interrupt latency or failed stage. A timeout means no accepted next stage
+before its absolute deadline; it does not identify whether RF, RX error, delayed
+TX, callback latency or the peer caused that absence. A locally confirmed RESULT
+TX does not establish that the other endpoint received it. These failures remain
+unresolved; no RX error is ignored, no retry added and no incomplete exchange is
+promoted to a complete pair measurement.
+
+The state audit found no demonstrated reference-calibration overwrite from FF.
+The prepared identity adds an explicit active-plan pointer guard and is rebuilt
+on operation/cycle change; the separate AA owner remains the only propagation
+calibration source. `plannedFollowerOperation/Wait`, `plannedReferenceService`,
+`mulTwrConfigurePlan/OnEvent/Cancel` retain their absolute reservation/epoch,
+attempt retirement, broadcast priority and delayed-TX validation. Native tests
+exercise both real follower owners, while the new persistent-owner matrix runs
+120 cycles for each3/4-ALR FF-off/on configuration through AA/FF/AR, corrupt POLLs,
+RX failures, interrupted exchanges and RESPONSE/REPORT post-setup lead boundaries.
+It models1.27ms setup,2.6ms admissible versus2.8ms rejected RX callback latency,
+and4.4ms KF work; these are injected costs, not measured firmware timings. Both
+hardware clocks advance during modeled setup. Completed AA/FF/AR roles, no retry,
+AA isolation and continuing estimator observations are checked. Existing
+compensation warmup/age gates can retire an unavailable preparation explicitly;
+the test never invents a successful range for it.
+
+`mulPowerCapture` still reads power and the vendor correction reads it again,
+including duplicate soft-float `log10f` and SPI diagnostics. This is pre-existing
+baseline work, not a demonstrated FF-dependent defect. It remains unchanged to
+preserve frozen correction behavior and avoid patching the upstream driver or
+introducing another cache tied to RX lifetime. Packet math, antenna validation,
+SPI setup/verification, raw/corrected timestamp handling and driver error/reset
+semantics are unchanged. The fix removes only repeated plan work. Its instruction
+measurements exclude IRQ/RTOS latency, SPI time and power/math work, so they do
+not establish total callback WCET or restored near99% physical reliability.
+
+No continuous diagnostic stream, new timer, SPI read in packet turnaround or
+firmware instrumentation is added. Existing normal `MR1`, `:diag` and bounded SL1
+remain available. The responder's extra hardware-time refresh occurs only in
+preparation after protected work so binding time cannot extend its requested
+sleep. Static frames remain488 B for the TWR handler,256 B ALR handler,328 B
+worker/wait,296 B mapping and120 B preparation; these are individual compiler
+frames, not a stack watermark or a complete call-chain proof.
+
+### Minimal operator validation for the turnaround fix
+
+Do not change reply5/window30/cycle100/slot5, PHY, antenna calibration, Kalman
+settings, geometry or capture verbosity between comparisons. Build the stationary
+CH5 image from the new `origin/main`, run `check_mul_image.py`, and retain the
+source SHA and artifact hash with each capture: unchanged plan fingerprints do
+not identify which firmware binary is running. Flashing is operator-only. Keep
+RF OFF during programming and inspect retained IDs/calibration/selected plans
+before startup. RLR/ESP wire compatibility is unchanged; no live receiver setting
+or ESP firmware change is required. The STM32 vendor update synchronizes source.
+
+1. Screen for60s each at normal verbosity:3ALR FF-off (`2AED8A85`),4ALR FF-off
+   (`617AE520`), then4ALR FF-on (`EC2B4B2A`). Stop all RF before every plan/roster
+   change and require matching plans everywhere; keep135 OFF when excluded.
+   Start the RLR, followers, then reference. Separate initial warmup from the
+   settled interval; keep raw ALR logs and RLR essential telemetry.
+2. Compare inter-ALR pairs against the same-duration old firmware capture. Count
+   expected opportunities, starts, completed endpoint pairs, one-sided results,
+   failures by reason, unavailable preparations and USB/log drops separately.
+   Require no persistent late_setup, duplicate attempts, slot misses, KF overruns
+   or stale AA/epoch ownership. Do not infer success from absent records. Keep AR
+   results separate because the receiver's changed physical distance is a
+   confounder in the earlier experiment.
+3. If the screen passes, collect10min4ALR FF-on at unchanged normal verbosity.
+   Assess near99% per inter-ALR pair over the settled interval, retain all six
+   edges and verify the four100ms broadcasts/fresh three-component RLR vectors.
+   This is the physical acceptance gate, not a claim from the software tests.
+4. If late_setup persists, take a short separate SL1 debug capture to compare
+   local-clock setup duration and post-configuration lead. Do not include that
+   capture in reliability comparisons: ALR134 debug perturbation is established
+   by the user's experiment. For an unperturbed failing exchange, the smallest
+   additional measurement is a passive logic capture of DW1000 IRQ/CS/SCLK/MOSI/
+   MISO: identify the RF5 packet stage from TX_BUFFER, the DX_TIME target and
+   TXSTRT/SYS_STATUS traffic. This distinguishes IRQ/service delay, setup latency,
+   missing completion and actual RX error without adding console traffic. Do not
+   relax the1ms lead or modify the error masks to make it pass.
+
+If only radio_event/timeouts remain, obtain that status/stage evidence before
+changing radio ownership/error handling. Preserve the old image and EEPROM for
+rollback, with RF OFF and plan/status inspection after reboot. No physical radio
+was accessed, configured, flashed, moved or operated during this fix.
+
+### Verification of the final turnaround source
+
+The full matrix passes321 native tests and296 MUL ASan/UBSan tests at each
+500/50/10ms compile profile. The explicit stationary production SL1 profile
+(`--slot 10 --mul-only --slot-trace --sanitize --prop-age 6000 --speed 0`) passes296 plus sanitizers. All59 host tests,
+canonical sanitizer/golden/fuzz checks, independent576000-mutation frozen-codec
+comparison, canonical/vendor byte agreement, both DW roles and configuration
+rejection pass. Clock/Kalman comparison remains240000 bit-identical complete
+states. STM32 passes its full runtime/configuration/AR/replay suite and all other
+native suites/coexistence scenarios; ESP passes121 host tests and full transport
+replay matches135 TDoA/vector results exactly. Deliberate UART-loss stress retains
+its explicit queue-drop accounting.
+
+Clean GCC13.2.1 images remain within the established limits:
+
+|image|Flash used|Flash free|RAM including linker stack|RAM free|
+|---|---:|---:|---:|---:|
+|published default CH2|130604 B|468 B|14960 B|1424 B|
+|stationary CH5 / SL1|130952 B|120 B|14964 B|1420 B|
+
+The published default build used a temporary Git copy of the Makefile, leaving
+the user's local CH5 selection intact. The stationary `.elf`/`.dfu` artifacts are
+restored in `bin/`; `check_mul_image.py` validates physical regions, all original
+stack reservations, USB queue and clock workspace. Static frame inspection is
+performed on production compiler output, not inferred from native tests. Board
+stack high-water, interrupt/service/SPI latency and physical ranging reliability
+remain unmeasured. The added exchange binding consumes32 B static RAM; no
+safety allocation or deadline has been reduced. The matching receiver core
+source pin does not require reflashing existing wire-compatible RLR/ESP firmware.
