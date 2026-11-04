@@ -598,3 +598,19 @@ progress. Codec/persistence tests cover all-byte cuts and opt-in/rollback. The
 console dispatchers are kept out of their callers to fit Flash without changing
 clock mathematics, stack reservations, queues, radio timing or validation.
 Physical validation and matching STM32 support are required before deployment.
+
+The PC export interface is `python3 tools/mul_ranges.py alr132.log alr133.log
+alr134.log alr135.log --session CAPTURE_BOOT_SEGMENT --output ranges.jsonl`.
+Add `--alrs 132 134 133 135` to select only valid Stage A geometry inputs; this
+never admits AR ranges or TDoA. JSONL retains pair/cycle/plan identity, selected
+and raw range, power flag, failure status/reason and a local acquisition object
+with node,40-bit DTU marker,64-bit epoch and capture-session provenance. It does
+not substitute serial arrival time, unwrap unrelated clocks, average endpoint
+reports, assume simultaneous geometry or solve for positions. The two endpoint
+reports are intentionally preserved; future estimators must partition sessions,
+handle duplicates/clock conversion and asynchronous measurements explicitly.
+Split capture segments at full reboots because local epoch tokens can repeat.
+Malformed/partial machine lines are rejected, unrelated human log lines ignored,
+and failed measurements export null numerical ranges. Synthetic noncollinear
+four-ALR fixtures feed the production C formatter and verify all six K4 distances
+can be exported within integer-DTU quantization, without any RLR geometry factor.
