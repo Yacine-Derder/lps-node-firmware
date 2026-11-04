@@ -17,7 +17,7 @@
 /* One physical radio owner; configuration changes only during stopped init.
  * The portable codec/receiver keeps explicit context ownership. */
 static const void *twrContext=&mulDefaultNetwork;
-static struct {const mulRangingPlan_t *plan;mulRangingOperation_t op;uint32_t cycle;} plannedSession;
+static struct {const mulRangingPlan_t *plan;mulRangingOperation_t op;uint32_t cycle;mulPlanTwrBinding_t binding;} plannedSession;
 #if MUL_RX_DIAG
 #define RX_DIAG(t,e,s) do { if((t)->planned&&plannedSession.op.kind==MUL_PLAN_AA)mulRxDiagDecision(e,s); } while(0)
 #else
@@ -84,14 +84,19 @@ void mulTwrTracePoll(bool (*write)(const char *,unsigned)) {
 #endif
 }
 bool mulTwrConfigurePlan(mulTwr_t *twr,const mulRangingPlan_t *plan,uint32_t cycle,unsigned index) {
+ // The stopped radio owns an immutable plan. Repeated callbacks must not
+ // regenerate its pair graph/hash in the RX-to-delayed-TX critical path.
+ if(twr&&twr->planned&&plannedSession.plan==plan&&plannedSession.cycle==cycle&&
+    twr->id==cycle&&twr->operation==index)return !twr->attempted||twr->active;
  mulRangingOperation_t op;
  if(!twr||!mulRangingPlanOperation(plan,cycle,index,&op))return false;
  if(twr->planned&&twr->attempted&&cycle!=twr->id&&(uint32_t)(cycle-twr->id)>=UINT32_C(0x80000000))return false;
- if(twr->active&&(!twr->planned||twr->id!=cycle||twr->operation!=index))return false;
+ if(twr->active&&(!twr->planned||plannedSession.plan!=plan||twr->id!=cycle||twr->operation!=index))return false;
  if(twr->planned&&twr->attempted&&twr->id==cycle) {
   if(index<twr->operation||(index==twr->operation&&!twr->active))return false;
  }else twr->attempted=false;
  if(!twr->planned||twr->id!=cycle||twr->operation!=index)twr->attempted=false;
+ if(!mulPlanTwrBind(&plannedSession.binding,plan,cycle,index))return false;
  twr->planned=true;twr->multiProfile=true;twr->id=cycle;twr->operation=(uint8_t)index;
  plannedSession.plan=plan;plannedSession.op=op;plannedSession.cycle=cycle;return true;
 }
@@ -109,7 +114,7 @@ bool mulTwrConfigureSchedule(mulTwr_t *twr,const mulSchedule_t *schedule,unsigne
  twrContext=schedule;twr->planned=0;twr->multiProfile=1;twr->syncWindow=window;twr->followerSlot=slot;return true;
 }
 static const mulNetwork_t *networkFor(const mulTwr_t *twr,mulNetwork_t *pair) {
- if(twr->planned){if(!mulPlanOperationNetwork(plannedSession.plan,twr->id,twr->operation,pair))memset(pair,0,sizeof(*pair));return pair;}
+ if(twr->planned)return &plannedSession.binding.network;
  if(!twr->multiProfile)return (const mulNetwork_t *)twrContext;
  if(!mulSchedulePair((const mulSchedule_t *)twrContext,twr->followerSlot,pair))memset(pair,0,sizeof(*pair));
  return pair;
@@ -176,7 +181,7 @@ static void clearErrors(dwDevice_t *dev)
 }
 
 void mulTwrInit(mulTwr_t *twr) {
- memset(twr, 0, sizeof(*twr));mulTwrConfigureNetwork(NULL);
+ memset(twr, 0, sizeof(*twr));plannedSession.plan=NULL;mulTwrConfigureNetwork(NULL);
 #if MUL_TWR_TRACE
  aaSelected=false;aaNowValid=false;aaInput=7;aaSending=0;
 #endif
@@ -188,7 +193,7 @@ static void rangeMetadata(mulLogRecord_t *r,const mulTwr_t *twr,uint64_t marker)
  r->event+=2; // 8/9 human success/failure -> 10/11 human plus MR1 metadata.
  r->initiator=plannedSession.op.initiator;r->responder=plannedSession.op.responder;
  r->local=twr->local;r->t[2]=marker;r->t[3]=twr->epoch;
- r->t[4]=mulRangingPlanFingerprint(plannedSession.plan);r->t[5]=plannedSession.op.kind;
+ r->t[4]=plannedSession.binding.fingerprint;r->t[5]=plannedSession.op.kind;
 }
 static bool geometryRange(const mulTwr_t *twr) {
  return twr->planned&&plannedSession.op.kind!=MUL_PLAN_AR;
@@ -272,7 +277,7 @@ static bool sendPacket(mulTwr_t *twr, dwDevice_t *dev, mulTwrType_t type, uint64
   uint8_t frame[MUL_MULTI_TWR_BYTES+2] = {0}; // libdw1000 reads two FCS reserve bytes.
   unsigned length=twr->multiProfile?MUL_MULTI_TWR_BYTES:MUL_TWR_FRAME_LENGTH;
   if(twr->planned) {
-    if(!mulPlanTwrEncode(frame,plannedSession.plan,twr->operation,&packet))return false;
+    if(!mulPlanTwrEncodeBound(frame,&plannedSession.binding,&packet))return false;
   }else if(twr->multiProfile) {
     if(!mulMultiTwrEncode(frame,(const mulSchedule_t *)twrContext,twr->syncWindow,&packet))return false;
   } else if(!mulTwrEncodeNetwork(twrNetwork,frame,&packet))return false;
@@ -431,7 +436,7 @@ bool mulTwrOnEvent(mulTwr_t *twr, dwDevice_t *dev, uwbEvent_t event, mulAlrRole_
   bool valid=dwGetDataLength(dev)==length;
   if (valid) {
     dwGetData(dev,frame,length);
-    if(twr->planned)valid=mulPlanTwrDecode(plannedSession.plan,sequence,twr->operation,frame,length,&packet);
+    if(twr->planned)valid=mulPlanTwrDecodeBound(&plannedSession.binding,frame,length,&packet);
     else if(twr->multiProfile) {
       unsigned slot;valid=mulMultiTwrDecode((const mulSchedule_t *)twrContext,twr->syncWindow,frame,length,&packet,&slot)&&slot==twr->followerSlot;
     } else valid=mulTwrDecodeNetwork(twrNetwork,frame,length,&packet);

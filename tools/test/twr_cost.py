@@ -68,8 +68,14 @@ def measure(path):
     machine.emu_start(elf.header['e_entry'] | 1, 0, count=20000000)
     assert int.from_bytes(machine.mem_read(symbols['failure'], 4), 'little') == 0, 'codec fixture failed'
     assert all(k*10+stage in counts for k in range(4) for stage in range(3)), 'fixture incomplete'
+    if 4 in counts:
+        # Packet turnaround must not regain plan/roster-dependent hashing work.
+        assert len({counts[k*10+4] for k in range(4)}) == 1
+        assert len({counts[k*10+5] for k in range(4)}) == 1
+        assert all(counts[k*10+4] < counts[k*10+1]/4 and
+                   counts[k*10+5] < counts[k*10+2]/4 for k in range(4))
     return {f'{3+k//2}alr_ff_{k%2}': {label: counts[k*10+stage]
-            for stage, label in enumerate(('fingerprint', 'encode', 'decode'))} for k in range(4)}
+            for stage, label in enumerate(('fingerprint', 'encode', 'decode', 'bind', 'bound_encode', 'bound_decode')) if k*10+stage in counts} for k in range(4)}
 
 
 def main():

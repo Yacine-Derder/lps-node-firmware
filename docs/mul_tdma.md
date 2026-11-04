@@ -848,3 +848,28 @@ follows the plan rather than just the FF role. The radio encoder runs inside
 `sendPacket` between its two setup-lead checks. These are CPU instruction counts,
 not cycle simulation or a measurement of IRQ/SPI latency. They establish
 avoidable deadline-path work, not proof of the complete physical failure cause.
+
+The corrected TWR owner binds a validated immutable pair/cycle/index/fingerprint
+snapshot before packet turnaround. Repeated callbacks reuse it; a new cycle or
+operation rebinds, initialization invalidates the cached identity, and an active
+exchange cannot switch plan pointers. `mulPlanTwrEncodeBound/DecodeBound` use the
+same RF5 bytes and base decoder as the full-plan APIs. The old APIs remain for
+callers that need validation against a mutable plan. Every header, endpoint,
+cycle, operation, fingerprint, unused-stamp and power check remains; the state
+machine still checks the prefix, role, intervals, epoch, setup lead and deadline.
+No plan, fingerprint recipe, packet format, timing or calibration changes occur.
+
+For the same four-ALR FF-on Cortex fixture, bound encode/decode execute1550/2072
+instructions, independent of the four tested3/4-ALR FF-off/on plans, versus
+approximately22.9k/23.5k previously. Binding costs about21.7k but occurs once at
+reservation preparation rather than per packet. This removes repeated full-plan
+validation/fingerprinting from RESPONSE and REPORT, and from FINAL/RESULT too.
+It does not optimize away power correction, change its values, or promise a
+hardware turnaround time. The synthetic codec test checks all five message types,
+40 wrapping cycles per configuration and576000 one-bit wire mutations against
+the original decoder verdict. Existing actual-radio-owner/native/sanitizer tests
+pass, retaining AA/FF isolation and no retries. The bound-codec stationary build uses14964 B RAM, including the32-byte prepared
+identity. TDMA responders bind after protected broadcast/Kalman work, refresh
+hardware time before calculating sleep, and keep legacy multi-operation order.
+The stationary image uses130952 B Flash (120 B free); original stacks/queues and168-byte clock workspace remain. Further fault/transition and
+cross-repository checks follow before physical deployment.

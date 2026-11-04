@@ -433,6 +433,12 @@ static uint32_t plannedFollowerWait(dwDevice_t *dev,uint32_t fallback) {
    if(ranging.planned&&ranging.attempted&&ranging.id==refSequence()&&ranging.operation>=index)continue;
    uint64_t end=mulTimestampMask(refRx()+(uint64_t)op.endUs*MUL_DTU_PER_MS/1000);
    if(mulTimestampDifference(now,end)>=0)continue;
+   // Bind before the POLL, after the broadcast/Kalman protected work. The
+   // packet callback then needs only the frozen identity, not a plan hash.
+   if(activePlan->policy==MUL_PLAN_TDMA&&!flags.tx&&!deferredClock.fit.active&&!ranging.active) {
+    (void)mulTwrConfigurePlan(&ranging,activePlan,refSequence(),index);
+    now=readHardwareTime(dev); // Binding time is not part of the requested sleep.
+   }
    start=mulTimestampMask(refRx()+(uint64_t)op.startUs*MUL_DTU_PER_MS/1000);
   }else if((op.kind==MUL_PLAN_AR||op.kind==MUL_PLAN_FF)&&op.initiator==source[0]&&!(servedOperations&(UINT32_C(1)<<index))) {
    if(activePlan->policy==MUL_PLAN_TDMA) {

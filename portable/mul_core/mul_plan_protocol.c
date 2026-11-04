@@ -19,14 +19,25 @@ bool mulPlanOperationNetwork(const mulRangingPlan_t *p,uint32_t cycle,unsigned i
  if(!mulNetworkInit(network,op.initiator,op.responder))return false;
  network->slotMs=p->broadcast.slotMs;return true;
 }
+bool mulPlanTwrBind(mulPlanTwrBinding_t *b,const mulRangingPlan_t *p,uint32_t cycle,unsigned index) {
+ if(!b||!mulPlanOperationNetwork(p,cycle,index,&b->network))return false;
+ b->fingerprint=mulRangingPlanFingerprint(p);b->cycle=cycle;b->operation=(uint8_t)index;return true;
+}
+bool mulPlanTwrEncodeBound(uint8_t out[MUL_MULTI_TWR_BYTES],const mulPlanTwrBinding_t *b,const mulTwrPacket_t *packet) {
+ if(!out||!b||!packet||packet->id!=b->cycle||!mulTwrEncodeNetwork(&b->network,out,packet))return false;
+ out[24]+=8;out[84]=MUL_PLAN_RADIO_VERSION;out[85]=b->operation;putHash(out+86,b->fingerprint);return true;
+}
+bool mulPlanTwrDecodeBound(const mulPlanTwrBinding_t *b,const uint8_t *frame,size_t n,mulTwrPacket_t *out) {
+ if(!b||!frame||!out||n!=MUL_MULTI_TWR_BYTES||frame[84]!=MUL_PLAN_RADIO_VERSION||frame[85]!=b->operation||frame[24]<0x18||frame[24]>0x1c||hash(frame+86)!=b->fingerprint)return false;
+ uint8_t base[MUL_TWR_FRAME_LENGTH];memcpy(base,frame,sizeof(base));base[24]-=8;mulTwrPacket_t packet;
+ if(!mulTwrDecodeNetwork(&b->network,base,sizeof(base),&packet)||packet.id!=b->cycle)return false;
+ *out=packet;return true;
+}
 bool mulPlanTwrEncode(uint8_t out[MUL_MULTI_TWR_BYTES],const mulRangingPlan_t *p,unsigned index,const mulTwrPacket_t *packet) {
- mulNetwork_t network;if(!out||!packet||!mulPlanOperationNetwork(p,packet->id,index,&network)||!mulTwrEncodeNetwork(&network,out,packet))return false;
- out[24]+=8;out[84]=MUL_PLAN_RADIO_VERSION;out[85]=(uint8_t)index;putHash(out+86,mulRangingPlanFingerprint(p));return true;
+ mulPlanTwrBinding_t b;
+ return out&&packet&&mulPlanTwrBind(&b,p,packet->id,index)&&mulPlanTwrEncodeBound(out,&b,packet);
 }
 bool mulPlanTwrDecode(const mulRangingPlan_t *p,uint32_t cycle,unsigned index,const uint8_t *frame,size_t n,mulTwrPacket_t *out) {
- if(!frame||!out||n!=MUL_MULTI_TWR_BYTES||frame[84]!=MUL_PLAN_RADIO_VERSION||frame[85]!=index||frame[24]<0x18||frame[24]>0x1c||hash(frame+86)!=mulRangingPlanFingerprint(p))return false;
- mulNetwork_t network;if(!mulPlanOperationNetwork(p,cycle,index,&network))return false;
- uint8_t base[MUL_TWR_FRAME_LENGTH];memcpy(base,frame,sizeof(base));base[24]-=8;mulTwrPacket_t packet;
- if(!mulTwrDecodeNetwork(&network,base,sizeof(base),&packet)||packet.id!=cycle)return false;
- *out=packet;return true;
+ mulPlanTwrBinding_t b;
+ return frame&&out&&n==MUL_MULTI_TWR_BYTES&&mulPlanTwrBind(&b,p,cycle,index)&&mulPlanTwrDecodeBound(&b,frame,n,out);
 }

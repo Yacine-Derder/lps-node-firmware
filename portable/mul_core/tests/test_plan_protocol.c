@@ -2,7 +2,46 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+static void binding_equivalence(void) {
+ for(unsigned n=3;n<=4;n++)for(unsigned ff=0;ff<2;ff++) {
+  mulRangingPlan_t p={0};mulScheduleLegacy(&p.broadcast,132,134,5);mulScheduleExperimental(&p.broadcast);
+  p.broadcast.count=n;p.broadcast.ids[2]=133;if(n==4)p.broadcast.ids[3]=135;
+  p.broadcast.periodMs=100;p.broadcast.txLeadUs=1000;p.broadcast.rxBudgetUs=2000;p.broadcast.rangingFlags=0;
+  p.rlrCount=1;p.rlrs[0]=141;p.replyMs=5;mulRangingPlanTdma(&p);p.twrWindowMs=30;if(ff)p.enabled|=MUL_PLAN_FF;
+  unsigned kinds=0;
+  for(uint32_t step=0;step<40;step++) {
+   uint32_t cycle=UINT32_MAX-20+step;mulPlanTwrBinding_t b;
+   assert(mulPlanTwrBind(&b,&p,cycle,0));
+   mulRangingOperation_t op;assert(mulRangingPlanOperation(&p,cycle,0,&op));kinds|=op.kind;
+   assert(b.network.addresses[0][0]==op.initiator&&b.network.addresses[1][0]==op.responder);
+   for(unsigned stage=mulTwrPoll;stage<=mulTwrResult;stage++) {
+    unsigned used=stage==mulTwrPoll?1:stage==mulTwrResponse?3:stage==mulTwrFinal?5:6;
+    mulTwrPacket_t packet={.type=stage,.id=cycle,.txTimestamp=123},a,z;
+    for(unsigned i=0;i<used;i++)packet.stamps[i]=123;
+    uint8_t legacy[90],fast[90];
+    assert(mulPlanTwrEncode(legacy,&p,0,&packet)&&mulPlanTwrEncodeBound(fast,&b,&packet));
+    assert(!memcmp(legacy,fast,90));
+    assert(mulPlanTwrDecode(&p,cycle,0,legacy,90,&a)&&mulPlanTwrDecodeBound(&b,fast,90,&z));
+    assert(!memcmp(&a,&z,sizeof a));
+    /* Every one-bit mutation retains exactly the original decoder verdict,
+     * including source/destination, prefix, power and unused stamp fields. */
+    for(unsigned i=0;i<90;i++)for(unsigned bit=0;bit<8;bit++) {
+     fast[i]^=1u<<bit;
+     assert(mulPlanTwrDecode(&p,cycle,0,fast,90,&a)==mulPlanTwrDecodeBound(&b,fast,90,&z));
+     fast[i]^=1u<<bit;
+    }
+    for(unsigned len=0;len<90;len++)assert(!mulPlanTwrDecodeBound(&b,fast,len,&z));
+    mulPlanTwrBinding_t other=b;other.cycle++;assert(!mulPlanTwrDecodeBound(&other,fast,90,&z));
+    other=b;other.operation++;assert(!mulPlanTwrDecodeBound(&other,fast,90,&z));
+    other=b;other.fingerprint^=1;assert(!mulPlanTwrDecodeBound(&other,fast,90,&z));
+    packet.id++;assert(!mulPlanTwrEncodeBound(fast,&b,&packet));
+   }
+  }
+  assert(kinds==(MUL_PLAN_AA|MUL_PLAN_AR|(ff?MUL_PLAN_FF:0)));
+ }
+}
 int main(void) {
+ binding_equivalence();
  // The reported RF4 collision used a common reference and first follower.
  mulRangingPlan_t two={.enabled=3,.replyMs=20,.maxUtilization=70,.aaMilliHz=1000,.arMilliHz=50,.rlrCount=1,.rlrs={141}};
  mulScheduleLegacy(&two.broadcast,132,133,10);mulScheduleExperimental(&two.broadcast);
