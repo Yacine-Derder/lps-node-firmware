@@ -2020,20 +2020,19 @@ static void twinEvent(unsigned node,uwbEvent_t event) {
  twinLoad(node);mulAlrAlgorithm.onEvent(&radios[node].device,event);twinSave(node);
  for(unsigned i=0;i<24;i++)mulLogPoll(twinWrite);
 }
-static void twinBroadcasts(const mulRangingPlan_t *p,unsigned cycle) {
- int64_t at=(int64_t)cycle*100*MS;
+static void twinReference(const mulRangingPlan_t *p,unsigned physicalCycle,uint32_t sequence,uint64_t referenceTx,bool requireTx) {
+ int64_t at=(int64_t)physicalCycle*100*MS;bool eligible[2];
  for(unsigned node=0;node<2;node++) {
   advance(at+MS);FakeRadio *r=&radios[node];
-  r->rxLength=mulPlanBroadcastEncode(r->rx,sizeof(r->rx),p,0,cycle,
-    mulTimestampMask(UINT64_C(0x23456789ab)+at),NULL);
+  r->rxLength=mulPlanBroadcastEncode(r->rx,sizeof(r->rx),p,0,sequence,referenceTx,NULL);
   r->arrival=clockAt(node,at+8000+node*1000);twinEvent(node,eventPacketReceived);
-  TEST_ASSERT_TRUE(radios[node].armed);
+  eligible[node]=radios[node].armed;if(requireTx){TEST_ASSERT_TRUE(eligible[node]);}
  }
  // Confirm real delayed broadcasts in slot order (5,10,15ms), independently
  // admitting each radio's Kalman worker after its own confirmed TX.
- unsigned first=sendTime(0)<sendTime(1)?0:1;
+ unsigned first=eligible[0]&&(!eligible[1]||sendTime(0)<sendTime(1))?0:1;
  for(unsigned k=0;k<2;k++) {
-  unsigned node=k?1-first:first;mulMultiBroadcast_t out;
+  unsigned node=k?1-first:first;if(!eligible[node])continue;mulMultiBroadcast_t out;
   TEST_ASSERT_TRUE(mulPlanBroadcastDecode(p,radios[node].tx,80,&out));
   unsigned slot=(unsigned)mulScheduleIndex(&p->broadcast,twinConfig[node].address[0]);
   int64_t delta=mulTimestampDifference(out.packet.txTimestamp,radios[node].arrival);
@@ -2041,6 +2040,9 @@ static void twinBroadcasts(const mulRangingPlan_t *p,unsigned cycle) {
   int64_t when=sendTime(node);if(physical<when+MS)advance(when+MS);
   radios[node].armed=false;twinEvent(node,eventPacketSent);
  }
+}
+static void twinBroadcasts(const mulRangingPlan_t *p,unsigned cycle) {
+ twinReference(p,cycle,cycle,mulTimestampMask(UINT64_C(0x23456789ab)+(int64_t)cycle*100*MS),true);
 }
 static void twinTransfer(unsigned from,const mulRangingPlan_t *p,unsigned cycle) {
  unsigned to=1-from;FakeRadio *s=&radios[from],*r=&radios[to];
@@ -2053,8 +2055,8 @@ static void twinTransfer(unsigned from,const mulRangingPlan_t *p,unsigned cycle)
  twinEvent(to,eventPacketReceived);
 }
 void test_ffAllPairsRunBothProductionFollowersWithKalmanCalibrationAndFixedSlots(void) {
- for(unsigned pair=3;pair<6;pair++)for(unsigned negative=0;negative<2;negative++) {
-  setUp();mulLogSetLevel(mulLogNormal);twinLines[0]=0;skew=negative?-150000:150000;flight=2131;
+ for(unsigned pair=3;pair<6;pair++)for(unsigned negative=0;negative<2;negative++)for(unsigned fault=0;fault<5;fault++) {
+  setUp();mulLogSetLevel(mulLogNormal);twinLines[0]=0;fitCost=4400*MS/1000;skew=negative?-150000:150000;flight=2131;
   mulRangingPlan_t p={.replyMs=5,.rlrCount=1,.rlrs={141}};
   mulScheduleLegacy(&p.broadcast,132,134,5);mulScheduleExperimental(&p.broadcast);
   p.broadcast.count=4;p.broadcast.ids[2]=133;p.broadcast.ids[3]=135;
@@ -2087,15 +2089,42 @@ void test_ffAllPairsRunBothProductionFollowersWithKalmanCalibrationAndFixedSlots
    ranging.delayValid=true;ranging.tof=ranging.aa.tof;ranging.measuredMs=ranging.aa.measuredMs;
    calibration[node]=ranging.aa;twinSave(node);
   }
-  twinBroadcasts(&p,cycle);advance(((int64_t)cycle*100+20)*MS);
+  twinBroadcasts(&p,cycle);if(physical<((int64_t)cycle*100+21)*MS)advance(((int64_t)cycle*100+21)*MS);
   for(unsigned node=0;node<2;node++)twinEvent(node,eventTimeout);
   unsigned before=radios[0].sends;
   advance((int64_t)cycle*100*MS+(int64_t)op.startUs*MS/1000+MS/10);
   twinEvent(1,eventTimeout);twinEvent(0,eventTimeout);
   TEST_ASSERT_EQUAL(before+1,radios[0].sends);TEST_ASSERT_TRUE(radios[0].armed);
-  twinTransfer(0,&p,cycle);twinTransfer(1,&p,cycle);twinTransfer(0,&p,cycle);
-  twinTransfer(1,&p,cycle);twinTransfer(0,&p,cycle);
-  TEST_ASSERT_TRUE(physical<(int64_t)cycle*100*MS+(int64_t)op.endUs*MS/1000);
+  if(fault==4) {
+   // A reference restart preempts an armed exchange. The first backward packet
+   // is evidence only; the second starts a new epoch and invalidates AA.
+   twinReference(&p,cycle+1,0,0,false);
+   twinReference(&p,cycle+2,1,100*MS,true);
+   for(unsigned node=0;node<2;node++) {
+    twinLoad(node);TEST_ASSERT_NOT_EQUAL(epoch[node],followerClock.epoch);
+    TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_FALSE(ranging.aa.valid);TEST_ASSERT_FALSE(deferredClock.fit.active);
+   }
+   for(unsigned k=2;k<12;k++)twinReference(&p,cycle+1+k,k,(uint64_t)k*100*MS,true);
+   for(unsigned node=0;node<2;node++) {
+    twinLoad(node);TEST_ASSERT_TRUE(mulClockWorkspace()->fit.ready);TEST_ASSERT_TRUE(mulClockWorkspace()->fit.applied);
+    TEST_ASSERT_FALSE(ranging.aa.valid);
+   }
+   continue;
+  }
+  if(fault==2) {
+   int64_t when=sendTime(0);advance(when+MS);radios[0].actual=mulTimestampMask(radios[0].actual+512);
+   radios[0].armed=false;twinEvent(0,eventPacketSent);
+  }else {
+   twinTransfer(0,&p,cycle);
+   if(fault==1)twinEvent(1,eventReceiveFailed);
+   else if(fault==0){twinTransfer(1,&p,cycle);twinTransfer(0,&p,cycle);twinTransfer(1,&p,cycle);twinTransfer(0,&p,cycle);}
+  }
+  if(fault) {
+   advance((int64_t)cycle*100*MS+(int64_t)op.endUs*MS/1000+MS);
+   unsigned sent[2]={radios[0].sends,radios[1].sends};
+   for(unsigned node=0;node<2;node++){twinEvent(node,eventTimeout);twinEvent(node,eventTimeout);TEST_ASSERT_EQUAL(sent[node],radios[node].sends);}
+   TEST_ASSERT_NOT_NULL(strstr(twinLines,"s=1"));
+  }else TEST_ASSERT_TRUE(physical<(int64_t)cycle*100*MS+(int64_t)op.endUs*MS/1000);
   for(unsigned node=0;node<2;node++) {
    twinLoad(node);TEST_ASSERT_FALSE(ranging.active);TEST_ASSERT_FALSE(ranging.txPending);
    TEST_ASSERT_EQUAL_MEMORY(&calibration[node],&ranging.aa,sizeof(calibration[node]));
@@ -2105,7 +2134,7 @@ void test_ffAllPairsRunBothProductionFollowersWithKalmanCalibrationAndFixedSlots
   }
   TEST_ASSERT_NOT_NULL(strstr(twinLines,"MR1"));
   unsigned accepted[2]={twins[0].work.fit.accepted,twins[1].work.fit.accepted};
-  twinBroadcasts(&p,cycle+1);
+  twinBroadcasts(&p,cycle+(fault==3?2:1)); // Ordinary missed reference retains the estimator.
   for(unsigned node=0;node<2;node++) {
    TEST_ASSERT_EQUAL_UINT64(epoch[node],twins[node].io.alr.clock.epoch);
    TEST_ASSERT_TRUE(twins[node].work.fit.accepted>accepted[node]);

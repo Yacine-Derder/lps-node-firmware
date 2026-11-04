@@ -41,7 +41,7 @@ class RangeExport(unittest.TestCase):
                 tof=round(mm*63897600000/299792458000)
                 row,_=self.record(i,j,tof,cycle=c)
                 self.assertLessEqual(abs(row['range_mm']-mm),3)
-                self.assertEqual(row['acquisition']['timestamp_dtu'],0x123456789a)
+                self.assertEqual(row['acquisition']['timestamp_dtu'],(0x123456789a+c*6389760000)&0xffffffffff)
                 self.assertEqual(row['acquisition']['epoch'],'FEDCBA9876543210')
                 self.assertEqual(row['plan_fingerprint'],'EC2B4B2A')
                 records.append(row)

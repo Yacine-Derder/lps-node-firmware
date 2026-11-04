@@ -614,3 +614,12 @@ Malformed/partial machine lines are rejected, unrelated human log lines ignored,
 and failed measurements export null numerical ranges. Synthetic noncollinear
 four-ALR fixtures feed the production C formatter and verify all six K4 distances
 can be exported within integer-DTU quantization, without any RLR geometry factor.
+
+The paired-follower regression additionally covers failed RX, a mismatched TX
+marker, dropped replies/timeouts and a missed reference without losing a healthy
+filter. A genuine reference restart during an armed FF exchange cancels it,
+invalidates AA and queued work, then warms both estimators automatically. Repeated
+wakeups cannot retransmit a retired opportunity. Its production KF calls include
+a modeled4.4ms execution cost; this checks admission/slot interactions and does
+not establish a hardware WCET. Synthetic exported acquisitions advance in their
+declared local modular clocks with the scheduled cycle, rather than host time.
