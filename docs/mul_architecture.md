@@ -1651,3 +1651,15 @@ Operator-only hardware validation, not executed:
 6. Progress to all four ALRs, preserving the deployed plan and identities. Assess
    all six AA links and scheduled AR separately from asynchronous TDoA. Establish
    synchronized independent anchor/RLR trajectories before any physical accuracy claim.
+
+Final completion checks: ESP32 `sh tests/run_host.sh` passes128 Python tests
+and its native transport fixtures,0 failures; no ESP firmware was changed. The
+clean LPS stationary CH5 profile also links:130968B Flash/14964B RAM (104 Flash
+bytes free). STM32's final snapshot is63c6f688d4f3e636e66240c8ef4a9b0256ec2684;
+source bytes match the canonical core, excluding consumer UPSTREAM.json only.
+Coordinated STM32 implementation12b4c18 and ESP offline-validator0d3a515 are
+pushed to their origin/main forks. LPS commits37c4023,202e455,63c6f68 implement,
+correct and document this milestone. Later documentation-only LPS commits retain
+the same pinned core. Plan3962260266 (EC2B4B2A) is still asserted by the STM32
+runtime fixture; no live or stored plan was changed. Bridge/PC repositories and
+original recordings remain untouched; the pre-existing LPS local changes remain.
