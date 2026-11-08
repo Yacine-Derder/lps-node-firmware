@@ -222,3 +222,85 @@ measurements, limitations and deployment commands.
 Only the LPS opts into this two-phase API. Existing vendored STM32/ESP32 cores and
 synchronous receiver replay remain compatible; no consumer firmware change is
 required. Neither a saved plan nor its RF5 fingerprint changes.
+
+## Motion observability and conservative receiver mode
+
+For reference TX event T_i and receiver RX event U_i (each in its own radio
+clock), locally affine clocks obey:
+
+```
+U_i = b + a*(T_i + tau_i) + epsilon_i
+(Delta U / Delta T - 1)*1e9
+    = (a-1)*1e9 + a*Delta tau/Delta T*1e9 + noise
+```
+
+Here tau is propagation in reference DTU. Antenna/hardware/path biases are
+separate unknown terms. Constant radial motion can give near-zero residual with
+biased rate. Neither median scatter nor conditional KF covariance covers this.
+RF frequency diagnostics also contain Doppler and require device/PHY-specific
+sign, scale, noise and timestamp validation. The existing optional `compensate`
+path subtracts supplied delay before KF update; median still uses raw intervals.
+Enabling it does not establish independent, acquisition-aligned, bounded inputs.
+
+`MUL_RX_MOTION_GUARD=1` is receiver-only compile-time opt-in. Both portable
+receiver paths disable stationary/geometric-rate authorization, retain actual
+raw TX/RX markers, sequences, epochs, capture ages and relations, and maintain
+only the existing bounded median **arrival** rate for RF reservation timing.
+`mulClockObserveArrivalOnly` clears the latent oscillator KF and marks uncertainty
+UNKNOWN/fallback2 on accepted references. Ignored/reordered packets cannot refresh
+it. Arrival rate never becomes a geometric TDoA fallback. AR timing retains arrival
+mapping and all hardware lead, antenna, deadline and packet checks. Raw TWR remains
+supported. This mode withholds geometric TDoA even in a stationary scene, because
+stationarity cannot be established from these inputs. Disable it for existing
+stationary experimental behavior. No EEPROM field changes.
+
+Receiver adapters currently have **no** acquisition-aligned reference/RLR path-change
+source or calibrated hardware-rate source. There is no automatic positive clock-motion
+correction, no new velocity state and no inference of velocity from fitted drift.
+Independent-input numerical controls exercise the existing compensation API under
+explicitly ideal synthetic inputs; they do not add an online source or establish
+physical uncertainty. The bundled DW3000 driver sign is positive for slower RX,
+opposite our positive-faster-local ppb. Its CIA13 estimate is ratio-scaled by2^26
+(~14.90ppb/code), requires completed CIA, and is not interchangeable with CI21.
+The driver header misleadingly calls the ratio ppm; see the
+[Qorvo API guide](https://forum.qorvo.com/uploads/short-url/xD3TlXKvkujjdUaJWXv2b4E7GQN.pdf).
+No new hardware-rate scaling or update is applied without calibration/noise evidence.
+
+## Motion-limited propagation reuse
+
+`MUL_PROP_MOTION_BUDGET_MM=-1` preserves existing lifetime policy. Nonnegative B
+explicitly enables an unmodeled path-change budget. With independently justified
+relative path-speed bound V=`MUL_RELATIVE_SPEED_MM_S`:
+
+```
+|range(t)-range(t_m)| <= V*abs(t-t_m)
+additional delay bound = ceil(V[mm/s]*span[ms]*63897600 / 299792458000) DTU
+reuse horizon = min(existing TTL, floor(1000*B/V)) ms
+```
+
+V=0 retains original TTL; UNKNOWN rejects even at zero coarse age. B bounds motion
+only, not TWR/NLOS/antenna/clock-scale error. V must cover BOTH robots, path changes
+and the entire interval. It is an operator assumption, not a measurement or covariance;
+a wrong bound cannot always be detected from radio observations.
+
+The policy checks delay status, corrected-mapping extrapolation, relation publication
+and inverse use. Span covers measurement, origin and query; fresh origins cannot
+hide long extrapolation. Publication limits local remaining life. On v2/3 wire the
+receiver independently checks span because lifetime is reconstructed from existing
+age fields. Matching consumer build policy is required for end-to-end motion rejection;
+old decoders retain old conditional validity. No packet bytes, units, plan fingerprints
+or source semantics change. C-only status `mulClockDelayMotion` distinguishes budget/
+unknown-speed rejection from TTL expiry. Original fresh/reused/external/raw records
+survive rejection. Total physical bound stays UNKNOWN.
+
+This is bounded zero-order hold of an acquired delay, not measured velocity or a new
+predicted-delay source. Pose80 supplies source clock/epoch/frame/time, age upper bound,
+covariance and TTL; neither velocity nor a mapping to radio events. It remains external
+geometry. Covariance cannot replace motion or physical bounds. No new pose/RF protocol
+or ROS dependency is introduced.
+
+Tests: `sh tests/run_motion.sh` from this directory; from repository root,
+`python3 tools/test/motion_benchmark.py`. The latter uses production C and identical
+events for legacy, ideal independent-delay control and rejection paths, with
+median/RMSE/p95 and slot-time bias for18 scenes. Degeneracy tests timing support,
+not an onboard position solver. No simulation result is physical accuracy.

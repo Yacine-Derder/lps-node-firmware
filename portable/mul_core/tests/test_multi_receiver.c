@@ -50,11 +50,11 @@ static void scenario(unsigned count,unsigned spacing,bool stationary,bool planne
    if(step==6&&slot==2){assert(v->reason==mulMultiMissing&&v->rangeDifferenceMm==INT32_MIN);continue;}
    if(step==6&&slot==3){assert(v->status==mulDownlinkNoRelation&&v->rangeDifferenceMm==INT32_MIN);continue;}
    if(step==7){assert(v->reason==mulMultiNoReference&&v->rangeDifferenceMm==INT32_MIN);continue;}
-   if(step>=5&&stationary) {
+   if(step>=5&&stationary&&!MUL_RX_MOTION_GUARD) {
     if(v->status!=mulDownlinkAvailable)fprintf(stderr,"N=%u spacing=%u step=%u slot=%u status=%u reason=%u rate=%u clock=%u\n",count,spacing,step,slot,v->status,v->reason,s.rate.status,v->clockValid);
     assert(v->status==mulDownlinkAvailable&&v->reason==mulMultiOk&&(result.validMask&(1u<<slot)));
     assert(v->tdoaDtu>=differences[slot-1]-3&&v->tdoaDtu<=differences[slot-1]+3);
-   } else if(!stationary)assert(v->status==mulDownlinkNoRate&&v->rangeDifferenceMm==INT32_MIN);
+   } else if(!stationary||MUL_RX_MOTION_GUARD)assert(v->status==mulDownlinkNoRate&&v->rangeDifferenceMm==INT32_MIN);
   }
  }
  assert(s.duplicates&&s.cycles==14);
@@ -96,10 +96,10 @@ static void reordering_and_recovery(bool planned) {
    assert(accepted==!(step==16&&slot==2));
   }
   mulMultiCycle_t cycle;assert(mulMultiReceiverPoll(&s,s.cycleStartMs+50,&cycle));
-  if(step==6||step==7||step==15)assert(cycle.validMask==14);
-  if(step==8){assert(cycle.values[1].reason==mulMultiCaptureAge);assert(cycle.validMask==10);}
+  if(step==6||step==7||step==15)assert(cycle.validMask==(MUL_RX_MOTION_GUARD?0:14));
+  if(step==8){assert(cycle.values[1].reason==mulMultiCaptureAge);assert(cycle.validMask==(MUL_RX_MOTION_GUARD?0:10));}
   if(step==9){assert(!cycle.validMask);for(unsigned i=0;i<3;i++)assert(cycle.values[i].reason==mulMultiCaptureAge);}
-  if(step==16){assert(cycle.values[1].reason==mulMultiScheduleMismatch&&cycle.validMask==10);}
+  if(step==16){assert(cycle.values[1].reason==mulMultiScheduleMismatch&&cycle.validMask==(MUL_RX_MOTION_GUARD?0:10));}
  }
  uint8_t frame[90];uint64_t rx;size_t n=packet(&schedule,0,18,1,true,frame,&rx);mulMultiReceiveOutput_t out;
  assert(!mulMultiReceiverReceive(&s,frame,n,rx,1,s.lastCycleMs+100,&out));
@@ -136,11 +136,11 @@ static void restart_with_running_followers(unsigned method,unsigned gap,bool reb
   mulMultiCycle_t out;
   if(mulMultiReceiverPoll(&s,10000+physicalStep*100+40,&out)) {
    if(step>=40&&step<65)assert(!out.validMask);
-   if(step>75){assert(out.validMask==6);good++;}
+   if(step>75){assert(out.validMask==(MUL_RX_MOTION_GUARD?0:6));good++;}
    if(!out.validMask)for(unsigned i=0;i<2;i++)assert(out.values[i].tdoaDtu==INT32_MIN&&out.values[i].rangeDifferenceMm==INT32_MIN);
   }
  }
- assert(good&&s.rate.epoch!=epoch&&s.rate.sequence==49&&s.fit.ready);
+ assert(good&&s.rate.epoch!=epoch&&s.rate.sequence==49&&(MUL_RX_MOTION_GUARD?!s.fit.ready:s.fit.ready));
  assert(mulClockMapStatus(&s.rate,s.rate.observedMs)==mulClockMapValid);
  referenceShift=0;epochOffset=0;zeroEpoch=false;activePlan=NULL;
 }

@@ -256,6 +256,7 @@ mulClockDelayStatus_t mulClockDelayStatusNetwork(const mulNetwork_t *network,con
   if ((uint32_t)(nowMs - delay->measuredMs) > delay->maxAgeMs) {
     return mulClockDelayStale; // Also rejects a measurement from the future.
   }
+  if (!mulPropagationMotionValid(nowMs - delay->measuredMs)) return mulClockDelayMotion;
   return mulClockDelayValid;
 }
 
@@ -310,10 +311,15 @@ static bool correctedCoordinate(const mulNetwork_t *network,const mulClock_t *cl
   if (age > span) {
     span = age;
   }
-  if (span > delay->maxAgeMs) {
+  if (span > delay->maxAgeMs || !mulPropagationMotionValid(span)) {
     return false;
   }
   uint64_t motion = boundMultiply(delay->motionBoundDtuPerMs, span);
+#if MUL_PROP_MOTION_BUDGET_MM >= 0
+  // Prefer the tighter independent deployment envelope to UNKNOWN/coarse rates.
+  uint64_t envelope = mulPropagationMotionDtu(span);
+  if (envelope < motion) motion = envelope;
+#endif
   uint64_t delayBound = boundAdd(delay->measurementBoundDtu, motion);
   mulClockCorrectedMapping_t result = {
     .timestamp = inverse ? affine.timestamp : mulTimestampMask(affine.timestamp - localDelay),

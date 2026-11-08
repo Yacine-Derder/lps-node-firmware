@@ -5,6 +5,14 @@
 #define MUL_CLOCK_FIT_MAX 5u
 #define MUL_CLOCK_FIT_DEFAULT 5u
 #define MUL_CLOCK_CONFIG_BYTES 12u
+// Receiver-only conservative mode. Arrival timing remains usable for guarded
+// RF scheduling; it is never promoted to oscillator evidence or geometric TDoA.
+#ifndef MUL_RX_MOTION_GUARD
+#define MUL_RX_MOTION_GUARD 0
+#endif
+#if MUL_RX_MOTION_GUARD != 0 && MUL_RX_MOTION_GUARD != 1
+#error "MUL_RX_MOTION_GUARD must be 0 or 1"
+#endif
 /* Value1 is retired regression. Never reinterpret an old EEPROM selector. */
 enum { mulClockEstimatorMedian = 0, mulClockEstimatorKalman = 2 };
 enum {
@@ -67,4 +75,22 @@ mulClockResult_t mulClockObserveFitted(const mulNetwork_t *network,
                                        const mulTestPacket_t *packet,
                                        uint64_t rx, uint32_t nowMs, bool valid,
                                        const mulClockDelay_t *delay);
+#if MUL_RX_MOTION_GUARD
+// No independent acquisition-aligned path-change/rate evidence is currently
+// supplied by either receiver adapter. Do not update a latent oscillator KF.
+static inline mulClockResult_t mulClockObserveArrivalOnly(const mulNetwork_t *n,
+ mulClock_t *clock,mulClockFit_t *fit,const mulClockFitConfig_t *config,
+ const mulTestPacket_t *packet,uint64_t rx,uint32_t now) {
+  if(!clock||!fit||!mulClockFitConfigValid(config))return mulClockIgnored;
+  mulClockResult_t result=mulClockObservePeriodNetwork(n,clock,packet,rx,now,true,config->periodMs);
+  if(result!=mulClockIgnored) {
+    uint32_t rejected=fit->rejected;
+    mulClockFitReset(fit);
+    fit->epoch=clock->epoch;
+    fit->rejected=rejected==UINT32_MAX?rejected:rejected+1;
+    fit->fallback=mulClockFitUncertain;
+  }
+  return result;
+}
+#endif
 #endif

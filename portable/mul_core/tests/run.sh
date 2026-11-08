@@ -72,3 +72,5 @@ cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-p
 cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-pie -no-pie \
  -I. tests/test_tdma.c mul_ranging_plan.c mul_schedule.c mul_common.c -lm -o "$work/tdma"
 "$work/tdma"
+
+sh tests/run_motion.sh

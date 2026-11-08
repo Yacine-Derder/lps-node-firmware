@@ -16,7 +16,7 @@ bool mulHybridInitNetwork(mulHybrid_t *s,const mulNetwork_t *network,const uint8
  if(!s)return false;
  memset(s,0,sizeof(*s));
  if(!receiver||!mulNetworkValid(network)||mulNetworkRole(network,receiver)!=mulAlrUnsupported)return false;
- s->network=network?*network:mulDefaultNetwork;s->stationary=stationary;
+ s->network=network?*network:mulDefaultNetwork;s->stationary=stationary&&!MUL_RX_MOTION_GUARD;
  mulObservationInit(s->observations,receiver);mulClockReset(&s->rate);mulClockFitDefaults(&s->clockConfig);mulClockFitReset(&s->fit);return true;
 }
 void mulHybridInit(mulHybrid_t *s,const uint8_t receiver[8],bool stationary) {
@@ -136,7 +136,11 @@ bool mulHybridReceive(mulHybrid_t *s,const uint8_t *f,size_t n,uint64_t rx,uint3
    }
    if(role==mulAlrReference&&out->order!=mulSequenceDuplicate&&out->order!=mulSequenceOld) {
      if(out->order==mulSequenceFirst&&!mulClockFitHoldover(&s->rate,&s->fit,&s->clockConfig,now))mulClockReset(&s->rate);
+#if MUL_RX_MOTION_GUARD
+     mulClockObserveArrivalOnly(network,&s->rate,&s->fit,&s->clockConfig,&p,rx,now);
+#else
      mulClockObserveFitted(network,&s->rate,&s->fit,&s->clockConfig,&p,rx,now,true,NULL);
+#endif
    }
    if(associated) {
      pair.follower.remoteEpochKnown=o->remoteEpochKnown;

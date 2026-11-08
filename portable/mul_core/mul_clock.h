@@ -143,6 +143,7 @@ typedef enum {
   mulClockDelayEpochMismatch,
   mulClockDelayStale,
   mulClockDelayValid,
+  mulClockDelayMotion, // Unknown path-speed bound or motion budget exhausted.
 } mulClockDelayStatus_t;
 
 typedef struct {

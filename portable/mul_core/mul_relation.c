@@ -49,7 +49,7 @@ bool mulRelationInverse(const mulRelation_t *r,uint64_t tx,uint32_t age,uint64_t
       (uint32_t)r->originAgeMs+age > MUL_CLOCK_MAP_HORIZON_MS ||
       (uint32_t)(r->referenceSequence-r->twrSequence)>(r->period10ms ? (limit+r->period10ms*10u-1)/(r->period10ms*10u)+2 : limit<=2000 ? 3u : (limit+999)/1000+2) ||
       (r->version>=2 && (r->delayState!=mulPropagationFresh && r->delayState!=mulPropagationReused)) ||
-      !coordinate(r,tx,&converted,&span) || span+age>limit ||
+      !coordinate(r,tx,&converted,&span) || span+age>limit || !mulPropagationMotionValid(span+age) ||
       r->remainingMs>limit-span || r->remainingMs>limit-r->delayAgeMs) return false;
   *ref=converted; return true;
 }
@@ -150,6 +150,8 @@ mulRelation_t mulRelationPublishSourceNetwork(const mulNetwork_t *network,const 
   }
   uint32_t span=origin.applicationAgeMs > inverse.applicationAgeMs ? origin.applicationAgeMs : inverse.applicationAgeMs;
   uint32_t remaining=limit-span;
+  uint32_t motionRemaining=mulPropagationMotionHorizon(limit)-span;
+  if (remaining>motionRemaining) remaining=motionRemaining;
   uint32_t originRemaining=2000-origin.affine.ageMs;
   if (remaining>originRemaining) remaining=originRemaining;
   if (remaining<=1) { unavailableModel(&result); return result; }

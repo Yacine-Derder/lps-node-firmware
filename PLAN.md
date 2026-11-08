@@ -625,3 +625,13 @@ hardware drivers, TX scheduler and clock estimation remain -O3. No buffers or
 stacks were reduced. No hardware was flashed or operated. Operator deployment,
 actual same-clock10ms timing, sustained Wi-Fi capture and mismatch/reboot checks
 are specified in docs/mul_commands.md. Multi-ALR scheduling remains out of scope.
+
+## Motion-aware firmware timing
+
+Opt-in software support: motion-budget-limited acquired propagation reuse and
+receiver rejection of unobservable oscillator/motion separation, with asynchronous
+raw radio events retained. See the [model](portable/mul_core/CLOCK.md#motion-observability-and-conservative-receiver-mode)
+and [acquisition contract](docs/mul_architecture.md#motion-aware-timing-guard-milestone).
+Stationary behavior remains default. Independent receiver path/rate evidence,
+radio-to-trajectory mapping and physical motion validation remain unavailable;
+this is not an achieved moving-anchor localization accuracy milestone.

@@ -1433,3 +1433,60 @@ to a firmware boot and require capture/session provenance on the PC. A moving
 constellation also requires handling the different acquisition times across the
 rotation. This firmware task supplies measurements and export tests, not the
 central geometry/TDoA estimators or an ALR networking stack.
+
+## Motion-aware timing guard milestone
+
+The [shared clock contract](../portable/mul_core/CLOCK.md#motion-observability-and-conservative-receiver-mode)
+defines opt-in propagation motion budgets and receiver oscillator rejection.
+Acquired AA measurements retain POLL-derived local time, pair identities, epoch,
+sequence, raw/corrected ToF and power provenance. Reuse cannot redate them. Existing
+clock/source reset and plan initialization cancellation checks remain. New bounds
+constrain application span, without inferring velocity from consecutive ranges.
+Pose80 remains timestamped external geometry without velocity/radio-time mapping.
+
+Experimental build: clean then `make -f profiles/motion-guard-ch5.mk`.
+`MUL_MOTION_SPEED_MM_S` defaults UNKNOWN, deliberately rejecting correction; a
+finite relative bound must be independently justified. `MUL_MOTION_BUDGET_MM`
+defaults100mm of **additional path-change allowance**, not accuracy. `:clock show`
+reports speed/budget. The profile uses LTO for integer mapping helpers to fit
+Flash; Kalman compilation/workspace, stacks, queues, RF guards, calibration and
+EEPROM are retained. Existing stationary/default builds remain supported. No
+physical deployment is part of implementation or software verification.
+
+### Non-simultaneous downlink contract
+
+TX times t_0,t_j and RX times u_0,u_j require justified mapping into a common
+reference timebase using actual radio stamps:
+
+```
+d_j = c * [(u_j-u_0) - (t_j-t_0)]
+    = ||x_R(u_j)-a_j(t_j)|| - ||x_R(u_0)-a_0(t_0)|| + hardware/path bias
+```
+
+Sign is follower path minus reference path. Anchors use their own TX events;
+RLR uses corresponding RX events. Production integer interval conversion is
+`d/(1+ppb/1e9)`, rounded as `mul_downlink.c` specifies. Hardware antenna references
+and separately reported power corrections are retained. No guessed antenna or
+trajectory correction is added. Measurement noise, clock/pose/trajectory error,
+correlation and model uncertainty remain separate; conditional KF covariance does
+not cover them. Simultaneous-position range difference is generally a different
+observation. Common cycle never means simultaneous acquisition.
+
+STM32 raw RF5 broadcast telemetry12 already carries source, cycle, slot, advertised
+antenna-referenced TX and actual native RX, full relation origin/rate/epoch/sequence/
+age, capture age, plan fingerprint/revision, receiver/radio and telemetry session.
+Replay15 adds per-pair source generations and association inputs/results. AR13
+retains its separate six exchange stamps, raw/corrected ToF, acquisition/report
+ticks and operation. Missing raw records make acquisition support unavailable;
+vector11 alone cannot reconstruct events. Fields do not establish synchronized
+ROS/radio time or world trajectories. Reference epochs absent on RF remain locally
+detected source generations, not globally unique boot IDs. Advertised TX is checked
+against completion hardware marker; loss of verification-failure evidence remains
+a physical telemetry limitation.
+
+STM32 preserves the processing tick paired with raw capture/capture age through
+serialization instead of replacing it with a later HAL tick. It remains coarse
+MCU processing time, never synchronized acquisition time. No RF/telemetry layout
+change is needed; ESP32/ROS decoders are unchanged. PC acquisition-time geometry,
+common-time mapping, moving-RLR trajectories and correlated uncertainty remain
+separate work. Existing PC estimation algorithms are not modified.
