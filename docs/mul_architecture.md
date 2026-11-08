@@ -1490,3 +1490,25 @@ MCU processing time, never synchronized acquisition time. No RF/telemetry layout
 change is needed; ESP32/ROS decoders are unchanged. PC acquisition-time geometry,
 common-time mapping, moving-RLR trajectories and correlated uncertainty remain
 separate work. Existing PC estimation algorithms are not modified.
+
+### Radio acquisition audit
+
+| Event | Ownership and provenance | Existing processing retained |
+| --- | --- | --- |
+| DW1000 RX | Receiving node40-bit native counter; RF source/sequence and local clock epoch | Hardware antenna reference; raw/power-corrected markers remain distinct |
+| DW1000 delayed TX | Transmitting node40-bit raw DX target, quantized512DTU, antenna-referenced advertised TX | Actual completion marker verified; late/antenna/target guards retained |
+| AA/FF TWR | Ordered initiator/responder pair, RF cycle/operation, six alternating per-node TX/RX stamps | Same-domain modular intervals only; raw and all-required-power-corrected ToF stay distinct |
+| AA acquired age | Follower P2 POLL reception; reconstruct raw from power delta, backdate by hardware elapsed time rounded outward | RESULT commits estimate; report/callback/reuse cannot refresh acquisition age |
+| Clock relation | Reference hardware TX origin, follower arrival-minus-delay origin, local epoch and reference sequence | Conditional affine slope; v1/2 TWR versus v3 external/none retained |
+| Pose80 | External source clock/epoch/frame/time plus local acceptance-age bound | Supplied covariance remains statistical; no radio epoch/time mapping or velocity invented |
+| DW3000 RX | RLR native40-bit RX; SYS_TIME39:8 upper-bin edge for outward capture age | Hardware capture before rearm; no DW1000-domain subtraction or new power correction |
+| AR TWR | Own six exchange events, pair/cycle/operation and acquisition/report uptime | Preserved integer ADS calculation, raw/corrected ToF and UNKNOWN total uncertainty |
+| Serial/ROS/MCAP | MCU processing, transport session/sequence and host receipt clocks | Never substituted for a radio acquisition clock |
+
+A TWR estimate spans multiple events, not an instantaneous independent path
+measurement. Motion during the exchange, antenna/NLOS biases and clock-scale
+uncertainty are still unknown measurement components. The new reuse envelope
+bounds additional path change only; it cannot certify the TWR estimator's dynamic
+bias. As before, 40-bit signed modular differences are meaningful only within
+the half-wrap and compatible epochs; coarse liveness/sequence gates reject long
+aliases. There is no globally unique reference boot epoch on the existing RF wire.

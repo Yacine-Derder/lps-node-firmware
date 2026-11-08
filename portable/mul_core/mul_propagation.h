@@ -36,7 +36,9 @@ static inline uint32_t mulPropagationMotionHorizon(uint32_t lifetimeMs) {
   return lifetimeMs;
 }
 static inline int mulPropagationMotionValid(uint32_t spanMs) {
-#if MUL_PROP_MOTION_BUDGET_MM >= 0 && MUL_RELATIVE_SPEED_MM_S < 0
+#if MUL_PROP_MOTION_BUDGET_MM < 0
+  (void)spanMs; return 1; // Existing caller-owned TTL remains authoritative.
+#elif MUL_RELATIVE_SPEED_MM_S < 0
   (void)spanMs; return 0;
 #else
   return spanMs <= mulPropagationMotionHorizon(MUL_PROP_MAX_AGE_MS);

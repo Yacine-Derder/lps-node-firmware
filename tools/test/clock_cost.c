@@ -29,7 +29,10 @@ void _start(void) {
    .measuredMs=now-100,.maxAgeMs=6000,.referenceSequence=seq-1,.units=mulClockDelayReferenceDtu};
   memcpy(delay.reference,mulDefaultNetwork.addresses[0],8);memcpy(delay.follower,mulDefaultNetwork.addresses[1],8);
   clockCostBegin(kind);
-#if CLOCK_COST_DEFERRED
+#if CLOCK_COST_MOTION_GUARD
+  mulClockObserveArrivalOnly(&network,&clockState,&fit,&config,&p,mulTimestampMask(rx+(i==13?3000:0)),now);
+  clockCostEnd(kind);
+#elif CLOCK_COST_DEFERRED
   mulClockFitPending_t pending;
   mulClockFitBegin(&network,&clockState,&fit,&config,&p,mulTimestampMask(rx+(i==13?3000:0)),now,true,&delay,&pending);
   int32_t rawSkew=clockState.skewPpb,prior;unsigned rawStatus=clockState.status;
@@ -49,7 +52,11 @@ void _start(void) {
   mulClockObserveFitted(&network,&clockState,&fit,&config,&p,mulTimestampMask(rx+(i==13?3000:0)),now,true,&delay);
   clockCostEnd(kind);
 #endif
+#if CLOCK_COST_MOTION_GUARD
+  if(fit.applied||fit.ready||fit.accepted)clockCostFailure++;
+#else
   if(i>8&&(!fit.applied||fit.resets>2))clockCostFailure++;
+#endif
  }
  clockCostDone();for(;;){}
 }

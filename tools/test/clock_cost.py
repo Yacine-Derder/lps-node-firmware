@@ -17,12 +17,12 @@ ROOT = Path(__file__).resolve().parents[2]
 BASELINE = 'de20a760636c8df1902a5d938b84247039f19d7e'
 
 
-def build(directory, name, source, period):
+def build(directory, name, source, period, motion_guard=False):
     out = directory / (name + '.elf')
     subprocess.run(['arm-none-eabi-gcc', '-Os', '-g', '-mthumb', '-mcpu=cortex-m0',
                     '-ffunction-sections', '-fdata-sections', '-nostartfiles',
                     '--specs=nano.specs', '--specs=nosys.specs',
-                    '-DMUL_PROP_MAX_AGE_MS=6000', '-DCLOCK_COST_PERIOD_MS='+str(period), '-DCLOCK_COST_DEFERRED='+('1' if name=='current' else '0'), '-Iportable/mul_core',
+                    '-DMUL_PROP_MAX_AGE_MS=6000', '-DMUL_RX_MOTION_GUARD=1', '-DCLOCK_COST_MOTION_GUARD='+str(int(motion_guard)), '-DCLOCK_COST_PERIOD_MS='+str(period), '-DCLOCK_COST_DEFERRED='+('1' if name=='current' else '0'), '-Iportable/mul_core',
                     'tools/test/clock_cost.c', str(source),
                     'portable/mul_core/mul_clock.c', 'portable/mul_core/mul_common.c',
                     '-Wl,-Ttext=0x08000000,-Tdata=0x20000000,-e,_start,--gc-sections',

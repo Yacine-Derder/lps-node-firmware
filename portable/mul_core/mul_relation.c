@@ -41,7 +41,7 @@ static bool coordinate(const mulRelation_t *r,uint64_t tx,uint64_t *ref,uint32_t
   *ref=mulTimestampMask(r->referenceOrigin+d); return true;
 }
 
-bool mulRelationInverse(const mulRelation_t *r,uint64_t tx,uint32_t age,uint64_t *ref)
+static bool inverse(const mulRelation_t *r,uint64_t tx,uint32_t age,uint64_t *ref,bool motionPolicy)
 {
   uint32_t limit=maximumAge(r),span; uint64_t converted;
   if ((r->version==3&&(mulRelationSource(r)==mulDelayNone||r->powerCorrectedTwr)) || !r->available || r->epoch==0 || r->remainingMs==0 || age > r->remainingMs ||
@@ -49,9 +49,12 @@ bool mulRelationInverse(const mulRelation_t *r,uint64_t tx,uint32_t age,uint64_t
       (uint32_t)r->originAgeMs+age > MUL_CLOCK_MAP_HORIZON_MS ||
       (uint32_t)(r->referenceSequence-r->twrSequence)>(r->period10ms ? (limit+r->period10ms*10u-1)/(r->period10ms*10u)+2 : limit<=2000 ? 3u : (limit+999)/1000+2) ||
       (r->version>=2 && (r->delayState!=mulPropagationFresh && r->delayState!=mulPropagationReused)) ||
-      !coordinate(r,tx,&converted,&span) || span+age>limit || !mulPropagationMotionValid(span+age) ||
+      !coordinate(r,tx,&converted,&span) || span+age>limit || (motionPolicy&&!mulPropagationMotionValid(span+age)) ||
       r->remainingMs>limit-span || r->remainingMs>limit-r->delayAgeMs) return false;
   *ref=converted; return true;
+}
+bool mulRelationInverse(const mulRelation_t *r,uint64_t tx,uint32_t age,uint64_t *ref) {
+  return inverse(r,tx,age,ref,true);
 }
 
 bool mulBroadcastDecodePeriodNetwork(const mulNetwork_t *network,const uint8_t *frame,size_t length,mulTestPacket_t *p,mulRelation_t *r,uint16_t periodMs)
@@ -103,7 +106,9 @@ bool mulBroadcastDecodePeriodNetwork(const mulNetwork_t *network,const uint8_t *
     }
     if (relation.available) {
       uint64_t converted;
-      if (!mulRelationInverse(&relation,packet.txTimestamp,0,&converted)) return false;
+      // Decode structural/wire validity independently of local motion policy:
+      // retain raw old-firmware evidence even when local correction is rejected.
+      if (!inverse(&relation,packet.txTimestamp,0,&converted,false)) return false;
     } else if (relation.referenceOrigin || relation.followerOrigin || relation.skewPpb || relation.originAgeMs ||
         (relation.version==1 && (relation.twrSequence || relation.delayAgeMs || relation.remainingMs || relation.powerCorrectedTwr))) return false;
   }

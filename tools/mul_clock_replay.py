@@ -82,8 +82,9 @@ def polynomial_predict(points, x, degree):
 
 
 class Replay:
-    def __init__(self, library, window=5, period=1000):
+    def __init__(self, library, window=5, period=1000, motion_guard=False):
         self.lib, self.window, self.period = library, window, period
+        self.motion_guard = motion_guard
         self.context = None
         self.identity = None
         self.active_period = None
@@ -109,6 +110,7 @@ class Replay:
         if self.context is None or row.get('reset') or identity != self.identity or period != self.active_period:
             self.close()
             self.context = self.lib.replay_new(self.window, period, *identity)
+            self.lib.replay_motion_guard(self.context, self.motion_guard)
             if not self.context:
                 raise ValueError('invalid identity or clock configuration')
             self.identity = identity
@@ -130,13 +132,14 @@ class Replay:
 def build_library(directory):
     output = Path(directory)/'clock.so'
     core = ROOT/'portable/mul_core'
-    subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-shared', '-fPIC', '-O2', '-I'+str(core),
+    subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-shared', '-fPIC', '-O2', '-DMUL_RX_MOTION_GUARD=1', '-I'+str(core),
                     str(ROOT/'tools/test/clock_fit_replay.c'), str(core/'mul_clock_fit.c'),
                     str(core/'mul_clock.c'), str(core/'mul_common.c'), '-o', str(output)], check=True)
     library = ctypes.CDLL(str(output))
     library.replay_new.argtypes = [ctypes.c_uint]*4
     library.replay_new.restype = ctypes.c_void_p
     library.replay_free.argtypes = [ctypes.c_void_p]
+    library.replay_motion_guard.argtypes = [ctypes.c_void_p, ctypes.c_uint]
     library.replay_step.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_ulonglong, ctypes.c_ulonglong,
                                    ctypes.c_uint, ctypes.c_uint, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
     return library
@@ -148,13 +151,14 @@ def main():
     parser.add_argument('--window', type=int, default=5)
     parser.add_argument('--period-ms', type=int, default=1000)
     parser.add_argument('--summary', action='store_true')
+    parser.add_argument('--motion-guard', action='store_true', help='Reject unobservable oscillator updates; retain raw arrival history')
     args = parser.parse_args()
     if args.window != 5 or not 10 <= args.period_ms <= 2000:
         parser.error('window fixed5; period-ms10..2000')
     with tempfile.TemporaryDirectory() as work:
         library = build_library(work)
         for path in args.logs:
-            replay = Replay(library, args.window, args.period_ms)
+            replay = Replay(library, args.window, args.period_ms, args.motion_guard)
             records, points, errors = [], [], [[], []]
             last = None
             x = phase = 0
@@ -186,11 +190,12 @@ def main():
                 if args.summary:
                     ready = [r for r in records if r['fit_ready']]
                     rms = lambda values: math.sqrt(statistics.mean(v*v for v in values)) if values else None
-                    print(json.dumps(dict(log=str(path), observations=len(records), ready=len(ready),
+                    print(json.dumps(dict(log=str(path), observations=len(records), ready=len(ready), motion_guard=args.motion_guard,
+                          motion_rejected=sum(r['fallback'] == 2 for r in records) if args.motion_guard else 0,
                           fitted_ppb=statistics.mean(r['fitted_ppb'] for r in ready) if ready else None,
                           applied=sum(r['fit_applied'] for r in ready), changing_rate_fallback=sum(r['fallback'] == 2 for r in ready),
                           median_ppb=statistics.mean(r['median_ppb'] for r in ready) if ready else None,
-                          regression_ppb=statistics.mean(r['regression_ppb'] for r in ready) if ready else None,
+                          kalman_ppb=statistics.mean(r['kalman_ppb'] for r in ready) if ready else None,
                           last=records[-1] if records else None,
                           linear_forecast_rms_dtu=rms(errors[0]), quadratic_forecast_rms_dtu=rms(errors[1]),
                           interpretation='apparent arrival rate; propagation and device biases remain confounded'), allow_nan=False))

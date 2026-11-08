@@ -13,6 +13,10 @@ static mulClockDelay_t sample(const mulClock_t *clock) {
  return d;
 }
 static void delay(void) {
+#if MUL_PROP_MOTION_BUDGET_MM < 0
+ // Disabled policy must not constrain caller TTL by the deployment default.
+ assert(mulPropagationMotionValid(UINT32_MAX));
+#endif
  mulClock_t clock;mulClockReset(&clock);
  clock.hasBaseline=true;clock.status=mulClockValid;clock.sequence=100;
  clock.referenceTx=MUL_TIMESTAMP_MASK-10*MS;clock.localRx=5000;clock.observedMs=UINT32_MAX-50;
@@ -29,6 +33,11 @@ static void delay(void) {
  d.epoch++;assert(mulClockDelayStatus(&clock,&d,d.measuredMs)==mulClockDelayEpochMismatch);d.epoch--;
  d.reference[0]++;assert(mulClockDelayStatus(&clock,&d,d.measuredMs)==mulClockDelayInvalid);d.reference[0]--;
  d.oneWayDtu=-1;assert(mulClockDelayStatus(&clock,&d,d.measuredMs)==mulClockDelayInvalid);d.oneWayDtu=213;
+ // A plausible NLOS bias is not observable as motion. Do not manufacture a
+ // calibrated measurement bound or overwrite this raw sample.
+ d.oneWayDtu=1000;
+ assert(mulClockDelayStatus(&clock,&d,d.measuredMs)==expected);
+ assert(d.oneWayDtu==1000&&d.measurementBoundDtu==UINT64_MAX);d.oneWayDtu=213;
  d.source=mulDelayExternal;assert(mulClockDelayStatus(&clock,&d,d.measuredMs)==expected);
  d.referenceSequence=clock.sequence+1;assert(mulClockDelayStatus(&clock,&d,d.measuredMs)==mulClockDelayEpochMismatch);d.referenceSequence=clock.sequence;
  mulClockCorrectedMapping_t m;
@@ -61,6 +70,17 @@ static void relation(void) {
   assert(dr.available&&dr.epoch==r.epoch);
   frame[34]=255;assert(!mulBroadcastDecode(frame,74,&decoded,&dr));
  }
+ // A valid legacy producer may advertise a relation outside our local motion
+ // budget. Decode/raw acquisition must survive while application fails closed.
+ r=(mulRelation_t){.version=2,.available=true,.epoch=1,.referenceSequence=100,
+   .twrSequence=100,.referenceOrigin=50000,.followerOrigin=60000,.originAgeMs=5,
+   .delayAgeMs=500,.maxAgeMs=6000,.delayDtu=213,.delayState=mulPropagationFresh};
+ mulTestPacket_t packet={.sequence=100,.txTimestamp=60000+5*MS},decoded;
+ memcpy(packet.source,mulDefaultNetwork.addresses[1],8);
+ uint8_t bytes[74];mulRelation_t decodedRelation;mulRelationEncode(bytes,&packet,&r);
+ assert(mulBroadcastDecode(bytes,74,&decoded,&decodedRelation));
+ uint64_t converted;
+ assert(mulRelationInverse(&decodedRelation,packet.txTimestamp,0,&converted)==!!mulPropagationMotionValid(500));
 }
 static void receiver(void) {
 #if MUL_RX_MOTION_GUARD

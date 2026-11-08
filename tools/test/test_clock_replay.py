@@ -101,3 +101,38 @@ class ClockReplay(unittest.TestCase):
                     model.feed(dict(row, sample_period_ms=bad))
         finally:
             model.close()
+
+    def test_motion_guard_preserves_apparent_arrival_but_rejects_oscillator(self):
+        model = replay.Replay(self.library, period=100, motion_guard=True)
+        try:
+            for i in range(20):
+                t = i*100*replay.MS
+                row = dict(sequence=i, reference_tx_dtu=(100000+t)&replay.MASK,
+                           local_rx_dtu=(800000+t+t*15000//1000000000)&replay.MASK,
+                           uptime_ms=10000+i*100, capture_age_ms=1)
+                value = model.feed(row)
+                self.assertFalse(value['fit_ready'])
+                self.assertFalse(value['fit_applied'])
+                self.assertEqual(value['count'], 0)
+                self.assertEqual(value['fallback'], 2)
+                self.assertEqual(value['fit_sigma_ppb'], 0xffffffff)
+                self.assertEqual(value['kalman_ppb'], 0)
+            self.assertEqual(value['median_ppb'], 15000)
+            self.assertEqual(value['rejected'], 20)
+        finally:
+            model.close()
+
+    def test_summary_uses_current_kalman_schema(self):
+        import subprocess
+        import sys
+        path = Path(self.work.name)/'summary.jsonl'
+        path.write_text('\n'.join(json.dumps(dict(sequence=i,
+            reference_tx_dtu=100000+i*100*replay.MS,
+            local_rx_dtu=800000+i*100*replay.MS,
+            uptime_ms=10000+i*100)) for i in range(15)))
+        result = subprocess.check_output([sys.executable, str(ROOT/'tools/mul_clock_replay.py'),
+            '--summary', '--period-ms', '100', str(path)], text=True)
+        summary = json.loads(result)
+        self.assertGreater(summary['ready'], 0)
+        self.assertEqual(summary['kalman_ppb'], 0)
+        self.assertNotIn('regression_ppb', summary)
