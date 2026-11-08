@@ -37,7 +37,7 @@ static uint64_t stamp(double seconds,double skew,uint64_t origin) {
  return mulTimestampMask(origin+(int64_t)llround(seconds*HZ*(1+skew/1e9)));
 }
 int main(void) {
- puts("scenario,step,slot_ms,legacy_ppb,independent_ppb,guard_available,legacy_error_mm,independent_error_mm,slot_model_error_mm,delay_hold_error_mm,motion_budget_accept");
+ puts("scenario,step,follower,slot_ms,legacy_ppb,independent_ppb,guard_available,legacy_error_mm,independent_error_mm,slot_model_error_mm,delay_hold_error_mm,motion_budget_accept");
  for(unsigned scenario=1;scenario<=18;scenario++) {
   mulNetwork_t net;assert(mulNetworkInit(&net,132,141));net.slotMs=5;
   mulClock_t old,ind,arrival;mulClockReset(&old);mulClockReset(&ind);mulClockReset(&arrival);
@@ -45,7 +45,7 @@ int main(void) {
   mulClockFitConfig_t c;mulClockFitDefaults(&c);c.periodMs=100;c.estimator=2;
   mulClockFitConfig_t ci=c;ci.compensate=1;
   const double oscillator=scenario==1?0:10000;
-  double hold=path(scenario,0,1,0);uint32_t heldAt=0;
+  double held[4];for(unsigned k=1;k<4;k++)held[k]=path(scenario,0,k,0);uint32_t heldAt=0;
   for(unsigned i=0;i<600;i++) {
    if(scenario==4&&i%7==6)continue;
    double t=i*.1,tau=distance(scenario,0,t)/299792458.;
@@ -64,38 +64,40 @@ int main(void) {
    assert(!fa.count&&!fa.ready&&!fa.applied&&fa.uncertaintyPpb==UINT32_MAX);
    assert(arrival.referenceTx==p.txTimestamp&&arrival.localRx==rx);
    // Independent radio epoch/plan transitions tested separately, no truth injection.
-   if(i%60==0){hold=path(scenario,0,1,t);heldAt=i;}
+   if(i%60==0){for(unsigned k=1;k<4;k++)held[k]=path(scenario,0,k,t);heldAt=i;}
    if(i<50||old.status!=mulClockValid||ind.status!=mulClockValid)continue;
    const unsigned slots[]={5,10,50,500};
-   for(unsigned j=0;j<4;j++) {
+   for(unsigned follower=1;follower<4;follower++)for(unsigned j=0;j<4;j++) {
+    mulNetwork_t pairNet;assert(mulNetworkInit(&pairNet,132,132+follower));
+    double followerPpb=35000-20000.0*follower;uint64_t followerOrigin=90000+1000*follower;
     unsigned slot=slots[j];double dt=slot/1000.;
-    double df=distance(scenario,1,t+dt),dr=distance(scenario,0,t);
+    double df=distance(scenario,follower,t+dt),dr=distance(scenario,0,t);
     // Native event inputs include moving-receiver path. For these speeds, the
     // first-order reception-position error is <0.0001mm; no solver is tested.
     uint64_t frx=stamp(t+dt+df/299792458.,oscillator,30000);
     mulPair_t pair={.rawArrivalDifferenceDtu=mulTimestampDifference(frx,rx)};
     mulObservation_t *r=&pair.reference,*f=&pair.follower;
-    memcpy(r->sourceClock,mulDefaultNetwork.addresses[0],8);memcpy(f->sourceClock,mulDefaultNetwork.addresses[1],8);
+    memcpy(r->sourceClock,mulDefaultNetwork.addresses[0],8);memcpy(f->sourceClock,pairNet.addresses[1],8);
     memcpy(r->receiverClock,net.addresses[1],8);memcpy(f->receiverClock,net.addresses[1],8);
     r->valid=f->valid=true;r->generation=f->generation=1;r->acceptedMs=now;f->acceptedMs=now+slot;
     r->source.sequence=f->source.sequence=i;r->source.txTimestamp=p.txTimestamp;r->source.rxTimestamp=rx;
     // Exact follower clock relation is an input control isolating RX-rate error.
-    f->source.txTimestamp=stamp(t+dt,35000,90000);f->source.rxTimestamp=frx;
+    f->source.txTimestamp=stamp(t+dt,followerPpb,followerOrigin);f->source.rxTimestamp=frx;
     mulRelation_t rel={.version=2,.available=true,.epoch=1,.referenceSequence=i,.twrSequence=i,
-     .referenceOrigin=p.txTimestamp,.followerOrigin=stamp(t,35000,90000),.skewPpb=35000,
+     .referenceOrigin=p.txTimestamp,.followerOrigin=stamp(t,followerPpb,followerOrigin),.skewPpb=(int32_t)followerPpb,
      .originAgeMs=slot,.delayAgeMs=slot,.remainingMs=1000,.maxAgeMs=6000,.delayState=mulPropagationFresh};
-    mulDownlink_t a=mulDownlinkComputeAtSlot(NULL,slot,&rel,&pair,&old,now+slot,1,true);
-    mulDownlink_t b=mulDownlinkComputeAtSlot(NULL,slot,&rel,&pair,&ind,now+slot,1,true);
-    mulDownlink_t g=mulDownlinkComputeAtSlot(NULL,slot,&rel,&pair,&arrival,now+slot,1,false);
+    mulDownlink_t a=mulDownlinkComputeAtSlot(&pairNet,slot,&rel,&pair,&old,now+slot,1,true);
+    mulDownlink_t b=mulDownlinkComputeAtSlot(&pairNet,slot,&rel,&pair,&ind,now+slot,1,true);
+    mulDownlink_t g=mulDownlinkComputeAtSlot(&pairNet,slot,&rel,&pair,&arrival,now+slot,1,false);
     assert(g.status==mulDownlinkNoRate);
     assert(a.status==mulDownlinkAvailable&&b.status==mulDownlinkAvailable);
     double actual=(df-dr)*1000;
-    double concurrent=(distance(scenario,1,t)-dr)*1000;
-    double heldError=(path(scenario,0,1,t)-hold)*1000;
+    double concurrent=(distance(scenario,follower,t)-dr)*1000;
+    double heldError=(path(scenario,0,follower,t)-held[follower])*1000;
     unsigned age=(i-heldAt)*100;
     // Same deployment bound/budget used in bounded firmware tests.
     int accepted=(uint64_t)1000*age<=UINT64_C(100)*1000;
-    printf("%u,%u,%u,%.0f,%.0f,0,%.6f,%.6f,%.6f,%.6f,%d\n",scenario,i,slot,
+    printf("%u,%u,%u,%u,%.0f,%.0f,0,%.6f,%.6f,%.6f,%.6f,%d\n",scenario,i,follower,slot,
      old.skewPpb-oscillator,ind.skewPpb-oscillator,a.rangeDifferenceMm-actual,
      b.rangeDifferenceMm-actual,actual-concurrent,heldError,accepted);
    }

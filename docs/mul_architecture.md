@@ -1512,3 +1512,142 @@ bounds additional path change only; it cannot certify the TWR estimator's dynami
 bias. As before, 40-bit signed modular differences are meaningful only within
 the half-wrap and compatible epochs; coarse liveness/sequence gates reject long
 aliases. There is no globally unique reference boot epoch on the existing RF wire.
+
+### Software verification and evidence boundary (2026-11-08)
+
+Baseline revisions were LPS5522a1d and STM3234b05e6. LPS Makefile's pre-existing
+CH5 definition and docs/mul_core.md formatting edits were retained and excluded
+from commits; mul_geometry_estimator/config was already untracked. Other firmware/
+bridge/PC checkouts were clean. No deployment, radio/EEPROM writes, motor commands,
+bridge/service control, DDS/network changes or original recording writes occurred.
+
+Commands and results:
+
+- `sh portable/mul_core/tests/run.sh`: sanitizer suite passes, including four
+  motion policies (disabled/finite/unknown/stationary) and guarded real cycle
+  reconstruction for2/3/4/8 sources, partial vectors, reordering/reset/wrap.
+- `python3 tools/test/mul_slots.py --slot 10 --prop-age 6000 --speed 0 --sanitize`:
+  321 Unity tests,0 failures;296 MUL sanitizer tests,0 failures. Original OBS
+  schema and NA masking remain intact.
+- `python3 tools/test/mul_slots.py --slot 500 --default-rate`:321 tests,0 failures.
+  This detected and now prevents a disabled-policy/caller-TTL regression.
+- `python3 tools/test/compare_deferred_clock.py --sanitize`:240000 complete
+  clock/Kalman states bit-identical to the frozen legacy implementation.
+- `python3 -m unittest discover -s tools/test -p test_clock_replay.py`:7 passed,
+  including rejected motion evidence and the repaired stale summary field name.
+- STM32 `sh tests/runtime_config/run.sh`, `sh tests/motion/run.sh`,
+  `sh tests/frequency/run.sh`, and vendored `sh ThirdParty/mul_core/tests/run.sh`
+  pass. Motion tests cover135 radio-driven cycles,200s paced UART and actual
+  five-message scheduled AR responder/independent-clock/deadline/error recovery.
+  UART had0 encoding errors and no vector/replay losses; deliberate summary/raw
+  drops under saturation remain counted. No claim of lossless raw telemetry.
+- ESP32 host compatibility initially rejected the new canonical source hashes.
+  Only the offline replay validator's explicit approved-source list was updated;
+  no ESP firmware/protocol/decoder behavior changed. Tampered-source rejection
+  and14 replay tests pass. The full host suite is also required before completion.
+
+`python3 tools/test/motion_benchmark.py` emits117864 matched production-C pair
+outputs over18 deterministic scenes and5/10/50/500ms isolated event spacings.
+All three follower paths are evaluated independently; actual admissible TDMA
+rosters/timing are tested separately by production schedule/receiver fixtures.
+These are timing equations, not position-estimator or physical-accuracy tests.
+The independent-delay column supplies ideal acquisition-aligned synthetic path
+observations to the existing optional KF API. This INPUT CONTROL is not available
+from the real receiver adapter, not a claimed new online correction, and not a
+validation of finite independent-input uncertainty.
+
+At50ms, aggregated over three followers (RMSE):
+
+| Scene | Legacy rate error ppb | Ideal independent-delay rate error ppb | Legacy TDoA error mm | Ideal-input TDoA error mm | Bias from treating slots as simultaneous mm |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stationary, zero rate |0|0|2.835|2.835|0|
+| Stationary,10000ppb |0|0|2.306|2.306|0|
+| Stationary, common timestamp noise |0|0|88.017|88.017|0|
+| Radial toward |1|0|13.778|2.603|0|
+| Radial away |1|0|14.983|2.632|0|
+| Four independent ALRs |0|0|2.889|2.889|1.629|
+| Rigid formation translation |1|0|14.933|2.869|9.932|
+| Moving ALRs and RLR |1|0|14.993|2.918|10.437|
+
+For radial-toward, absolute p95 TDoA error is17.922/5.000mm (legacy/ideal input).
+Median/RMSE/p95/max for every scene are reproducible from script JSON. Guarded
+oscillator/geometric availability is0%, rejection100%, intentionally. A separate
+synthetic6s held-delay refresh with1m/s bound and100mm budget authorizes about3.27%
+of evaluated instants; at other instants rejection replaces unbounded reuse.
+This is not a prediction of the deployed RF refresh or physical availability.
+Step changes can violate the declared speed bound; finite motion budgets cannot
+detect all false operator assumptions, NLOS or biased external inputs. Guarded
+receiver rejection remains valid without assuming that bound.
+
+Read-only data checks: original20261105 compact capture contains776 clock
+observations. Production replay yields771 ready legacy fits; guarded replay rejects
+all776 oscillator updates (no numeric output), retaining apparent arrival history.
+Use `tools/mul_clock_replay.py --summary --period-ms 100 [--motion-guard] <capture>`.
+The existing summary's obsolete regression key was repaired to Kalman. Three
+November8 MCAPs were read with rosbag2_py only:093602 has49928 messages/900 clock
+records,100421 has43935/792,104307 has31861/576. No surveyed synchronized truth was
+established; reported sigma1ppb and uncompensated propagation do not prove unbiased
+rate or motion accuracy. Original MCAPs/reports/trajectories were not modified.
+
+Resource measurements (ARM GCC13.2.1, Release/size settings):
+
+| Image | Flash bytes | RAM including linker reservations | Notes |
+| --- | ---: | ---: | --- |
+| LPS committed default Makefile |130620|14960|452 Flash bytes spare; excludes user's local CH5 definition |
+| LPS experimental motion CH5, V1000/B100 |131040|14972|32 Flash bytes spare; clock workspace168B retained |
+| STM32 RobotExperiment, guard OFF |174352|46832|768KiB Flash/128KiB RAM target |
+| STM32 matched MotionGuard, V1000/B100 |169024|46832|Same plan/configuration storage and queues |
+
+Initial workspace LPS baseline with user's CH5 definition was130904 Flash/14964
+RAM; initial STM32 baseline was174360/46832. The profile table is a configuration
+comparison, not a claim that all image differences are intrinsic motion-model cost.
+There is no new persistent timing state, queue, heap allocation or RF packet.
+RF airtime and scheduled transmission counts are unchanged. Each structured UART
+line remains310 characters including newline; raw/replay queue drops remain explicit.
+
+`tools/test/motion_cost.py` uses actual C with existing Unicorn/Capstone/pyelftools
+instrumentation:16 Cortex-M0 calls at200ms give maximum138570 instructions for
+unconditional KF versus2028 for arrival guard (regular maxima138345/2003; maximum
+software-double helper calls761/0). The existing deferred-clock cost/state test
+also passes. These are sampled instruction counts, **not** board CPU time, IRQ/SPI
+latency, end-to-end WCET or stack high-water measurements. The policy adds fixed
+integer work; callback loops, buffers and delayed-TX lead checks remain bounded.
+Physical WCET, stack margins and new motion-budget acceptance need board evidence.
+Capture build options/`:clock show` with data: unchanged RF/telemetry schemas do
+not serialize new budget/speed settings. Exact forensic replay of budget-enabled
+local rejection requires the same policy build; do not silently replay it with
+default policy and call a status mismatch equivalent evidence.
+
+### Required-case coverage and remaining physical work
+
+Cases1..4 and19..30,32..37 are covered by production clock, relation, schedule,
+TWR/pose, protocol, receiver and real-adapter fixtures plus matched controls.
+Cases5..18 exercise the asynchronous timing model with moving/singular geometry;
+no localization observability or position-accuracy result is implied. Case31 is
+covered for stale/domain/invalid pose data and unconditional receiver rejection;
+an apparently valid but incorrect motion bound/pose cannot always be detected.
+There is deliberately no positive unknown-motion oscillator correction. Independent
+rate/path calibration, source-to-radio epoch/time mapping, trajectory-aware PC
+geometry/fusion, physical dynamics/NLOS/antenna error and hardware timing remain
+unvalidated. Conservatism replaces those missing inputs rather than estimating
+unobservable states or asserting conditional covariance as physical accuracy.
+
+Operator-only hardware validation, not executed:
+
+1. Archive revisions, complete build options, plan3962260266, roles/IDs, antenna/
+   power calibration and RF-OFF configuration before a separately authorized flash.
+2. On an isolated bench upgrade one follower ALR and RLR141 while retaining132 as
+   reference. Preserve EEPROM/calibration/PHY/plan and verify intended=actual TX,
+   stationary raw ranges, epochs, slot timing and default estimator regressions.
+3. Enable the receiver guard explicitly. Verify raw acquisition/AR TWR and RF
+   scheduling continue while oscillator application and geometric TDoA stay unavailable.
+4. Supply an independently justified relative-speed bound and selected path-change
+   budget to matching LPS/consumer builds. Move one ALR under independently timed
+   trajectory capture; check original acquisition age, expiry/rejection and no false
+   finite total bound. UNKNOWN input must reject. No positive clock correction is
+   expected without new independent evidence.
+5. Measure IRQ/SPI/deadline maxima, stack high-water and UART/raw-record loss; compare
+   stationary, radial/tangential motion, interruption/reacquisition and wrap.
+6. Progress to all four ALRs, preserving the deployed plan and identities. Assess
+   all six AA links and scheduled AR separately from asynchronous TDoA. Establish
+   synchronized independent anchor/RLR trajectories before any physical accuracy claim.

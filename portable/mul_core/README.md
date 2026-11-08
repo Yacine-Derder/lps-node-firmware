@@ -68,7 +68,7 @@ malformed tests. Same sources compile on host/Cortex-M0/Cortex-M4.
 
 ## Pinned export/update
 
-Publish canonical changes to LPS origin/master FIRST, then from LPS run:
+Publish canonical changes to LPS origin/main FIRST, then from LPS run:
 `python3 tools/mul_core_vendor.py <full-published-LPS-SHA> <empty-destination>`.
 Review/replace STM32's `ThirdParty/mul_core` with that export and commit it there.
 UPSTREAM.json records commit, canonical path and every file hash. STM32 build
@@ -264,7 +264,7 @@ required. Emission is bounded/best effort; transport drop counters remain releva
 
 For an authorized local-only integration, the exporter supports explicit
 `--allow-local REV DEST` to export a committed unpublished source without any
-push/fetch. The default still requires origin/master ancestry. UPSTREAM.json pins
+push/fetch. The default still requires origin/main ancestry. UPSTREAM.json pins
 the exact commit and file hashes in either case; unpublished pins are available
 from the local canonical repository until the owner authorizes publication.
 
